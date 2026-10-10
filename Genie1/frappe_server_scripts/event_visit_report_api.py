@@ -1,0 +1,112 @@
+# Frappe Server Script settings:
+#   Script Type: API
+#   API Method: event_visit_report
+#   Allow Guest: Disabled
+#   Enable Rate Limit: Enabled
+#
+# GET  /api/method/event_visit_report?action=get&event_id=EVENT-ID
+# POST /api/method/event_visit_report
+#      form fields: action=save, event_id, observation, outcome
+
+action = (frappe.form_dict.get("action") or "get").strip().lower()
+event_id = (frappe.form_dict.get("event_id") or "").strip()
+current_user = frappe.session.user
+
+if not current_user or current_user == "Guest":
+    frappe.throw("Sign in to view or submit a visit report.")
+
+if not event_id:
+    frappe.throw("event_id is required.")
+
+event = frappe.get_doc("Event", event_id)
+assigned_users = str(event.get("_assign") or "")
+is_assigned = (
+    event.owner == current_user
+    or event.get("assigned_to") == current_user
+    or ('"' + current_user + '"') in assigned_users
+)
+
+# Some Event setups assign the user through the Event Participants child table.
+for participant_field in ["event_participants", "participants"]:
+    for participant in event.get(participant_field) or []:
+        if (
+            participant.get("email") == current_user
+            or participant.get("user") == current_user
+            or participant.get("assigned_to") == current_user
+        ):
+            is_assigned = True
+
+if not is_assigned:
+    frappe.throw("This Event is not assigned to your user.")
+
+description = event.get("description") or ""
+prefix = "observation : "
+separator = "\nOutcome: "
+observation = ""
+outcome = ""
+
+report_text = description
+for old, new in [
+    ("<br />", "\n"),
+    ("<br/>", "\n"),
+    ("<br>", "\n"),
+    ("</p>", "\n"),
+    ("</div>", "\n"),
+    ('<div class="ql-editor read-mode">', ""),
+    ('<div class="ql-editor">', ""),
+    ("<p>", ""),
+    ("<div>", ""),
+    ("&nbsp;", " "),
+]:
+    report_text = report_text.replace(old, new)
+
+report_text = report_text.strip()
+if report_text.startswith(prefix) and separator in report_text:
+    report_body = report_text[len(prefix):]
+    split_at = report_body.rfind(separator)
+    observation = report_body[:split_at].strip()
+    outcome = report_body[split_at + len(separator):].strip()
+
+allowed_outcomes = ["Interested", "Not Interested", "Follow-up Required"]
+is_submitted = bool(observation and outcome in allowed_outcomes)
+
+if action == "get":
+    frappe.response["message"] = {
+        "status": "success",
+        "action": "get",
+        "event_id": event_id,
+        "observation": observation,
+        "outcome": outcome,
+        "is_submitted": is_submitted,
+        "description": description,
+        "outcomes": allowed_outcomes,
+    }
+
+elif action == "save":
+    if is_submitted:
+        frappe.throw("This visit report has already been submitted and cannot be edited.")
+
+    observation = (frappe.form_dict.get("observation") or "").strip()
+    outcome = (frappe.form_dict.get("outcome") or "").strip()
+
+    if not observation:
+        frappe.throw("Observation is required.")
+    if outcome not in allowed_outcomes:
+        frappe.throw("Choose a valid visit outcome.")
+
+    report_description = "observation : " + observation + "\nOutcome: " + outcome
+    event.description = report_description
+    event.save(ignore_permissions=True)
+
+    frappe.response["message"] = {
+        "status": "success",
+        "action": "save",
+        "event_id": event.name,
+        "observation": observation,
+        "outcome": outcome,
+        "is_submitted": True,
+        "description": report_description,
+    }
+
+else:
+    frappe.throw("Invalid action. Use 'get' or 'save'.")

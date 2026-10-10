@@ -1,0 +1,260 @@
+import java.util.Properties
+import java.io.FileInputStream
+
+plugins {
+    id "com.android.application"
+    // START: FlutterFire Configuration
+    id 'com.google.gms.google-services'
+    // END: FlutterFire Configuration
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localProperties.load(localPropertiesFile.newDataInputStream())
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode') ?: '1'
+def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '1.0'
+
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+def releaseStorePath = keystoreProperties.getProperty("storeFile")
+def releaseStoreFile = releaseStorePath ? file(releaseStorePath) : null
+def hasReleaseKeystore = releaseStoreFile != null && releaseStoreFile.isFile() &&
+        keystoreProperties.getProperty("keyAlias") &&
+        keystoreProperties.getProperty("keyPassword") &&
+        keystoreProperties.getProperty("storePassword")
+
+if (!hasReleaseKeystore) {
+    logger.warn("No complete release keystore found in android/key.properties; using the Android debug key for this release APK. Do not publish this APK to Google Play.")
+}
+
+android {
+    namespace "com.thirvusoft.homegeniecom"
+    compileSdk 36   // ✅ safer (36 can cause issues)
+
+    ndkVersion "28.2.13676358"
+
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+
+        // ✅ FIX: USE JAVA 17 (NOT 21)
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'  // ✅ MATCHED
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    defaultConfig {
+        applicationId "com.thirvusoft.homegeniecom"
+
+        minSdkVersion flutter.minSdkVersion
+        targetSdkVersion 36
+
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+
+        ndk {
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64", "x86"
+        }
+
+        packagingOptions {
+            jniLibs {
+                useLegacyPackaging = false
+            }
+        }
+
+        externalNativeBuild {
+            cmake {
+                cppFlags "-Wl,-z,max-page-size=16384"
+            }
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseKeystore) {
+                keyAlias keystoreProperties["keyAlias"]
+                keyPassword keystoreProperties["keyPassword"]
+                storeFile releaseStoreFile
+                storePassword keystoreProperties["storePassword"]
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig hasReleaseKeystore ? signingConfigs.getByName("release") : signingConfigs.getByName("debug")
+            shrinkResources false
+            minifyEnabled false
+
+            ndk {
+                debugSymbolLevel 'FULL'
+            }
+        }
+    }
+}
+
+flutter {
+    source '../..'
+}
+
+dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
+    
+    // OkHttp for HTTP requests
+    implementation 'com.squareup.okhttp3:okhttp:4.11.0'
+    
+    // Google Play Services Location for FusedLocationProviderClient
+    implementation 'com.google.android.gms:play-services-location:21.1.0'
+
+    implementation 'androidx.work:work-runtime-ktx:2.10.0'
+    
+    // Kotlin Coroutines
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0'
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// import java.util.Properties
+// import java.io.FileInputStream
+// plugins {
+//     id "com.android.application"
+//     id "kotlin-android"
+//     id "dev.flutter.flutter-gradle-plugin"
+// }
+
+// def localProperties = new Properties()
+// def localPropertiesFile = rootProject.file('local.properties')
+// if (localPropertiesFile.exists()) {
+//     localPropertiesFile.withReader('UTF-8') { reader ->
+//         localProperties.load(reader)
+//     }
+// }
+
+// def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+// if (flutterVersionCode == null) {
+//     flutterVersionCode = '1'
+// }
+
+// def flutterVersionName = localProperties.getProperty('flutter.versionName')
+// if (flutterVersionName == null) {
+//     flutterVersionName = '1.0'
+// }
+
+// def keystoreProperties = new Properties()
+// def keystorePropertiesFile = rootProject.file("key.properties")
+// if (keystorePropertiesFile.exists()) {
+//     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+// }
+// android {
+//     namespace "com.thirvusoft.homegeniecom"
+//     compileSdk 36
+//     ndkVersion "28.2.13676358"
+
+
+//     compileOptions {
+//         coreLibraryDesugaringEnabled true
+//         sourceCompatibility JavaVersion.VERSION_21
+//         targetCompatibility JavaVersion.VERSION_21
+//     }
+
+//     kotlinOptions {
+//         jvmTarget = '17'
+//     }
+
+//     sourceSets {
+//         main.java.srcDirs += 'src/main/kotlin'
+//     }
+
+//     defaultConfig {
+//         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+//         applicationId "com.thirvusoft.homegeniecom"
+//         // You can update the following values to match your application needs.
+//         // For more information, see: https://docs.flutter.dev/deployment/android#reviewing-the-gradle-build-configuration.
+//         minSdkVersion flutter.minSdkVersion
+//         targetSdkVersion flutter.targetSdkVersion
+//         versionCode flutterVersionCode.toInteger()
+//         versionName flutterVersionName
+
+//         ndk {
+//             abiFilters "arm64-v8a", "armeabi-v7a", "x86_64", "x86"
+//         }
+
+//         packagingOptions {
+//             jniLibs {
+//                 useLegacyPackaging = false
+//             }
+//         }
+
+
+    
+//         externalNativeBuild {
+//         cmake {
+//             cppFlags "-Wl,-z,max-page-size=16384"
+//         }
+//     }
+
+//     }
+
+    
+//     signingConfigs {
+//         release {
+//             // Only configure if key.properties exists; otherwise leave nulls (we’ll fallback below)
+//             if (keystorePropertiesFile.exists()) {
+//                 keyAlias      = keystoreProperties["keyAlias"]
+//                 keyPassword   = keystoreProperties["keyPassword"]
+//                 storeFile     = keystoreProperties["storeFile"] ? file(keystoreProperties["storeFile"]) : null
+//                 storePassword = keystoreProperties["storePassword"]
+//             }
+//         }
+//     }
+
+//     buildTypes {
+//         release {
+//             // TODO: Add your own signing config for the release build.
+//             // Signing with the debug keys for now, so `flutter run --release` works.
+//             signingConfig signingConfigs.getByName("release")
+//             shrinkResources false
+//             minifyEnabled false
+
+//             ndk {
+//                 debugSymbolLevel 'FULL'
+//             }
+//         }
+//     }
+// }
+
+// flutter {
+//     source '../..'
+// }
+
+// dependencies {
+//     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
+// }

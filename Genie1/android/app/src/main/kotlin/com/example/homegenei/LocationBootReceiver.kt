@@ -1,0 +1,45 @@
+package com.thirvusoft.homegeniecom
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+
+class LocationBootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        val action = intent?.action
+        if (action != Intent.ACTION_BOOT_COMPLETED &&
+            action != Intent.ACTION_MY_PACKAGE_REPLACED
+        ) {
+            return
+        }
+
+        if (!LocationTrackingManager.isTrackingActive(context)) return
+
+        if (!LocationTrackingManager.hasRequiredLocationPermissions(context)) {
+            Log.w(TAG, "Not resuming live tracking: location permissions are missing")
+            return
+        }
+
+        val prefs = LocationTrackingManager.prefs(context)
+        val userId = prefs.getString(LocationTrackingManager.KEY_USER_ID, null)
+        val authToken = prefs.getString(LocationTrackingManager.KEY_AUTH_TOKEN, null)
+        val siteUrl = prefs.getString(LocationTrackingManager.KEY_SITE_URL, null)
+
+        if (userId.isNullOrBlank() || authToken.isNullOrBlank() || siteUrl.isNullOrBlank()) {
+            Log.w(TAG, "Not resuming live tracking: saved session data is incomplete")
+            return
+        }
+
+        try {
+            LocationTrackingManager.startTracking(context, userId, authToken, siteUrl)
+            Log.i(TAG, "Resumed live tracking after $action")
+        } catch (error: Exception) {
+            Log.e(TAG, "Could not resume live tracking after $action", error)
+        }
+    }
+
+    companion object {
+        private const val TAG = "LocationBootReceiver"
+    }
+}
