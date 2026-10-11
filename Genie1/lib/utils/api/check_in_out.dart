@@ -85,6 +85,35 @@ class Check {
     return body["message"];
   }
 
+  /// Returns why an event/visit check-in must be blocked, or null when the
+  /// employee is checked in for today. Uses the server's attendance status,
+  /// not a cached flag, so a stale local state cannot let it through.
+  static Future<String?> eventCheckinBlockReason(String? email) async {
+    if (email == null || email.trim().isEmpty) {
+      return 'Your signed-in user is missing. Please sign in again.';
+    }
+    final Map<String, dynamic> status;
+    try {
+      final response = await getStatus(
+        email.trim(),
+      ).timeout(const Duration(seconds: 15));
+      status = Map<String, dynamic>.from(response);
+    } catch (e) {
+      print('Attendance status check failed: $e');
+      return 'Could not verify your Employee Check-in for today. '
+          'Check your connection and try again.';
+    }
+    if (status['previous_checkout_pending'] == true) {
+      return 'Your previous day Employee Check-in is still open. '
+          'Check out of it and do today\'s Employee Check-in before checking in to this visit.';
+    }
+    if (status['checked_in'] != true) {
+      return 'Please complete your Employee Check-in for today '
+          'before checking in to this visit.';
+    }
+    return null;
+  }
+
   static checkout(
     id,
     lat,

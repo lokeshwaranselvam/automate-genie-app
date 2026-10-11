@@ -2061,6 +2061,22 @@ class _EventDetailsState extends State<EventDetails> {
         return;
       }
 
+      // A visit check-in is only allowed after the employee's attendance
+      // check-in for the day, verified against the server's current status.
+      if (startingVisit) {
+        timeoutStage = 'attendance status check';
+        final blockReason = await Check.eventCheckinBlockReason(
+          prefs.getString('email'),
+        );
+        if (blockReason != null) {
+          if (mounted) {
+            Warning.show(context, blockReason, 'Employee Check-in required');
+          }
+          return;
+        }
+        timeoutStage = 'GPS location lookup';
+      }
+
       // Ask for the customer location before waiting for GPS. This also avoids
       // the old retry path obtaining GPS and geocoding the address twice.
       if (startingVisit &&
