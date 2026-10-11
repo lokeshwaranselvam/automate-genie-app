@@ -4,6 +4,15 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Thrown when the ERP server could not be reached to verify a session.
+class SessionUnreachableException implements Exception {
+  const SessionUnreachableException(this.message);
+  final String message;
+
+  @override
+  String toString() => 'SessionUnreachableException: $message';
+}
+
 /// Manages the Frappe browser-style session separately from Genie1's API token.
 class SessionAuthApi {
   static const _sidKey = 'session_sid';
@@ -92,14 +101,34 @@ class SessionAuthApi {
     };
   }
 
+  /// Returns the session's user, or null when the server says the session is
+  /// no longer valid. Throws [SessionUnreachableException] when the server
+  /// could not answer (offline, timeout, 5xx), so callers do not mistake a
+  /// network problem for an expired session.
   static Future<String?> _fetchLoggedInUser(String sid) async {
-    final response = await http.get(
-      _methodUri('frappe.auth.get_logged_user'),
-      headers: {'Accept': 'application/json', 'Cookie': 'sid=$sid'},
-    );
-    if (response.statusCode != 200) return null;
+    final http.Response response;
+    try {
+      response = await http
+          .get(
+            _methodUri('frappe.auth.get_logged_user'),
+            headers: {'Accept': 'application/json', 'Cookie': 'sid=$sid'},
+          )
+          .timeout(const Duration(seconds: 15));
+    } catch (error) {
+      throw SessionUnreachableException('$error');
+    }
+    if (response.statusCode == 401 || response.statusCode == 403) return null;
+    if (response.statusCode != 200) {
+      throw SessionUnreachableException(
+        'Session check returned ${response.statusCode}',
+      );
+    }
     final data = _decode(response);
-    if (data is! Map) return null;
+    if (data is! Map) {
+      throw const SessionUnreachableException(
+        'Session check returned an invalid response',
+      );
+    }
     final user = data['message']?.toString();
     if (user == null || user.isEmpty || user.toLowerCase() == 'guest') {
       return null;
@@ -121,8 +150,12 @@ class SessionAuthApi {
       }
       await prefs.setString(_usernameKey, user);
       return user;
+    } on SessionUnreachableException {
+      // The server could not confirm either way. Keep the saved session so a
+      // network blip does not sign the user out; later requests will retry.
+      final savedUser = prefs.getString(_usernameKey)?.trim();
+      return (savedUser == null || savedUser.isEmpty) ? null : savedUser;
     } catch (_) {
-      // Network errors should not erase a valid session; the caller can retry later.
       return null;
     }
   }
