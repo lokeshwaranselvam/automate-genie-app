@@ -102,20 +102,37 @@ class Check {
       final withEvent = prefs.getBool('with_event');
       final lastLatLng = prefs.getString('last_lat_lng');
 
+      // Build the query with Uri so addresses containing '&', '#' or spaces
+      // are encoded instead of breaking the request.
+      final uri = Uri.parse('$methodapiUrl.checkout').replace(
+        queryParameters: {
+          'user': '$id',
+          'lat': '$lat',
+          'lng': '$lng',
+          'address': address,
+          'lastCheckoutAddress': '${lastCheckoutAddress ?? ''}',
+          'distance': '$distance',
+          'office_type': type,
+          'with_event': '$withEvent',
+          'last_lat_lng': '$lastLatLng',
+        },
+      );
       var response = await http.get(
-        Uri.parse(
-          '$methodapiUrl.checkout?user=$id&lat=$lat&lng=$lng&address=${Uri.encodeComponent(address)}&lastCheckoutAddress=$lastCheckoutAddress&distance=$distance&office_type=$type&"location_logs": locationLogs&with_event=$withEvent&last_lat_lng=$lastLatLng',
-        ),
+        uri,
         headers: {"Authorization": token ?? ""},
       );
 
       final data = json.decode(response.body);
-      String message = data['message'].toString();
+      String message =
+          (data is Map ? data['message'] : null)?.toString() ??
+          'Checkout failed (${response.statusCode}).';
       String status = "Success";
 
       if (response.statusCode == 403) {
         status = "Warning";
-      } else if (response.statusCode == 400 || response.statusCode == 500) {
+      } else if (response.statusCode != 200) {
+        // Any other non-200 (401, 404, 417 validation, 5xx) is a failure;
+        // treating it as Success stopped tracking while still checked in.
         status = "Error";
       } else if (message.contains("Already checked out")) {
         status = "Warning";
