@@ -6,6 +6,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:homegenie/utils/api/check_in_out.dart';
 import 'package:homegenie/utils/api/event.dart';
+import 'package:homegenie/utils/api/image_upload_api.dart';
+import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as maps;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +15,8 @@ import 'warning.dart';
 import '../widget/location_tracker.dart';
 import '../widget/live_location_service.dart';
 import '../widget/battery_optimization_helper.dart';
+import '../widget/camera_service.dart';
+import '../widget/gps_photo_stamper.dart';
 import '../api/location_api.dart';
 
 class Action_Bottom {
@@ -60,6 +64,78 @@ class Action_Bottom {
     }
 
     return true;
+  }
+
+  /// Mandatory selfie for attendance: capture, GPS-stamp, compress and upload
+  /// it before the check-in/check-out request. Returns the uploaded file_url,
+  /// or null when the user cancelled or the upload failed (a message is shown
+  /// and no attendance request is made).
+  static Future<String?> _captureAttendancePhoto(
+    BuildContext context, {
+    required bool checkingOut,
+    required Position position,
+    required String address,
+    required String? email,
+    Function()? onApiStart,
+    Function()? onApiEnd,
+  }) async {
+    final action = checkingOut ? 'Check-out' : 'Check-in';
+    final photo = await CameraService.capturePhoto(front: true);
+    if (photo == null) {
+      Warning.show(
+        context,
+        'A selfie is required for Employee $action. Please try again and capture a photo.',
+        'Photo required',
+      );
+      return null;
+    }
+
+    onApiStart?.call();
+    File? stamped;
+    try {
+      stamped = await GpsPhotoStamper.stamp(
+        file: photo,
+        lat: position.latitude,
+        lng: position.longitude,
+        address: address,
+        title: 'Employee $action',
+      );
+      final user = (email ?? 'user')
+          .split('@')
+          .first
+          .replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+      final time = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+      final fileUrl = await ImageUploadApi.uploadAttendancePhoto(
+        filePath: stamped.path,
+        fileName: '${checkingOut ? 'checkout' : 'checkin'}_${user}_$time.jpg',
+      );
+      if (fileUrl == null) {
+        onApiEnd?.call();
+        Warning.show(
+          context,
+          'Your photo could not be uploaded. Check your connection and try again. '
+              'Employee $action was not recorded.',
+          'Photo upload failed',
+        );
+      }
+      return fileUrl;
+    } catch (e) {
+      onApiEnd?.call();
+      Warning.show(
+        context,
+        'Your photo could not be processed: $e',
+        'Photo upload failed',
+      );
+      return null;
+    } finally {
+      if (stamped != null &&
+          stamped.path != photo.path &&
+          stamped.existsSync()) {
+        try {
+          stamped.deleteSync();
+        } catch (_) {}
+      }
+    }
   }
 
   static Future<String?> _startEmployeeLiveLocationTracking() async {
@@ -161,6 +237,17 @@ class Action_Bottom {
                       final lastCheckoutAddress =
                           prefs.getString('last_checkout_address') ?? '';
 
+                      final photoUrl = await _captureAttendancePhoto(
+                        context,
+                        checkingOut: isCheckedIn,
+                        position: position,
+                        address: address,
+                        email: email,
+                        onApiStart: onApiStart,
+                        onApiEnd: onApiEnd,
+                      );
+                      if (photoUrl == null) return;
+
                       var response;
                       onApiStart?.call();
                       if (isCheckedIn) {
@@ -201,6 +288,7 @@ class Action_Bottom {
                           formattedDistanceWithUnit,
                           option,
                           locationLogs,
+                          photoUrl: photoUrl,
                         );
                       } else {
                         response = await Check.checkin(
@@ -209,6 +297,7 @@ class Action_Bottom {
                           position.longitude,
                           address,
                           option,
+                          photoUrl: photoUrl,
                         );
                       }
                       onApiEnd?.call();
@@ -357,6 +446,17 @@ class Action_Bottom {
                         final lastCheckoutAddress =
                             prefs.getString('last_checkout_address') ?? '';
 
+                        final photoUrl = await _captureAttendancePhoto(
+                          context,
+                          checkingOut: isCheckedIn,
+                          position: position,
+                          address: address,
+                          email: email,
+                          onApiStart: onApiStart,
+                          onApiEnd: onApiEnd,
+                        );
+                        if (photoUrl == null) return;
+
                         var response;
                         onApiStart?.call();
                         if (isCheckedIn) {
@@ -397,6 +497,7 @@ class Action_Bottom {
                             formattedDistanceWithUnit,
                             option,
                             locationLogs,
+                            photoUrl: photoUrl,
                           );
                         } else {
                           response = await Check.checkin(
@@ -405,6 +506,7 @@ class Action_Bottom {
                             position.longitude,
                             address,
                             option,
+                            photoUrl: photoUrl,
                           );
                         }
                         onApiEnd?.call();

@@ -54,11 +54,7 @@ class ImageUploadApi {
       request.headers['Authorization'] = token;
 
       request.files.add(
-        await http.MultipartFile.fromPath(
-          'file',
-          filePath,
-          filename: fileName,
-        ),
+        await http.MultipartFile.fromPath('file', filePath, filename: fileName),
       );
 
       debugPrint('📤 Uploading image "$fileName" to Event: $docname ...');
@@ -83,6 +79,54 @@ class ImageUploadApi {
     }
   }
 
+  /// Uploads an attendance photo as a private File not yet linked to a
+  /// document, before the check-in/check-out request. The returned file_url
+  /// is sent with that request so the server can attach it to the new
+  /// Employee Checkin. Returns null on failure.
+  static Future<String?> uploadAttendancePhoto({
+    required String filePath,
+    required String fileName,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? token = prefs.getString('token');
+      final String baseUrl = dotenv.env['SITE_URL'] ?? '';
+      if (token == null || token.isEmpty || baseUrl.isEmpty) {
+        debugPrint('[ImageUploadApi] Attendance photo: missing token/SITE_URL');
+        return null;
+      }
+      if (!File(filePath).existsSync()) return null;
+
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/api/method/upload_file'),
+      );
+      request.fields['is_private'] = '1';
+      request.fields['folder'] = 'Home/Attachments';
+      request.headers['Authorization'] = token;
+      request.files.add(
+        await http.MultipartFile.fromPath('file', filePath, filename: fileName),
+      );
+
+      final streamedResponse = await request.send().timeout(
+        const Duration(seconds: 60),
+      );
+      final responseBody = await streamedResponse.stream.bytesToString();
+      if (streamedResponse.statusCode != 200) {
+        debugPrint(
+          '[ImageUploadApi] Attendance photo upload failed '
+          '[${streamedResponse.statusCode}]: $responseBody',
+        );
+        return null;
+      }
+      final fileUrl = jsonDecode(responseBody)['message']?['file_url'];
+      return fileUrl is String && fileUrl.isNotEmpty ? fileUrl : null;
+    } catch (e) {
+      debugPrint('[ImageUploadApi] Attendance photo upload exception: $e');
+      return null;
+    }
+  }
+
   /// Uploads multiple images and returns a list of uploaded file URLs.
   static Future<List<String>> uploadMultipleImages({
     required List<String> filePaths,
@@ -101,6 +145,7 @@ class ImageUploadApi {
     debugPrint('✅ Uploaded ${uploadedUrls.length}/${filePaths.length} images.');
     return uploadedUrls;
   }
+
   static Future<String?> uploadImageToEventWithRetry({
     required String filePath,
     required String docname,

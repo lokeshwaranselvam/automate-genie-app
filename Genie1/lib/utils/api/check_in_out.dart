@@ -34,14 +34,22 @@ class Check {
   static final methodapiUrl = dotenv.env['URL'];
   static String? token;
 
-  static checkin(id, lat, lng, String address, String type) async {
+  static checkin(
+    id,
+    lat,
+    lng,
+    String address,
+    String type, {
+    String? photoUrl,
+  }) async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final String? token = prefs.getString('token');
 
     try {
       var response = await http.get(
         Uri.parse(
-          '$methodapiUrl.checkin?user=$id&lat=$lat&lng=$lng&address=${Uri.encodeComponent(address)}&office_type=$type',
+          '$methodapiUrl.checkin?user=$id&lat=$lat&lng=$lng&address=${Uri.encodeComponent(address)}&office_type=$type'
+          '${photoUrl == null ? '' : '&photo_url=${Uri.encodeComponent(photoUrl)}'}',
         ),
         headers: {"Authorization": token ?? ""},
       );
@@ -122,8 +130,9 @@ class Check {
     lastCheckoutAddress,
     distance,
     String type,
-    List<Map<String, dynamic>> locationLogs,
-  ) async {
+    List<Map<String, dynamic>> locationLogs, {
+    String? photoUrl,
+  }) async {
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
 
@@ -144,6 +153,7 @@ class Check {
           'office_type': type,
           'with_event': '$withEvent',
           'last_lat_lng': '$lastLatLng',
+          if (photoUrl != null) 'photo_url': photoUrl,
         },
       );
       var response = await http.get(

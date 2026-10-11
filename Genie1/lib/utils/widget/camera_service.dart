@@ -7,8 +7,8 @@ class CameraService {
   static final ImagePicker _picker = ImagePicker();
 
   /// Opens the device camera and returns the captured image file.
-  /// Returns null if the user cancels.
-  static Future<File?> capturePhoto() async {
+  /// Returns null if the user cancels. [front] opens the selfie camera.
+  static Future<File?> capturePhoto({bool front = false}) async {
     try {
       final status = await Permission.camera.request();
       if (!status.isGranted) {
@@ -24,7 +24,7 @@ class CameraService {
         imageQuality: 55,
         maxWidth: 1600,
         maxHeight: 1600,
-        preferredCameraDevice: CameraDevice.rear,
+        preferredCameraDevice: front ? CameraDevice.front : CameraDevice.rear,
       );
       if (photo == null) return null;
       return File(photo.path);
