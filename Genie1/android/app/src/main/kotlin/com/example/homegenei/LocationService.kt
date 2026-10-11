@@ -22,11 +22,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 class LocationService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var fusedLocationClient: FusedLocationProviderClient
-    private var lastPostedTime = 0L
+    @Volatile private var lastPostedTime = 0L
+    @Volatile private var lastAttemptTime = 0L
+    private val postInFlight = AtomicBoolean(false)
 
     private val locationRequest by lazy {
         LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_INTERVAL_MS)
@@ -44,20 +47,31 @@ class LocationService : Service() {
 
             LocationTrackingManager.markLocationUpdate(applicationContext)
 
-            // Only post to server if 15 minutes have passed since last post
+            // Only post to server if 15 minutes have passed since last post.
+            // Updates arrive every 10s while a post can take up to 15s, so
+            // skip while one is in flight, and wait a minute between failed
+            // attempts instead of retrying on every update.
             val currentTime = System.currentTimeMillis()
-            if (currentTime - lastPostedTime >= POST_INTERVAL_MS) {
+            if (currentTime - lastPostedTime >= POST_INTERVAL_MS &&
+                currentTime - lastAttemptTime >= RETRY_INTERVAL_MS &&
+                postInFlight.compareAndSet(false, true)
+            ) {
+                lastAttemptTime = currentTime
                 serviceScope.launch {
-                    val sent = LocationTrackingManager.sendLocationToServer(
-                        applicationContext,
-                        location.latitude,
-                        location.longitude
-                    )
-                    if (sent) {
-                        lastPostedTime = currentTime
-                        Log.d(TAG, "Location posted to server")
-                    } else {
-                        Log.w(TAG, "Location update could not be sent")
+                    try {
+                        val sent = LocationTrackingManager.sendLocationToServer(
+                            applicationContext,
+                            location.latitude,
+                            location.longitude
+                        )
+                        if (sent) {
+                            lastPostedTime = currentTime
+                            Log.d(TAG, "Location posted to server")
+                        } else {
+                            Log.w(TAG, "Location update could not be sent")
+                        }
+                    } finally {
+                        postInFlight.set(false)
                     }
                 }
             }
@@ -110,6 +124,7 @@ class LocationService : Service() {
         
         // Reset lastPostedTime to 0 to post immediately on first location update
         lastPostedTime = 0L
+        lastAttemptTime = 0L
         
         startLocationUpdates()
         return START_STICKY
@@ -179,5 +194,6 @@ class LocationService : Service() {
         private const val TAG = "LocationService"
         private const val LOCATION_INTERVAL_MS = 10_000L
         private const val POST_INTERVAL_MS = 15 * 60 * 1000L // 15 minutes
+        private const val RETRY_INTERVAL_MS = 60 * 1000L // 1 minute after a failed post
     }
 }
