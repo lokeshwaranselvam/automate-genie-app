@@ -222,9 +222,10 @@ class ExpenseClaimApi {
     // Submit the image and claim together. The server stores the image against
     // the newly created claim before returning, so there is no second upload
     // request that can be skipped when the claim response is delayed.
-    final response = await http.Response.fromStream(
-      _client.send(request),
-    ).timeout(const Duration(seconds: 90));
+    final response = await _client
+        .send(request)
+        .then(http.Response.fromStream)
+        .timeout(const Duration(seconds: 90));
     final message = _decodeMessage(response);
     final claimName = message['name']?.toString() ?? '';
     final expenseRow = message['expense_row']?.toString() ?? '';
