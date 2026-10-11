@@ -76,7 +76,15 @@ class LocationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(LocationTrackingManager.NOTIFICATION_ID, buildNotification())
+        try {
+            startForeground(LocationTrackingManager.NOTIFICATION_ID, buildNotification())
+        } catch (error: Exception) {
+            // Android 12+ throws when a foreground service is started from the
+            // background without the needed permission; stop instead of crashing.
+            Log.e(TAG, "Unable to start location foreground service", error)
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         if (!LocationTrackingManager.hasRequiredLocationPermissions(this)) {
             Log.e(TAG, "Location permissions are missing; stopping service")

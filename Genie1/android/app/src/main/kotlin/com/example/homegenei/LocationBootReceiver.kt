@@ -16,8 +16,13 @@ class LocationBootReceiver : BroadcastReceiver() {
 
         if (!LocationTrackingManager.isTrackingActive(context)) return
 
-        if (!LocationTrackingManager.hasRequiredLocationPermissions(context)) {
-            Log.w(TAG, "Not resuming live tracking: location permissions are missing")
+        // After boot the app is in the background, so Android 14+ only allows
+        // a location foreground service when background location is granted.
+        // Starting it with "while in use" permission throws and crashes.
+        if (!LocationTrackingManager.hasRequiredLocationPermissions(context) ||
+            !LocationTrackingManager.hasBackgroundLocationPermission(context)
+        ) {
+            Log.w(TAG, "Not resuming live tracking: background location permission is missing")
             return
         }
 
