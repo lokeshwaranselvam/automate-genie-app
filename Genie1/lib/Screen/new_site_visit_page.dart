@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../utils/api/location_api.dart';
@@ -21,6 +24,19 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
   final _eventFormKey = GlobalKey<FormState>();
   final _mapLinkController = TextEditingController();
   final _summaryController = TextEditingController();
+  final _mobileController = TextEditingController();
+  final _productController = TextEditingController();
+  // The Autocomplete owns the opportunity text field; keep references so a
+  // mobile-number search can fill or focus it.
+  TextEditingController? _opportunityFieldController;
+  FocusNode? _opportunityFocusNode;
+  Timer? _mobileSearchDebounce;
+  int _mobileSearchId = 0;
+  bool _mobileSearching = false;
+  String? _mobileSearchMessage;
+  // Null when no mobile search is active; the opportunity field then searches
+  // all of the user's opportunities as before.
+  List<Map<String, dynamic>>? _mobileMatches;
 
   bool _loading = true;
   bool _saving = false;
@@ -44,8 +60,11 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
 
   @override
   void dispose() {
+    _mobileSearchDebounce?.cancel();
     _mapLinkController.dispose();
     _summaryController.dispose();
+    _mobileController.dispose();
+    _productController.dispose();
     super.dispose();
   }
 
@@ -72,6 +91,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
           final onlyOpportunity = _opportunities.first;
           _opportunity = onlyOpportunity['name']?.toString();
           _initialOpportunityQuery = _opportunityLabel(onlyOpportunity);
+          _productController.text = _productEnquired(onlyOpportunity);
         }
         if (_users.any((user) => user['name']?.toString() == currentUser)) {
           _assignedTo = currentUser;
@@ -100,11 +120,86 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
     return opportunity['name']?.toString() ?? 'Opportunity';
   }
 
-  String _userLabel(Map<String, dynamic> user) {
+  String _userFullName(Map<String, dynamic> user) {
     final name = user['name']?.toString() ?? '';
     final fullName = user['full_name']?.toString().trim() ?? '';
-    if (fullName.isEmpty || fullName == name) return name;
-    return '$fullName · $name';
+    return fullName.isEmpty ? name : fullName;
+  }
+
+  String _productEnquired(Map<String, dynamic> opportunity) =>
+      opportunity['product_enquired']?.toString().trim() ?? '';
+
+  String _opportunityMobiles(Map<String, dynamic> opportunity) {
+    final mobiles = opportunity['mobile_numbers'];
+    if (mobiles is! List) return '';
+    return mobiles.map((mobile) => mobile.toString()).join(', ');
+  }
+
+  void _selectOpportunity(Map<String, dynamic> opportunity) {
+    setState(() {
+      _opportunity = opportunity['name']?.toString();
+      // Restores the field text when returning from the event step.
+      _initialOpportunityQuery = _opportunityLabel(opportunity);
+      _productController.text = _productEnquired(opportunity);
+    });
+  }
+
+  void _onMobileChanged(String value) {
+    _mobileSearchDebounce?.cancel();
+    final digits = value.replaceAll(RegExp(r'\D'), '');
+    if (digits.length < 5) {
+      _mobileSearchId++;
+      setState(() {
+        _mobileSearching = false;
+        _mobileMatches = null;
+        _mobileSearchMessage =
+            digits.isEmpty ? null : 'Enter at least 5 digits to search.';
+      });
+      return;
+    }
+    _mobileSearchDebounce = Timer(
+      const Duration(milliseconds: 500),
+      () => _searchByMobile(digits),
+    );
+  }
+
+  Future<void> _searchByMobile(String digits) async {
+    final searchId = ++_mobileSearchId;
+    setState(() {
+      _mobileSearching = true;
+      _mobileSearchMessage = null;
+    });
+    try {
+      final matches = await SiteVisitCreationApi.searchByMobile(digits);
+      // Ignore results from an older search the user has typed past.
+      if (!mounted || searchId != _mobileSearchId) return;
+      setState(() {
+        _mobileSearching = false;
+        _mobileMatches = matches;
+        _mobileSearchMessage =
+            matches.isEmpty
+                ? 'No opportunities found for this mobile number.'
+                : matches.length == 1
+                ? '1 opportunity found and selected.'
+                : '${matches.length} opportunities found. Choose one below.';
+      });
+      final controller = _opportunityFieldController;
+      if (matches.length == 1) {
+        _selectOpportunity(matches.first);
+        controller?.text = _opportunityLabel(matches.first);
+      } else {
+        setState(() => _opportunity = null);
+        controller?.clear();
+        if (matches.isNotEmpty) _opportunityFocusNode?.requestFocus();
+      }
+    } catch (error) {
+      if (!mounted || searchId != _mobileSearchId) return;
+      setState(() {
+        _mobileSearching = false;
+        _mobileMatches = null;
+        _mobileSearchMessage = _message(error);
+      });
+    }
   }
 
   Future<void> _saveLocation() async {
@@ -173,6 +268,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
         summary: _summaryController.text.trim(),
         startsOn: startsOn,
         assignedTo: _assignedTo!,
+        productEnquired: _productController.text.trim(),
       );
       if (!mounted) return;
       final eventName = result['event']?.toString() ?? '';
@@ -253,15 +349,58 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
               children: [
                 const _StepHeading(number: '1', title: 'Customer location'),
                 const SizedBox(height: 16),
+                TextFormField(
+                  controller: _mobileController,
+                  keyboardType: TextInputType.phone,
+                  textInputAction: TextInputAction.next,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9+ ]')),
+                  ],
+                  decoration: _decoration(
+                    'Mobile number',
+                    hint: 'Search opportunities by mobile number',
+                    prefixIcon: const Icon(Icons.phone_outlined),
+                  ).copyWith(
+                    helperText: _mobileSearchMessage,
+                    helperMaxLines: 2,
+                    suffixIcon:
+                        _mobileSearching
+                            ? const Padding(
+                              padding: EdgeInsets.all(14),
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: _visitBlue,
+                                ),
+                              ),
+                            )
+                            : _mobileController.text.isEmpty
+                            ? null
+                            : IconButton(
+                              tooltip: 'Clear mobile search',
+                              icon: const Icon(Icons.close_rounded),
+                              onPressed: () {
+                                _mobileController.clear();
+                                _onMobileChanged('');
+                              },
+                            ),
+                  ),
+                  onChanged: _onMobileChanged,
+                ),
+                const SizedBox(height: 13),
                 Autocomplete<Map<String, dynamic>>(
                   initialValue: TextEditingValue(
                     text: _initialOpportunityQuery ?? '',
                   ),
                   displayStringForOption: _opportunityLabel,
                   optionsBuilder: (textEditingValue) {
+                    // A mobile search narrows the list to its matches.
+                    final source = _mobileMatches ?? _opportunities;
                     final query = textEditingValue.text.trim().toLowerCase();
-                    if (query.isEmpty) return _opportunities;
-                    return _opportunities.where((opportunity) {
+                    if (query.isEmpty) return source;
+                    return source.where((opportunity) {
                       final label =
                           _opportunityLabel(opportunity).toLowerCase();
                       final name =
@@ -269,42 +408,44 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                       return label.contains(query) || name.contains(query);
                     });
                   },
-                  onSelected: (opportunity) {
-                    setState(
-                      () => _opportunity = opportunity['name']?.toString(),
+                  onSelected: _selectOpportunity,
+                  fieldViewBuilder: (
+                    context,
+                    controller,
+                    focusNode,
+                    onFieldSubmitted,
+                  ) {
+                    _opportunityFieldController = controller;
+                    _opportunityFocusNode = focusNode;
+                    return TextFormField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      textInputAction: TextInputAction.next,
+                      decoration: _decoration(
+                        'Opportunity *',
+                        hint:
+                            _mobileMatches == null
+                                ? 'Type to search opportunities'
+                                : 'Choose from mobile number matches',
+                        prefixIcon: const Icon(Icons.search_rounded),
+                      ),
+                      onChanged: (_) {
+                        if (_opportunity != null) {
+                          setState(() => _opportunity = null);
+                        }
+                      },
+                      onFieldSubmitted: (_) => onFieldSubmitted(),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Opportunity is required.';
+                        }
+                        if (_opportunity == null) {
+                          return 'Select an opportunity from suggestions.';
+                        }
+                        return null;
+                      },
                     );
                   },
-                  fieldViewBuilder:
-                      (
-                        context,
-                        controller,
-                        focusNode,
-                        onFieldSubmitted,
-                      ) => TextFormField(
-                        controller: controller,
-                        focusNode: focusNode,
-                        textInputAction: TextInputAction.next,
-                        decoration: _decoration(
-                          'Opportunity *',
-                          hint: 'Type to search opportunities',
-                          prefixIcon: const Icon(Icons.search_rounded),
-                        ),
-                        onChanged: (_) {
-                          if (_opportunity != null) {
-                            setState(() => _opportunity = null);
-                          }
-                        },
-                        onFieldSubmitted: (_) => onFieldSubmitted(),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Opportunity is required.';
-                          }
-                          if (_opportunity == null) {
-                            return 'Select an opportunity from suggestions.';
-                          }
-                          return null;
-                        },
-                      ),
                   optionsViewBuilder:
                       (context, onSelected, options) => Align(
                         alignment: Alignment.topLeft,
@@ -323,9 +464,15 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                                 final name =
                                     opportunity['name']?.toString() ?? '';
                                 final label = _opportunityLabel(opportunity);
+                                final details = [
+                                  if (label != name) name,
+                                  _opportunityMobiles(opportunity),
+                                  _productEnquired(opportunity),
+                                ].where((part) => part.isNotEmpty).join(' · ');
                                 return ListTile(
                                   title: Text(label),
-                                  subtitle: label == name ? null : Text(name),
+                                  subtitle:
+                                      details.isEmpty ? null : Text(details),
                                   onTap: () => onSelected(opportunity),
                                 );
                               },
@@ -333,6 +480,17 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                           ),
                         ),
                       ),
+                ),
+                const SizedBox(height: 13),
+                TextFormField(
+                  controller: _productController,
+                  textCapitalization: TextCapitalization.sentences,
+                  textInputAction: TextInputAction.next,
+                  decoration: _decoration(
+                    'Product enquired',
+                    hint: 'Filled from the selected opportunity',
+                    prefixIcon: const Icon(Icons.inventory_2_outlined),
+                  ),
                 ),
                 const SizedBox(height: 13),
                 TextFormField(
@@ -414,6 +572,14 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                   locationLabel,
                   _mapLinkController.text.trim(),
                 ),
+                if (_productController.text.trim().isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  _linkedInfo(
+                    Icons.inventory_2_outlined,
+                    'Product enquired',
+                    _productController.text.trim(),
+                  ),
+                ],
               ],
             ),
           ),
@@ -476,16 +642,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                   value: _assignedTo,
                   isExpanded: true,
                   decoration: _decoration('Assigned to *'),
-                  items: [
-                    for (final user in _users)
-                      DropdownMenuItem(
-                        value: user['name']?.toString(),
-                        child: Text(
-                          _userLabel(user),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                  ],
+                  items: _assigneeItems(),
                   onChanged: (value) => setState(() => _assignedTo = value),
                   validator:
                       (value) => value == null ? 'Choose an assignee.' : null,
@@ -527,6 +684,47 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
         ],
       ),
     );
+  }
+
+  /// "Assign to me" first, then other enabled users by full name. The email
+  /// is shown only when two users share the same full name.
+  List<DropdownMenuItem<String>> _assigneeItems() {
+    final others =
+        _users
+            .where((user) => user['name']?.toString() != _currentUser)
+            .toList()
+          ..sort(
+            (a, b) => _userFullName(
+              a,
+            ).toLowerCase().compareTo(_userFullName(b).toLowerCase()),
+          );
+    final nameCounts = <String, int>{};
+    for (final user in others) {
+      final fullName = _userFullName(user);
+      nameCounts[fullName] = (nameCounts[fullName] ?? 0) + 1;
+    }
+    final me = _users.where((user) => user['name']?.toString() == _currentUser);
+    return [
+      for (final user in me)
+        DropdownMenuItem(
+          value: _currentUser,
+          child: Text(
+            'Assign to me (${_userFullName(user)})',
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+      for (final user in others)
+        DropdownMenuItem(
+          value: user['name']?.toString(),
+          child: Text(
+            (nameCounts[_userFullName(user)] ?? 0) > 1
+                ? '${_userFullName(user)} · ${user['name']}'
+                : _userFullName(user),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+    ];
   }
 
   Widget _linkedInfo(IconData icon, String title, String subtitle) => Row(
