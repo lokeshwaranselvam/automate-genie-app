@@ -10,6 +10,7 @@ import '../utils/api/image_upload_api.dart';
 import '../utils/api/session_auth.dart';
 import '../utils/widget/camera_service.dart';
 import '../utils/widget/gps_photo_stamper.dart';
+import '../utils/widget/location_permission_helper.dart';
 import '../utils/widget/glass_card.dart';
 import '../utils/widget/geofence_manager.dart';
 import '../utils/widget/warning.dart';
@@ -98,18 +99,9 @@ class _EventDetailsState extends State<EventDetails> {
       } else if (status.isGranted) {
         print("✅ Foreground location permission granted");
 
-        // Then request background location for persistent tracking
-        final backgroundStatus = await Permission.locationAlways.request();
-
-        if (backgroundStatus.isGranted) {
-          print(
-            "✅ Background location permission granted - TRACKING WILL WORK EVEN WHEN APP CLOSED",
-          );
-        } else if (backgroundStatus.isDenied) {
-          print(
-            "⚠️ Background location denied - tracking may stop when app closes",
-          );
-        }
+        // Background location is asked once per install, not on every
+        // screen open; "While using the app" is enough for live tracking.
+        await LocationPermissionHelper.requestBackgroundOnce();
       } else if (status.isPermanentlyDenied) {
         print(
           "⚠️ Location permission permanently denied - opening app settings",
