@@ -160,6 +160,14 @@ class SessionAuthApi {
     }
   }
 
+  /// Returns the signed-in username saved on this device, without contacting
+  /// the server.
+  static Future<String?> getSavedSessionUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    final user = prefs.getString(_usernameKey)?.trim();
+    return (user == null || user.isEmpty) ? null : user;
+  }
+
   static Future<bool> isSessionActive(String expectedUsername) async {
     final user = await getActiveSessionUser();
     return user != null &&
