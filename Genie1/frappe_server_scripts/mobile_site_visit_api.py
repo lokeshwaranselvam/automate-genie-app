@@ -62,12 +62,27 @@ def get_location_types():
     if not location_field:
         frappe.throw("Customer Location is missing its location_type field.")
 
-    if location_field.fieldtype not in ["Select", "Link", "Data", "Small Text", "Text"]:
-        frappe.throw("Opportunity location_type must be a Select, Link, or text field.")
-
-    # The mobile form uses these fixed choices regardless of field type. Any
-    # Select/Link storage requirements are checked when a location is saved.
-    return {"options": ["Site", "Home", "Others"], "free_text": False}
+    if location_field.fieldtype == "Select":
+        options = [
+            option.strip()
+            for option in (location_field.options or "").splitlines()
+            if option.strip()
+        ]
+        return {"options": options, "free_text": not options}
+    if location_field.fieldtype == "Link" and location_field.options:
+        options = [
+            row.name
+            for row in frappe.get_all(
+                location_field.options,
+                fields=["name"],
+                order_by="name asc",
+                limit_page_length=500,
+            )
+        ]
+        return {"options": options, "free_text": False}
+    if location_field.fieldtype in ["Data", "Small Text", "Text"]:
+        return {"options": [], "free_text": True}
+    return {"options": [], "free_text": False}
 
 
 MOBILE_FIELD_CANDIDATES = [
@@ -274,30 +289,13 @@ elif action == "save_location":
 
     location_type_config = get_location_types()
     allowed_types = location_type_config["options"]
-    if location_type not in allowed_types:
-        frappe.throw("Choose a valid location type: Site, Home, or Others.")
+    location_type_free_text = location_type_config["free_text"]
+    if not location_type_free_text and location_type not in allowed_types:
+        frappe.throw("Choose a valid location type.")
 
     location_table = get_opportunity_location_table()
     table_field = location_table["table_field"]
     child_meta = location_table["child_meta"]
-    location_type_field = child_meta.get_field("location_type")
-    if location_type_field.fieldtype == "Select":
-        configured_options = [
-            option.strip()
-            for option in (location_type_field.options or "").splitlines()
-            if option.strip()
-        ]
-        if location_type not in configured_options:
-            frappe.throw(
-                "Add Site, Home, and Others to the Opportunity location_type Select options."
-            )
-    elif location_type_field.fieldtype == "Link":
-        if not frappe.db.exists(location_type_field.options, location_type):
-            frappe.throw(
-                "Create Site, Home, and Others records in "
-                + location_type_field.options
-                + " for the Opportunity location_type Link field."
-            )
     child_fields = field_names(child_meta)
     location_row = {"doctype": child_meta.name}
     required_values = {
