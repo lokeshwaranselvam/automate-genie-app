@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'geofence_manager.dart';
 
 class LiveLocationService {
   static final LiveLocationService _instance = LiveLocationService._internal();
@@ -47,6 +48,17 @@ class LiveLocationService {
     } catch (e) {
       _isTracking = false;
       rethrow;
+    }
+  }
+
+  /// Stops live tracking and the event geofence before local sign-out, so the
+  /// native service does not keep uploading GPS under the previous user.
+  static Future<void> stopForSignOut() async {
+    await LiveLocationService().stopTracking();
+    try {
+      await GeofenceManager.instance.stopMonitoring();
+    } catch (e) {
+      print('Warning: Could not stop geofence monitoring: $e');
     }
   }
 

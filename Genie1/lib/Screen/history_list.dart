@@ -1,4 +1,5 @@
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:homegenie/utils/widget/live_location_service.dart';
 import 'package:homegenie/Screen/login.dart';
 import 'package:intl/intl.dart';
 import '../utils/api/event.dart';
@@ -76,6 +77,7 @@ class _HistoryListState extends State<HistoryList> {
             'Session expired. Please log in again.',
             'Error',
           );
+          await LiveLocationService.stopForSignOut();
           await prefs.clear();
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),

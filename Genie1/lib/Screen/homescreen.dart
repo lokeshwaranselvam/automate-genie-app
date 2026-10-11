@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:homegenie/utils/widget/live_location_service.dart';
 import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
@@ -305,6 +306,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             'Session expired. Please log in again.',
             'Error',
           );
+          await LiveLocationService.stopForSignOut();
           await prefs.clear();
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
@@ -947,6 +949,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                   await SessionAuthApi.logout();
                   SharedPreferences prefs =
                       await SharedPreferences.getInstance();
+                  await LiveLocationService.stopForSignOut();
                   await prefs.clear();
 
                   await Future.delayed(Duration(milliseconds: 300));

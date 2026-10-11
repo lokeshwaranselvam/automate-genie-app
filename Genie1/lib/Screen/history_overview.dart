@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:homegenie/utils/widget/live_location_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import '../utils/widget/glass_card.dart';
@@ -81,6 +82,7 @@ class _HistoryOverviewState extends State<HistoryOverview> {
             'Session expired. Please log in again.',
             'Error',
           );
+          await LiveLocationService.stopForSignOut();
           await prefs.clear();
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),

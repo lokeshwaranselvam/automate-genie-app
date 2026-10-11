@@ -1573,6 +1573,7 @@ class _EventDetailsState extends State<EventDetails> {
             'Session expired. Please log in again.',
             'Error',
           );
+          await LiveLocationService.stopForSignOut();
           await prefs.clear();
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
