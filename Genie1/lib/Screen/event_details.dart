@@ -68,6 +68,8 @@ class _EventDetailsState extends State<EventDetails> {
   // ── Photo capture ──────────────────────────────────────────────────────────
   final List<File> _capturedPhotos = [];
   bool _isUploadingPhoto = false;
+  // Photos already uploaded to this Event for checkout.
+  int _uploadedCheckoutPhotos = 0;
 
   // ── Geofence ───────────────────────────────────────────────────────────────
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -314,16 +316,20 @@ class _EventDetailsState extends State<EventDetails> {
     );
   }
 
-  Future<void> _uploadCapturedPhotosAfterCheckout({
+  /// Uploads pending checkout photos to the Event before the checkout call.
+  /// Uploaded photos leave the pending list, so a retry only re-sends the
+  /// ones that failed. Returns true once every photo is on the Event and at
+  /// least one photo has been uploaded for this visit.
+  Future<bool> _uploadCheckoutPhotosBeforeCheckout({
     required double lat,
     required double lng,
     required String address,
   }) async {
-    if (_capturedPhotos.isEmpty) return;
+    if (_capturedPhotos.isEmpty) return _uploadedCheckoutPhotos > 0;
 
     if (mounted) setState(() => _isUploadingPhoto = true);
 
-    int successCount = 0;
+    final failed = <File>[];
 
     try {
       for (final file in List<File>.from(_capturedPhotos)) {
@@ -354,10 +360,13 @@ class _EventDetailsState extends State<EventDetails> {
           }
 
           if (url != null) {
-            successCount++;
+            _uploadedCheckoutPhotos++;
+          } else {
+            failed.add(file);
           }
         } catch (e) {
           debugPrint('[EventDetails] Photo upload failed for ${file.path}: $e');
+          failed.add(file);
         } finally {
           if (stampedFile != null &&
               stampedFile.path != file.path &&
@@ -370,21 +379,26 @@ class _EventDetailsState extends State<EventDetails> {
       }
 
       if (mounted) {
-        Warning.show(
-          context,
-          successCount == _capturedPhotos.length
-              ? 'Photo uploaded to Event successfully!'
-              : 'Uploaded $successCount/${_capturedPhotos.length} photos. Some photos failed to upload.',
-          successCount == _capturedPhotos.length ? 'Success' : 'Warning',
-        );
-      }
-
-      if (successCount == _capturedPhotos.length && mounted) {
         setState(() {
-          _capturedPhotos.clear();
-          capturedImage = null;
+          _capturedPhotos
+            ..clear()
+            ..addAll(failed);
+          capturedImage = failed.isEmpty ? null : failed.last;
         });
       }
+
+      if (failed.isNotEmpty) {
+        if (mounted) {
+          Warning.show(
+            context,
+            '${failed.length} photo(s) could not be uploaded. Check your '
+                'connection and tap Check-out again. You have not been checked out.',
+            'Photo upload failed',
+          );
+        }
+        return false;
+      }
+      return _uploadedCheckoutPhotos > 0;
     } finally {
       if (mounted) setState(() => _isUploadingPhoto = false);
     }
@@ -574,11 +588,12 @@ class _EventDetailsState extends State<EventDetails> {
   }
 
   bool _requiresPhotoBeforeCheckout() {
-    return _isSiteVisitEvent();
+    // A photo is mandatory before checking out of any event.
+    return true;
   }
 
   bool _hasCapturedCheckoutPhoto() {
-    return _capturedPhotos.isNotEmpty || capturedImage != null;
+    return _capturedPhotos.isNotEmpty || _uploadedCheckoutPhotos > 0;
   }
 
   bool _requiresLocationBeforeCheckIn() {
@@ -1212,6 +1227,19 @@ class _EventDetailsState extends State<EventDetails> {
 
     final lastLatLng = prefs.getString('last_lat_lng') ?? '';
 
+    // The checkout photo must reach the Event before checking out.
+    final photosUploaded = await _uploadCheckoutPhotosBeforeCheckout(
+      lat: lat,
+      lng: lng,
+      address: address,
+    );
+    if (!photosUploaded) {
+      if (mounted && _uploadedCheckoutPhotos == 0 && _capturedPhotos.isEmpty) {
+        Warning.show(context, 'Capture image before checkout', 'Warning');
+      }
+      return;
+    }
+
     final response = await Event.eventCheckout(
       userEmail,
       eventId,
@@ -1317,12 +1345,6 @@ class _EventDetailsState extends State<EventDetails> {
         }
       }
     }
-
-    await _uploadCapturedPhotosAfterCheckout(
-      lat: lat,
-      lng: lng,
-      address: address,
-    );
 
     try {
       if (AudioRecordingService().isRecording) {
@@ -2403,6 +2425,7 @@ class _EventDetailsState extends State<EventDetails> {
                     _visitChecklistRow(
                       'Photos captured',
                       _capturedPhotos.isNotEmpty ||
+                          _uploadedCheckoutPhotos > 0 ||
                           (checkedOut && _requiresPhotoBeforeCheckout()),
                     ),
                     _visitChecklistRow('Customer location verified', checkedIn),
