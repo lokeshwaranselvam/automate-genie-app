@@ -1458,10 +1458,16 @@ class _EventDetailsState extends State<EventDetails> {
     required String address,
     required Position position,
   }) async {
-    try {
-      await LiveLocationService().stopTracking();
-    } catch (error) {
-      debugPrint('Unable to stop live location after checkout: $error');
+    // Attendance check-in owns the day's live tracking. Only stop it here when
+    // the employee is not checked in for the day, otherwise the rest of the
+    // shift would go untracked after a single visit checkout.
+    final attendanceCheckedIn = prefs.getBool('is_employee_checked_in') ?? false;
+    if (!attendanceCheckedIn) {
+      try {
+        await LiveLocationService().stopTracking();
+      } catch (error) {
+        debugPrint('Unable to stop live location after checkout: $error');
+      }
     }
     try {
       LocationTrackerService.startTracking(
