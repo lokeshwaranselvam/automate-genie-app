@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:homegenie/Screen/login.dart';
 
@@ -10,6 +9,7 @@ import '../utils/api/event.dart';
 import '../utils/api/image_upload_api.dart';
 import '../utils/api/session_auth.dart';
 import '../utils/widget/camera_service.dart';
+import '../utils/widget/gps_photo_stamper.dart';
 import '../utils/widget/glass_card.dart';
 import '../utils/widget/geofence_manager.dart';
 import '../utils/widget/warning.dart';
@@ -299,203 +299,19 @@ class _EventDetailsState extends State<EventDetails> {
     });
   }
 
-  String _formatCapturedOn(DateTime dateTime) {
-    final day = dateTime.day.toString().padLeft(2, '0');
-    final month = dateTime.month.toString().padLeft(2, '0');
-    final year = dateTime.year.toString();
-    final hour = dateTime.hour.toString().padLeft(2, '0');
-    final minute = dateTime.minute.toString().padLeft(2, '0');
-    return '$day-$month-$year $hour:$minute';
-  }
-
-  String _buildGpsStampText({
-    required DateTime capturedOn,
-    required double lat,
-    required double lng,
-    required String address,
-  }) {
-    final normalizedAddress = address.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return 'Captured on: ${_formatCapturedOn(capturedOn)}\n'
-        'Latitude: ${lat.toStringAsFixed(6)}\n'
-        'Longitude: ${lng.toStringAsFixed(6)}\n'
-        'Address: $normalizedAddress';
-  }
-
-  TextPainter _buildGpsTextPainter({
-    required String text,
-    required double maxWidth,
-    required double maxHeight,
-  }) {
-    for (double fontSize = 18; fontSize >= 10; fontSize -= 1) {
-      final painter = TextPainter(
-        text: TextSpan(
-          text: text,
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: fontSize,
-            fontWeight: FontWeight.w700,
-            height: 1.12,
-          ),
-        ),
-        textDirection: ui.TextDirection.ltr,
-        maxLines: 6,
-        ellipsis: '...',
-      )..layout(maxWidth: maxWidth);
-
-      if (painter.height <= maxHeight) {
-        return painter;
-      }
-    }
-
-    return TextPainter(
-      text: TextSpan(
-        text: text,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          height: 1.12,
-        ),
-      ),
-      textDirection: ui.TextDirection.ltr,
-      maxLines: 6,
-      ellipsis: '...',
-    )..layout(maxWidth: maxWidth);
-  }
-
   Future<File> _createGpsStampedImage({
     required File file,
     required double lat,
     required double lng,
     required String address,
-  }) async {
-    final bytes = await file.readAsBytes();
-    final ui.Image originalImage = await decodeImageFromList(bytes);
-    final capturedOn = await file.lastModified();
-    final Uint8List? mapBytes = await LocationHelper.getStaticMapImageBytes(
-      lat,
-      lng,
-    );
-    ui.Image? mapImage;
-
-    if (mapBytes != null) {
-      mapImage = await decodeImageFromList(mapBytes);
-    }
-
-    const maxOutputDimension = 960.0;
-    final scale =
-        math.max(originalImage.width, originalImage.height) > maxOutputDimension
-            ? maxOutputDimension /
-                math.max(originalImage.width, originalImage.height)
-            : 1.0;
-    final int targetWidth =
-        math.max(1, (originalImage.width * scale).round()).toInt();
-    final int targetHeight =
-        math.max(1, (originalImage.height * scale).round()).toInt();
-
-    final stampText = _buildGpsStampText(
-      capturedOn: capturedOn,
+  }) {
+    return GpsPhotoStamper.stamp(
+      file: file,
       lat: lat,
       lng: lng,
       address: address,
+      title: 'Visit Check-out',
     );
-
-    final footerHeight = math.max(120.0, targetHeight * 0.28);
-    final footerTop = targetHeight.toDouble() - footerHeight;
-    final horizontalPadding = targetWidth * 0.02;
-    final verticalPadding = footerHeight * 0.08;
-    final mapSize =
-        mapImage == null
-            ? 0.0
-            : math.min(
-              footerHeight - (verticalPadding * 2),
-              targetWidth * 0.26,
-            );
-    final textStartX =
-        mapImage == null
-            ? horizontalPadding
-            : horizontalPadding + mapSize + horizontalPadding;
-    final textWidth = math.max(
-      1.0,
-      targetWidth.toDouble() - textStartX - horizontalPadding,
-    );
-    final textHeight = math.max(1.0, footerHeight - (verticalPadding * 2));
-    final textPainter = _buildGpsTextPainter(
-      text: stampText,
-      maxWidth: textWidth,
-      maxHeight: textHeight,
-    );
-
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-
-    canvas.drawImageRect(
-      originalImage,
-      Rect.fromLTWH(
-        0,
-        0,
-        originalImage.width.toDouble(),
-        originalImage.height.toDouble(),
-      ),
-      Rect.fromLTWH(0, 0, targetWidth.toDouble(), targetHeight.toDouble()),
-      Paint(),
-    );
-    canvas.drawRect(
-      Rect.fromLTWH(0, footerTop, targetWidth.toDouble(), footerHeight),
-      Paint()..color = Colors.black.withOpacity(0.70),
-    );
-
-    if (mapImage != null) {
-      final mapRect = Rect.fromLTWH(
-        horizontalPadding,
-        footerTop + verticalPadding,
-        mapSize,
-        mapSize,
-      );
-      canvas.drawRect(
-        mapRect.inflate(2),
-        Paint()..color = Colors.white.withOpacity(0.95),
-      );
-      paintImage(
-        canvas: canvas,
-        rect: mapRect,
-        image: mapImage,
-        fit: BoxFit.cover,
-      );
-    }
-
-    final safeTextTop = math.max(
-      footerTop + verticalPadding,
-      footerTop + ((footerHeight - textPainter.height) / 2),
-    );
-
-    canvas.save();
-    canvas.clipRect(
-      Rect.fromLTWH(textStartX, footerTop, textWidth, footerHeight),
-    );
-    textPainter.paint(canvas, Offset(textStartX, safeTextTop));
-    canvas.restore();
-
-    final stampedImage = await recorder.endRecording().toImage(
-      targetWidth,
-      targetHeight,
-    );
-    final byteData = await stampedImage.toByteData(
-      format: ui.ImageByteFormat.png,
-    );
-    final stampedBytes = byteData?.buffer.asUint8List();
-
-    if (stampedBytes == null) {
-      return file;
-    }
-
-    final stampedPath = file.path.replaceFirst(
-      RegExp(r'(\.[^.]*)?$'),
-      '_gps.png',
-    );
-    final stampedFile = File(stampedPath);
-    await stampedFile.writeAsBytes(stampedBytes, flush: true);
-    return stampedFile;
   }
 
   Future<void> _uploadCapturedPhotosAfterCheckout({
