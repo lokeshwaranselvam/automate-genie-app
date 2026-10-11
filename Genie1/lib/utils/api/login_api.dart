@@ -49,8 +49,10 @@ class LoginApi {
           if (text != null && text.isNotEmpty) await prefs.setString(key, text);
         }
 
-        await save('api_key', data['api_key']);
-        await save('api_secret', data['api_secret']);
+        // api_key/api_secret are not used by the app; don't keep them in
+        // plain-text SharedPreferences, and remove copies saved by older builds.
+        await prefs.remove('api_key');
+        await prefs.remove('api_secret');
         await save('token', data['token']);
         // The standard Frappe session is authoritative for the signed-in user.
         await prefs.setString('email', sessionUser['username']!);
