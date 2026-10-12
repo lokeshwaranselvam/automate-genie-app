@@ -134,7 +134,7 @@ class LeadApi {
     }
     if (productCategoryOptions.isEmpty) {
       throw const FormatException(
-        'No Product Category options were returned. Configure Lead.custom_product_category in Frappe.',
+        'No Product Category options were returned. Configure Lead.custom_product_enquired in Frappe.',
       );
     }
 
@@ -177,7 +177,7 @@ class LeadApi {
             'mobile_no': mobileNo.trim(),
             'custom_requirement': requirement.trim(),
             'custom_source': source.trim(),
-            'custom_product_category': productCategory.trim(),
+            'custom_product_enquired': productCategory.trim(),
             'custom_address': address.trim(),
           },
         )

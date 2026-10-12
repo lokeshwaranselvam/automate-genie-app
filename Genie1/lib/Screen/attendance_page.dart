@@ -17,7 +17,7 @@ class AttendancePage extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onOpenHistory;
   final VoidCallback onAttendanceAction;
-  final VoidCallback onRequestCorrection;
+  final VoidCallback onLeaveApplication;
 
   const AttendancePage({
     super.key,
@@ -33,7 +33,7 @@ class AttendancePage extends StatelessWidget {
     required this.onBack,
     required this.onOpenHistory,
     required this.onAttendanceAction,
-    required this.onRequestCorrection,
+    required this.onLeaveApplication,
   });
 
   String _firstValue(List<String> keys, {String fallback = '—'}) {
@@ -395,10 +395,10 @@ class AttendancePage extends StatelessWidget {
             SizedBox(
               height: 52,
               child: ElevatedButton.icon(
-                onPressed: onRequestCorrection,
-                icon: const Icon(Icons.edit_calendar_rounded, size: 19),
+                onPressed: onLeaveApplication,
+                icon: const Icon(Icons.event_available_outlined, size: 19),
                 label: const Text(
-                  'Request Correction',
+                  'Leave Application',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                 ),
                 style: ElevatedButton.styleFrom(

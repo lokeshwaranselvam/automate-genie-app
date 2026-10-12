@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
 import 'attendance_page.dart';
+import 'leave_application_page.dart';
 import 'site_visits_page.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
@@ -84,6 +85,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   bool _checkedIn = false;
   bool _isActionLoading = false;
   bool _attendancePageOpen = false;
+  bool _leaveApplicationOpen = false;
   bool _prefsInitialized = false;
   Map<String, dynamic> _attendanceStatusDetails = {};
   int _selectedTab = 0;
@@ -230,9 +232,11 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
 
   void _returnToHome() {
     if (!mounted) return;
-    final shouldRefresh = _selectedTab != 0 || _attendancePageOpen;
+    final shouldRefresh =
+        _selectedTab != 0 || _attendancePageOpen || _leaveApplicationOpen;
     setState(() {
       _attendancePageOpen = false;
+      _leaveApplicationOpen = false;
       _selectedTab = 0;
     });
     unawaited(_loadHomeTaskTodayCount());
@@ -809,9 +813,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
 
   void _selectBottomTab(int index) {
     if (index == 0) unawaited(_loadHomeTaskTodayCount());
-    if (_attendancePageOpen) {
+    if (_attendancePageOpen || _leaveApplicationOpen) {
       setState(() {
         _attendancePageOpen = false;
+        _leaveApplicationOpen = false;
         _selectedTab = index;
       });
       if (index == 0) unawaited(_refreshHomeSchedule());
@@ -1737,13 +1742,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         );
       },
       onAttendanceAction: _performAttendanceAction,
-      onRequestCorrection: () {
-        Warning.show(
-          context,
-          'Contact your administrator to request an attendance correction.',
-          'Notice',
-        );
-      },
+      onLeaveApplication: () => setState(() => _leaveApplicationOpen = true),
     );
   }
 
@@ -1869,6 +1868,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
 
     return WillPopScope(
       onWillPop: () async {
+        if (_leaveApplicationOpen) {
+          setState(() => _leaveApplicationOpen = false);
+          return false;
+        }
         if (_attendancePageOpen) {
           setState(() => _attendancePageOpen = false);
           return false;
@@ -2027,7 +2030,12 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           ),
         ),
         body:
-            _attendancePageOpen
+            _leaveApplicationOpen
+                ? LeaveApplicationPage(
+                  onBack: () => setState(() => _leaveApplicationOpen = false),
+                  onNotifications: () => _selectBottomTab(1),
+                )
+                : _attendancePageOpen
                 ? _buildAttendancePage()
                 : IndexedStack(
                   index: _selectedTab,

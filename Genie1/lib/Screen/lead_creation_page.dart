@@ -60,18 +60,6 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
       if (!mounted) return;
       setState(() {
         _options = options;
-        _selectedCategory =
-            options.productCategoryOptions.contains(_selectedCategory)
-                ? _selectedCategory
-                : options.productCategoryOptions.isNotEmpty
-                ? options.productCategoryOptions.first
-                : null;
-        _selectedSource =
-            options.sourceOptions.contains(_selectedSource)
-                ? _selectedSource
-                : options.sourceOptions.isNotEmpty
-                ? options.sourceOptions.first
-                : null;
         _loadingOptions = false;
       });
     } catch (error) {

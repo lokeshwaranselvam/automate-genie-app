@@ -1,7 +1,25 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+
+class LocationSuggestion {
+  const LocationSuggestion({required this.address, required this.placeId});
+
+  final String address;
+  final String placeId;
+}
+
+class LocationSearchResult {
+  const LocationSearchResult({
+    required this.address,
+    required this.coordinates,
+  });
+
+  final String address;
+  final LatLng coordinates;
+}
 
 class LocationHelper {
   static const String _googleApiKey = 'AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI';
@@ -247,6 +265,173 @@ class LocationHelper {
     } finally {
       client.close();
     }
+  }
+
+  static String newLocationSearchSession() => base64UrlEncode(
+    List<int>.generate(24, (_) => Random.secure().nextInt(256)),
+  );
+
+  static Map<String, dynamic> _placeResponse(http.Response response) {
+    if (response.statusCode != 200) {
+      throw StateError('Location search is unavailable. Please try again.');
+    }
+    dynamic data;
+    try {
+      data = jsonDecode(response.body);
+    } catch (_) {
+      throw StateError('Location search returned an invalid response.');
+    }
+    if (data is! Map || data.containsKey('error')) {
+      throw StateError('Location search is unavailable. Please try again.');
+    }
+    return Map<String, dynamic>.from(data);
+  }
+
+  static Future<List<LocationSuggestion>> suggestLocations(
+    String query, {
+    required String sessionToken,
+    required LatLng bias,
+  }) async {
+    if (query.trim().isEmpty) return [];
+    final response = await http
+        .post(
+          Uri.https('places.googleapis.com', '/v1/places:autocomplete'),
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': _googleApiKey,
+            'X-Goog-FieldMask':
+                'suggestions.placePrediction.placeId,suggestions.placePrediction.text.text',
+          },
+          body: jsonEncode({
+            'input': query.trim(),
+            'sessionToken': sessionToken,
+            'regionCode': 'in',
+            'locationBias': {
+              'circle': {
+                'center': {
+                  'latitude': bias.latitude,
+                  'longitude': bias.longitude,
+                },
+                'radius': 50000,
+              },
+            },
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    final data = _placeResponse(response);
+    final rows = data['suggestions'];
+    if (rows == null) return [];
+    if (rows is! List) {
+      throw StateError('Location search returned an invalid response.');
+    }
+    final results = <LocationSuggestion>[];
+    for (final row in rows) {
+      if (row is! Map || row['placePrediction'] is! Map) continue;
+      final prediction = row['placePrediction'] as Map;
+      final placeId = prediction['placeId']?.toString().trim() ?? '';
+      final text = prediction['text'];
+      final address = text is Map ? text['text']?.toString().trim() ?? '' : '';
+      if (placeId.isEmpty || address.isEmpty) continue;
+      results.add(LocationSuggestion(address: address, placeId: placeId));
+      if (results.length == 5) break;
+    }
+    return results;
+  }
+
+  static Future<LocationSearchResult> resolveLocationSuggestion(
+    LocationSuggestion suggestion, {
+    required String sessionToken,
+  }) async {
+    final response = await http
+        .get(
+          Uri(
+            scheme: 'https',
+            host: 'places.googleapis.com',
+            pathSegments: ['v1', 'places', suggestion.placeId],
+            queryParameters: {'sessionToken': sessionToken},
+          ),
+          headers: {
+            'X-Goog-Api-Key': _googleApiKey,
+            'X-Goog-FieldMask': 'location',
+          },
+        )
+        .timeout(const Duration(seconds: 15));
+    final data = _placeResponse(response);
+    final location = data['location'];
+    if (location is! Map) {
+      throw StateError('Google Maps returned no coordinates for this place.');
+    }
+    final latitude = double.tryParse(location['latitude']?.toString() ?? '');
+    final longitude = double.tryParse(location['longitude']?.toString() ?? '');
+    if (!_validCoordinates(latitude, longitude)) {
+      throw StateError(
+        'Google Maps returned invalid coordinates for this place.',
+      );
+    }
+    return LocationSearchResult(
+      address: suggestion.address,
+      coordinates: LatLng(latitude!, longitude!),
+    );
+  }
+
+  static Future<List<LocationSearchResult>> searchLocations(
+    String query,
+  ) async {
+    final address = query.trim();
+    if (address.isEmpty) return [];
+    final response = await http
+        .get(
+          Uri.https('maps.googleapis.com', '/maps/api/geocode/json', {
+            'address': address,
+            'region': 'in',
+            'key': _googleApiKey,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) {
+      throw StateError('Location search is unavailable. Please try again.');
+    }
+    dynamic data;
+    try {
+      data = jsonDecode(response.body);
+    } catch (_) {
+      throw StateError('Location search returned an invalid response.');
+    }
+    if (data is Map && data['status'] == 'ZERO_RESULTS') return [];
+    if (data is! Map || data['status'] != 'OK' || data['results'] is! List) {
+      throw StateError('Location search is unavailable. Please try again.');
+    }
+    final results = <LocationSearchResult>[];
+    for (final row in data['results'] as List) {
+      if (row is! Map || row['geometry'] is! Map) continue;
+      final location = row['geometry']['location'];
+      if (location is! Map) continue;
+      final latitude = double.tryParse(location['lat']?.toString() ?? '');
+      final longitude = double.tryParse(location['lng']?.toString() ?? '');
+      final label = row['formatted_address']?.toString().trim() ?? '';
+      if (!_validCoordinates(latitude, longitude) || label.isEmpty) continue;
+      results.add(
+        LocationSearchResult(
+          address: label,
+          coordinates: LatLng(latitude!, longitude!),
+        ),
+      );
+      if (results.length == 5) break;
+    }
+    return results;
+  }
+
+  /// Reads coordinates already present in a URL without a network request.
+  static LatLng? tryCoordinatesFromMapLink(String mapLink) {
+    final raw = mapLink.trim();
+    if (raw.isEmpty) return null;
+    final uri = Uri.tryParse(raw.contains('://') ? raw : 'https://$raw');
+    if (uri == null ||
+        uri.host.isEmpty ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      return null;
+    }
+    return _coordinatesFromMapUrl(uri);
   }
 
   static LatLng? _coordinatesFromMapUrl(Uri uri) {

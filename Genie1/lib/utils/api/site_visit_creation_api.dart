@@ -111,7 +111,11 @@ class SiteVisitCreationApi {
   }
 
   static Future<Map<String, dynamic>> loadOptions() async {
-    final user = await SessionAuthApi.getActiveSessionUser();
+    // This endpoint authenticates the session and returns current_user, which
+    // _decodeResponse checks. Avoid an extra session-check HTTP request.
+    final user =
+        await SessionAuthApi.getSavedSessionUser() ??
+        await SessionAuthApi.getActiveSessionUser();
     final sid = await SessionAuthApi.getSessionId();
     if (user == null || sid == null || sid.isEmpty) {
       throw StateError('Your ERP session expired. Please sign in again.');
@@ -128,6 +132,8 @@ class SiteVisitCreationApi {
         .timeout(const Duration(seconds: 40));
     final result = _decodeResponse(response, user);
     if (result['opportunities'] is! List ||
+        result['product_enquired_options'] is! List ||
+        result['event_categories'] is! List ||
         result['location_types'] is! List ||
         result['users'] is! List) {
       throw const FormatException(
@@ -137,12 +143,14 @@ class SiteVisitCreationApi {
     return result;
   }
 
-  /// Opportunities created by the signed-in user whose Opportunity or linked
+  /// Opportunities whose Opportunity or linked
   /// Lead has a mobile number containing [mobile].
   static Future<List<Map<String, dynamic>>> searchByMobile(
     String mobile,
   ) async {
-    final user = await SessionAuthApi.getActiveSessionUser();
+    final user =
+        await SessionAuthApi.getSavedSessionUser() ??
+        await SessionAuthApi.getActiveSessionUser();
     final sid = await SessionAuthApi.getSessionId();
     if (user == null || sid == null || sid.isEmpty) {
       throw StateError('Your ERP session expired. Please sign in again.');
@@ -190,7 +198,9 @@ class SiteVisitCreationApi {
     required String locationRow,
     required String summary,
     required String startsOn,
+    required String endsOn,
     required String assignedTo,
+    required String category,
     String productEnquired = '',
   }) => _post({
     'action': 'create_event',
@@ -198,8 +208,9 @@ class SiteVisitCreationApi {
     'location_row': locationRow,
     'summary': summary,
     'starts_on': startsOn,
+    'ends_on': endsOn,
     'assigned_to': assignedTo,
-    'category': 'Installation',
+    'category': category,
     if (productEnquired.isNotEmpty) 'product_enquired': productEnquired,
   });
 }
