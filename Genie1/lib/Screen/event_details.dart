@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:homegenie/Screen/login.dart';
 
@@ -10,6 +9,8 @@ import '../utils/api/event.dart';
 import '../utils/api/image_upload_api.dart';
 import '../utils/api/session_auth.dart';
 import '../utils/widget/camera_service.dart';
+import '../utils/widget/gps_photo_stamper.dart';
+import '../utils/widget/location_permission_helper.dart';
 import '../utils/widget/glass_card.dart';
 import '../utils/widget/geofence_manager.dart';
 import '../utils/widget/warning.dart';
@@ -68,6 +69,8 @@ class _EventDetailsState extends State<EventDetails> {
   // ── Photo capture ──────────────────────────────────────────────────────────
   final List<File> _capturedPhotos = [];
   bool _isUploadingPhoto = false;
+  // Photos already uploaded to this Event for checkout.
+  int _uploadedCheckoutPhotos = 0;
 
   // ── Geofence ───────────────────────────────────────────────────────────────
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -96,18 +99,9 @@ class _EventDetailsState extends State<EventDetails> {
       } else if (status.isGranted) {
         print("✅ Foreground location permission granted");
 
-        // Then request background location for persistent tracking
-        final backgroundStatus = await Permission.locationAlways.request();
-
-        if (backgroundStatus.isGranted) {
-          print(
-            "✅ Background location permission granted - TRACKING WILL WORK EVEN WHEN APP CLOSED",
-          );
-        } else if (backgroundStatus.isDenied) {
-          print(
-            "⚠️ Background location denied - tracking may stop when app closes",
-          );
-        }
+        // Background location is asked once per install, not on every
+        // screen open; "While using the app" is enough for live tracking.
+        await LocationPermissionHelper.requestBackgroundOnce();
       } else if (status.isPermanentlyDenied) {
         print(
           "⚠️ Location permission permanently denied - opening app settings",
@@ -299,215 +293,35 @@ class _EventDetailsState extends State<EventDetails> {
     });
   }
 
-  String _formatCapturedOn(DateTime dateTime) {
-    final day = dateTime.day.toString().padLeft(2, '0');
-    final month = dateTime.month.toString().padLeft(2, '0');
-    final year = dateTime.year.toString();
-    final hour = dateTime.hour.toString().padLeft(2, '0');
-    final minute = dateTime.minute.toString().padLeft(2, '0');
-    return '$day-$month-$year $hour:$minute';
-  }
-
-  String _buildGpsStampText({
-    required DateTime capturedOn,
-    required double lat,
-    required double lng,
-    required String address,
-  }) {
-    final normalizedAddress = address.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return 'Captured on: ${_formatCapturedOn(capturedOn)}\n'
-        'Latitude: ${lat.toStringAsFixed(6)}\n'
-        'Longitude: ${lng.toStringAsFixed(6)}\n'
-        'Address: $normalizedAddress';
-  }
-
-  TextPainter _buildGpsTextPainter({
-    required String text,
-    required double maxWidth,
-    required double maxHeight,
-  }) {
-    for (double fontSize = 18; fontSize >= 10; fontSize -= 1) {
-      final painter = TextPainter(
-        text: TextSpan(
-          text: text,
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: fontSize,
-            fontWeight: FontWeight.w700,
-            height: 1.12,
-          ),
-        ),
-        textDirection: ui.TextDirection.ltr,
-        maxLines: 6,
-        ellipsis: '...',
-      )..layout(maxWidth: maxWidth);
-
-      if (painter.height <= maxHeight) {
-        return painter;
-      }
-    }
-
-    return TextPainter(
-      text: TextSpan(
-        text: text,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          height: 1.12,
-        ),
-      ),
-      textDirection: ui.TextDirection.ltr,
-      maxLines: 6,
-      ellipsis: '...',
-    )..layout(maxWidth: maxWidth);
-  }
-
   Future<File> _createGpsStampedImage({
     required File file,
     required double lat,
     required double lng,
     required String address,
-  }) async {
-    final bytes = await file.readAsBytes();
-    final ui.Image originalImage = await decodeImageFromList(bytes);
-    final capturedOn = await file.lastModified();
-    final Uint8List? mapBytes = await LocationHelper.getStaticMapImageBytes(
-      lat,
-      lng,
-    );
-    ui.Image? mapImage;
-
-    if (mapBytes != null) {
-      mapImage = await decodeImageFromList(mapBytes);
-    }
-
-    const maxOutputDimension = 960.0;
-    final scale =
-        math.max(originalImage.width, originalImage.height) > maxOutputDimension
-            ? maxOutputDimension /
-                math.max(originalImage.width, originalImage.height)
-            : 1.0;
-    final int targetWidth =
-        math.max(1, (originalImage.width * scale).round()).toInt();
-    final int targetHeight =
-        math.max(1, (originalImage.height * scale).round()).toInt();
-
-    final stampText = _buildGpsStampText(
-      capturedOn: capturedOn,
+  }) {
+    return GpsPhotoStamper.stamp(
+      file: file,
       lat: lat,
       lng: lng,
       address: address,
+      title: 'Visit Check-out',
     );
-
-    final footerHeight = math.max(120.0, targetHeight * 0.28);
-    final footerTop = targetHeight.toDouble() - footerHeight;
-    final horizontalPadding = targetWidth * 0.02;
-    final verticalPadding = footerHeight * 0.08;
-    final mapSize =
-        mapImage == null
-            ? 0.0
-            : math.min(
-              footerHeight - (verticalPadding * 2),
-              targetWidth * 0.26,
-            );
-    final textStartX =
-        mapImage == null
-            ? horizontalPadding
-            : horizontalPadding + mapSize + horizontalPadding;
-    final textWidth = math.max(
-      1.0,
-      targetWidth.toDouble() - textStartX - horizontalPadding,
-    );
-    final textHeight = math.max(1.0, footerHeight - (verticalPadding * 2));
-    final textPainter = _buildGpsTextPainter(
-      text: stampText,
-      maxWidth: textWidth,
-      maxHeight: textHeight,
-    );
-
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-
-    canvas.drawImageRect(
-      originalImage,
-      Rect.fromLTWH(
-        0,
-        0,
-        originalImage.width.toDouble(),
-        originalImage.height.toDouble(),
-      ),
-      Rect.fromLTWH(0, 0, targetWidth.toDouble(), targetHeight.toDouble()),
-      Paint(),
-    );
-    canvas.drawRect(
-      Rect.fromLTWH(0, footerTop, targetWidth.toDouble(), footerHeight),
-      Paint()..color = Colors.black.withOpacity(0.70),
-    );
-
-    if (mapImage != null) {
-      final mapRect = Rect.fromLTWH(
-        horizontalPadding,
-        footerTop + verticalPadding,
-        mapSize,
-        mapSize,
-      );
-      canvas.drawRect(
-        mapRect.inflate(2),
-        Paint()..color = Colors.white.withOpacity(0.95),
-      );
-      paintImage(
-        canvas: canvas,
-        rect: mapRect,
-        image: mapImage,
-        fit: BoxFit.cover,
-      );
-    }
-
-    final safeTextTop = math.max(
-      footerTop + verticalPadding,
-      footerTop + ((footerHeight - textPainter.height) / 2),
-    );
-
-    canvas.save();
-    canvas.clipRect(
-      Rect.fromLTWH(textStartX, footerTop, textWidth, footerHeight),
-    );
-    textPainter.paint(canvas, Offset(textStartX, safeTextTop));
-    canvas.restore();
-
-    final stampedImage = await recorder.endRecording().toImage(
-      targetWidth,
-      targetHeight,
-    );
-    final byteData = await stampedImage.toByteData(
-      format: ui.ImageByteFormat.png,
-    );
-    final stampedBytes = byteData?.buffer.asUint8List();
-
-    if (stampedBytes == null) {
-      return file;
-    }
-
-    final stampedPath = file.path.replaceFirst(
-      RegExp(r'(\.[^.]*)?$'),
-      '_gps.png',
-    );
-    final stampedFile = File(stampedPath);
-    await stampedFile.writeAsBytes(stampedBytes, flush: true);
-    return stampedFile;
   }
 
-  Future<void> _uploadCapturedPhotosAfterCheckout({
+  /// Uploads pending checkout photos to the Event before the checkout call.
+  /// Uploaded photos leave the pending list, so a retry only re-sends the
+  /// ones that failed. Returns true once every photo is on the Event and at
+  /// least one photo has been uploaded for this visit.
+  Future<bool> _uploadCheckoutPhotosBeforeCheckout({
     required double lat,
     required double lng,
     required String address,
   }) async {
-    if (_capturedPhotos.isEmpty) return;
+    if (_capturedPhotos.isEmpty) return _uploadedCheckoutPhotos > 0;
 
     if (mounted) setState(() => _isUploadingPhoto = true);
 
-    int successCount = 0;
+    final failed = <File>[];
 
     try {
       for (final file in List<File>.from(_capturedPhotos)) {
@@ -538,10 +352,13 @@ class _EventDetailsState extends State<EventDetails> {
           }
 
           if (url != null) {
-            successCount++;
+            _uploadedCheckoutPhotos++;
+          } else {
+            failed.add(file);
           }
         } catch (e) {
           debugPrint('[EventDetails] Photo upload failed for ${file.path}: $e');
+          failed.add(file);
         } finally {
           if (stampedFile != null &&
               stampedFile.path != file.path &&
@@ -554,21 +371,26 @@ class _EventDetailsState extends State<EventDetails> {
       }
 
       if (mounted) {
-        Warning.show(
-          context,
-          successCount == _capturedPhotos.length
-              ? 'Photo uploaded to Event successfully!'
-              : 'Uploaded $successCount/${_capturedPhotos.length} photos. Some photos failed to upload.',
-          successCount == _capturedPhotos.length ? 'Success' : 'Warning',
-        );
-      }
-
-      if (successCount == _capturedPhotos.length && mounted) {
         setState(() {
-          _capturedPhotos.clear();
-          capturedImage = null;
+          _capturedPhotos
+            ..clear()
+            ..addAll(failed);
+          capturedImage = failed.isEmpty ? null : failed.last;
         });
       }
+
+      if (failed.isNotEmpty) {
+        if (mounted) {
+          Warning.show(
+            context,
+            '${failed.length} photo(s) could not be uploaded. Check your '
+                'connection and tap Check-out again. You have not been checked out.',
+            'Photo upload failed',
+          );
+        }
+        return false;
+      }
+      return _uploadedCheckoutPhotos > 0;
     } finally {
       if (mounted) setState(() => _isUploadingPhoto = false);
     }
@@ -758,11 +580,12 @@ class _EventDetailsState extends State<EventDetails> {
   }
 
   bool _requiresPhotoBeforeCheckout() {
-    return _isSiteVisitEvent();
+    // A photo is mandatory before checking out of any event.
+    return true;
   }
 
   bool _hasCapturedCheckoutPhoto() {
-    return _capturedPhotos.isNotEmpty || capturedImage != null;
+    return _capturedPhotos.isNotEmpty || _uploadedCheckoutPhotos > 0;
   }
 
   bool _requiresLocationBeforeCheckIn() {
@@ -1396,6 +1219,19 @@ class _EventDetailsState extends State<EventDetails> {
 
     final lastLatLng = prefs.getString('last_lat_lng') ?? '';
 
+    // The checkout photo must reach the Event before checking out.
+    final photosUploaded = await _uploadCheckoutPhotosBeforeCheckout(
+      lat: lat,
+      lng: lng,
+      address: address,
+    );
+    if (!photosUploaded) {
+      if (mounted && _uploadedCheckoutPhotos == 0 && _capturedPhotos.isEmpty) {
+        Warning.show(context, 'Capture image before checkout', 'Warning');
+      }
+      return;
+    }
+
     final response = await Event.eventCheckout(
       userEmail,
       eventId,
@@ -1458,10 +1294,16 @@ class _EventDetailsState extends State<EventDetails> {
     required String address,
     required Position position,
   }) async {
-    try {
-      await LiveLocationService().stopTracking();
-    } catch (error) {
-      debugPrint('Unable to stop live location after checkout: $error');
+    // Attendance check-in owns the day's live tracking. Only stop it here when
+    // the employee is not checked in for the day, otherwise the rest of the
+    // shift would go untracked after a single visit checkout.
+    final attendanceCheckedIn = prefs.getBool('is_employee_checked_in') ?? false;
+    if (!attendanceCheckedIn) {
+      try {
+        await LiveLocationService().stopTracking();
+      } catch (error) {
+        debugPrint('Unable to stop live location after checkout: $error');
+      }
     }
     try {
       LocationTrackerService.startTracking(
@@ -1495,12 +1337,6 @@ class _EventDetailsState extends State<EventDetails> {
         }
       }
     }
-
-    await _uploadCapturedPhotosAfterCheckout(
-      lat: lat,
-      lng: lng,
-      address: address,
-    );
 
     try {
       if (AudioRecordingService().isRecording) {
@@ -1567,6 +1403,7 @@ class _EventDetailsState extends State<EventDetails> {
             'Session expired. Please log in again.',
             'Error',
           );
+          await LiveLocationService.stopForSignOut();
           await prefs.clear();
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
@@ -2052,6 +1889,22 @@ class _EventDetailsState extends State<EventDetails> {
           'Visit complete',
         );
         return;
+      }
+
+      // A visit check-in is only allowed after the employee's attendance
+      // check-in for the day, verified against the server's current status.
+      if (startingVisit) {
+        timeoutStage = 'attendance status check';
+        final blockReason = await Check.eventCheckinBlockReason(
+          prefs.getString('email'),
+        );
+        if (blockReason != null) {
+          if (mounted) {
+            Warning.show(context, blockReason, 'Employee Check-in required');
+          }
+          return;
+        }
+        timeoutStage = 'GPS location lookup';
       }
 
       // Ask for the customer location before waiting for GPS. This also avoids
@@ -2564,6 +2417,7 @@ class _EventDetailsState extends State<EventDetails> {
                     _visitChecklistRow(
                       'Photos captured',
                       _capturedPhotos.isNotEmpty ||
+                          _uploadedCheckoutPhotos > 0 ||
                           (checkedOut && _requiresPhotoBeforeCheckout()),
                     ),
                     _visitChecklistRow('Customer location verified', checkedIn),

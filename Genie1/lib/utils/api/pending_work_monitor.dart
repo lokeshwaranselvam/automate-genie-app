@@ -75,10 +75,12 @@ class PendingWorkMonitor {
         _newEntrySections.add(section);
       }
       if (newSections.isNotEmpty) {
-        debugPrint('New pending work found: ${newSections.join(', ')}.');
-        for (var i = 0; i < newEntryCount; i++) {
-          await PendingWorkAlarmPlayer.play();
-        }
+        debugPrint(
+          'New pending work found ($newEntryCount): ${newSections.join(', ')}.',
+        );
+        // One alarm per poll. Playing once per entry blocked the monitor for
+        // 5 seconds per item (e.g. 20 new items = 100 seconds of alarm).
+        await PendingWorkAlarmPlayer.play();
       }
     } catch (error) {
       debugPrint('Pending-work monitor could not refresh: $error');
@@ -98,7 +100,9 @@ class PendingWorkMonitor {
     _snapshotQueue = _snapshotQueue.then((_) async {
       try {
         final preferences = await SharedPreferences.getInstance();
-        final user = await SessionAuthApi.getActiveSessionUser();
+        // The session was just verified by the request that fetched these
+        // items, so use the saved username instead of another network call.
+        final user = await SessionAuthApi.getSavedSessionUser();
         final userKey = (user ?? 'unknown').trim().toLowerCase();
         final key = 'pending_work_seen_${userKey}_$section';
         final savedIds = preferences.getStringList(key);

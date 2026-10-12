@@ -5,11 +5,12 @@
 #   Enable Rate Limit: Enabled
 #
 # GET  /api/method/mobile_site_visit?action=get
+# GET  /api/method/mobile_site_visit?action=search_by_mobile&mobile=98765
 # POST /api/method/mobile_site_visit
 #   action=save_location, opportunity, map_link, latitude, longitude,
 #   location_type
 #   action=create_event, opportunity, location_row, summary, starts_on,
-#   assigned_to, category=Installation
+#   assigned_to, category=Installation, product_enquired (optional)
 
 action = (frappe.form_dict.get("action") or "get").strip().lower()
 current_user = frappe.session.user
@@ -61,28 +62,158 @@ def get_location_types():
     if not location_field:
         frappe.throw("Customer Location is missing its location_type field.")
 
-    if location_field.fieldtype not in ["Select", "Link", "Data", "Small Text", "Text"]:
-        frappe.throw("Opportunity location_type must be a Select, Link, or text field.")
+    if location_field.fieldtype == "Select":
+        options = [
+            option.strip()
+            for option in (location_field.options or "").splitlines()
+            if option.strip()
+        ]
+        return {"options": options, "free_text": not options}
+    if location_field.fieldtype == "Link" and location_field.options:
+        options = [
+            row.name
+            for row in frappe.get_all(
+                location_field.options,
+                fields=["name"],
+                order_by="name asc",
+                limit_page_length=500,
+            )
+        ]
+        return {"options": options, "free_text": False}
+    if location_field.fieldtype in ["Data", "Small Text", "Text"]:
+        return {"options": [], "free_text": True}
+    return {"options": [], "free_text": False}
 
-    # The mobile form uses these fixed choices regardless of field type. Any
-    # Select/Link storage requirements are checked when a location is saved.
-    return {"options": ["Site", "Home", "Others"], "free_text": False}
+
+MOBILE_FIELD_CANDIDATES = [
+    "contact_mobile",
+    "phone",
+    "mobile_no",
+    "whatsapp",
+    "whatsapp_no",
+    "custom_mobile_no",
+]
 
 
-if action == "get":
+def existing_fields(meta, candidates):
+    available = field_names(meta)
+    found = []
+    for candidate in candidates:
+        if candidate in available:
+            found.append(candidate)
+    return found
+
+
+def digits_only(value):
+    digits = ""
+    for char in str(value or ""):
+        if char.isdigit():
+            digits += char
+    # Compare on the last 10 digits so +91 / 0 prefixes still match.
+    return digits[-10:]
+
+
+def get_user_opportunities():
+    """Opportunities created by the signed-in user, with mobile numbers and
+    the product enquired resolved from the Opportunity or its Lead."""
     opportunity_meta = frappe.get_meta("Opportunity")
     opportunity_fields = ["name", "owner"]
     for candidate in ["opportunity_name", "party_name", "customer_name"]:
         if candidate in field_names(opportunity_meta):
             opportunity_fields.append(candidate)
+    mobile_fields = existing_fields(opportunity_meta, MOBILE_FIELD_CANDIDATES)
+    extra_fields = existing_fields(
+        opportunity_meta, ["opportunity_from", "custom_product_category"]
+    )
 
     opportunities = frappe.get_all(
         "Opportunity",
         filters={"owner": current_user},
-        fields=opportunity_fields,
+        fields=opportunity_fields + mobile_fields + extra_fields,
         order_by="modified desc",
         limit_page_length=500,
     )
+    names = [row.name for row in opportunities]
+
+    # Product from the Opportunity items table, one query for all rows.
+    items_by_opportunity = {}
+    if names:
+        item_rows = frappe.get_all(
+            "Opportunity Item",
+            filters={"parent": ["in", names], "parenttype": "Opportunity"},
+            fields=["parent", "item_name", "item_code"],
+            order_by="idx asc",
+            limit_page_length=0,
+        )
+        for item in item_rows:
+            label = (item.item_name or item.item_code or "").strip()
+            if not label:
+                continue
+            labels = items_by_opportunity.get(item.parent) or []
+            if label not in labels:
+                labels.append(label)
+            items_by_opportunity[item.parent] = labels
+
+    # Mobile number and product category from the linked Lead.
+    lead_names = []
+    for row in opportunities:
+        if row.get("opportunity_from") == "Lead" and row.get("party_name"):
+            lead_names.append(row.party_name)
+    leads_by_name = {}
+    if lead_names:
+        lead_meta = frappe.get_meta("Lead")
+        lead_fields = ["name"] + existing_fields(
+            lead_meta,
+            ["mobile_no", "phone", "whatsapp_no", "custom_product_category"],
+        )
+        for lead in frappe.get_all(
+            "Lead",
+            filters={"name": ["in", lead_names]},
+            fields=lead_fields,
+            limit_page_length=0,
+        ):
+            leads_by_name[lead.name] = lead
+
+    results = []
+    for row in opportunities:
+        lead = None
+        if row.get("opportunity_from") == "Lead":
+            lead = leads_by_name.get(row.get("party_name"))
+
+        mobiles = []
+        for fieldname in mobile_fields:
+            if row.get(fieldname):
+                mobiles.append(str(row.get(fieldname)).strip())
+        if lead:
+            for fieldname in ["mobile_no", "phone", "whatsapp_no"]:
+                if lead.get(fieldname):
+                    mobiles.append(str(lead.get(fieldname)).strip())
+        unique_mobiles = []
+        for mobile in mobiles:
+            if mobile and mobile not in unique_mobiles:
+                unique_mobiles.append(mobile)
+
+        product = ", ".join(items_by_opportunity.get(row.name) or [])
+        if not product:
+            product = (row.get("custom_product_category") or "").strip()
+        if not product and lead:
+            product = (lead.get("custom_product_category") or "").strip()
+
+        entry = {
+            "name": row.name,
+            "owner": row.owner,
+            "mobile_numbers": unique_mobiles,
+            "product_enquired": product,
+        }
+        for candidate in ["opportunity_name", "party_name", "customer_name"]:
+            if candidate in row:
+                entry[candidate] = row.get(candidate)
+        results.append(entry)
+    return results
+
+
+if action == "get":
+    opportunities = get_user_opportunities()
     user_rows = frappe.get_all(
         "User",
         filters={"enabled": 1, "user_type": "System User"},
@@ -120,6 +251,26 @@ if action == "get":
         "csrf_token": frappe.session.data.csrf_token,
     }
 
+elif action == "search_by_mobile":
+    query_digits = digits_only(frappe.form_dict.get("mobile"))
+    if len(query_digits) < 5:
+        frappe.throw("Enter at least 5 digits of the mobile number.")
+
+    matches = []
+    for opportunity in get_user_opportunities():
+        for mobile in opportunity["mobile_numbers"]:
+            if query_digits in digits_only(mobile):
+                matches.append(opportunity)
+                break
+
+    frappe.response["message"] = {
+        "status": "success",
+        "action": "search_by_mobile",
+        "current_user": current_user,
+        "opportunities": matches,
+        "csrf_token": frappe.session.data.csrf_token,
+    }
+
 elif action == "save_location":
     opportunity_name = (frappe.form_dict.get("opportunity") or "").strip()
     map_link = (frappe.form_dict.get("map_link") or "").strip()
@@ -138,30 +289,13 @@ elif action == "save_location":
 
     location_type_config = get_location_types()
     allowed_types = location_type_config["options"]
-    if location_type not in allowed_types:
-        frappe.throw("Choose a valid location type: Site, Home, or Others.")
+    location_type_free_text = location_type_config["free_text"]
+    if not location_type_free_text and location_type not in allowed_types:
+        frappe.throw("Choose a valid location type.")
 
     location_table = get_opportunity_location_table()
     table_field = location_table["table_field"]
     child_meta = location_table["child_meta"]
-    location_type_field = child_meta.get_field("location_type")
-    if location_type_field.fieldtype == "Select":
-        configured_options = [
-            option.strip()
-            for option in (location_type_field.options or "").splitlines()
-            if option.strip()
-        ]
-        if location_type not in configured_options:
-            frappe.throw(
-                "Add Site, Home, and Others to the Opportunity location_type Select options."
-            )
-    elif location_type_field.fieldtype == "Link":
-        if not frappe.db.exists(location_type_field.options, location_type):
-            frappe.throw(
-                "Create Site, Home, and Others records in "
-                + location_type_field.options
-                + " for the Opportunity location_type Link field."
-            )
     child_fields = field_names(child_meta)
     location_row = {"doctype": child_meta.name}
     required_values = {
@@ -199,6 +333,7 @@ elif action == "create_event":
     starts_on_value = (frappe.form_dict.get("starts_on") or "").strip()
     assigned_to = (frappe.form_dict.get("assigned_to") or "").strip()
     category = (frappe.form_dict.get("category") or "").strip()
+    product_enquired = (frappe.form_dict.get("product_enquired") or "").strip()
 
     required_values = [
         opportunity_name,
@@ -275,6 +410,13 @@ elif action == "create_event":
         event_doc.custom_validate = saved_location.location
     if "assigned_to" in event_fields:
         event_doc.assigned_to = assigned_to
+    if product_enquired:
+        # Prefer a dedicated Event field; otherwise keep it in the description.
+        # Note: submitting the visit report later replaces the description.
+        if "custom_product_enquired" in event_fields:
+            event_doc.custom_product_enquired = product_enquired
+        else:
+            event_doc.description = "Product enquired: " + product_enquired
 
     for candidate in ["event_participants", "participants"]:
         field = event_meta.get_field(candidate)
@@ -339,8 +481,11 @@ elif action == "create_event":
         "location_row": saved_location.name,
         "category": category,
         "assigned_to": assigned_to,
+        "product_enquired": product_enquired,
         "csrf_token": frappe.session.data.csrf_token,
     }
 
 else:
-    frappe.throw("Invalid action. Use get, save_location, or create_event.")
+    frappe.throw(
+        "Invalid action. Use get, search_by_mobile, save_location, or create_event."
+    )

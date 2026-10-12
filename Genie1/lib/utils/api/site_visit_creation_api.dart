@@ -137,6 +137,39 @@ class SiteVisitCreationApi {
     return result;
   }
 
+  /// Opportunities created by the signed-in user whose Opportunity or linked
+  /// Lead has a mobile number containing [mobile].
+  static Future<List<Map<String, dynamic>>> searchByMobile(
+    String mobile,
+  ) async {
+    final user = await SessionAuthApi.getActiveSessionUser();
+    final sid = await SessionAuthApi.getSessionId();
+    if (user == null || sid == null || sid.isEmpty) {
+      throw StateError('Your ERP session expired. Please sign in again.');
+    }
+    final response = await http
+        .get(
+          _endpoint(query: {'action': 'search_by_mobile', 'mobile': mobile}),
+          headers: {
+            'Accept': 'application/json',
+            'Cookie': 'sid=$sid',
+            'Cache-Control': 'no-cache, no-store',
+          },
+        )
+        .timeout(const Duration(seconds: 40));
+    final result = _decodeResponse(response, user);
+    final opportunities = result['opportunities'];
+    if (opportunities is! List) {
+      throw const FormatException(
+        'The site visit service returned an invalid mobile search response.',
+      );
+    }
+    return opportunities
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+  }
+
   static Future<Map<String, dynamic>> saveLocation({
     required String opportunity,
     required String mapLink,
@@ -158,6 +191,7 @@ class SiteVisitCreationApi {
     required String summary,
     required String startsOn,
     required String assignedTo,
+    String productEnquired = '',
   }) => _post({
     'action': 'create_event',
     'opportunity': opportunity,
@@ -166,5 +200,6 @@ class SiteVisitCreationApi {
     'starts_on': startsOn,
     'assigned_to': assignedTo,
     'category': 'Installation',
+    if (productEnquired.isNotEmpty) 'product_enquired': productEnquired,
   });
 }

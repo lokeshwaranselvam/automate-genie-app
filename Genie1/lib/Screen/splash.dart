@@ -23,41 +23,45 @@ class _SplashState extends State<Splash> {
     _checkPing();
   }
 
+  // Shown when the connectivity or ERP check fails, so the user can retry
+  // instead of being left on the splash screen with no way forward.
+  bool _showRetry = false;
+
+  void _retry() {
+    setState(() => _showRetry = false);
+    _checkPing();
+  }
+
   Future<void> _checkPing() async {
     try {
       var connectivity = await Connectivity().checkConnectivity();
-
-      bool noInternet = false;
-
-      if (connectivity == ConnectivityResult.none) {
-        noInternet = true;
-      }
+      if (!mounted) return;
 
       if (connectivity.contains(ConnectivityResult.none)) {
-        noInternet = true;
-      }
-
-      if (noInternet) {
         Warning.show(
           context,
           'No Internet Connection! Please check your network.',
           'Error',
         );
+        setState(() => _showRetry = true);
         return;
       }
 
       var pingResult = await Check.pingpong();
+      if (!mounted) return;
       if (pingResult == false) {
         Warning.show(
           context,
           'ERP Site is not in working condition! Please try again later.',
           'Error',
         );
+        setState(() => _showRetry = true);
       } else {
-        _redirect();
+        await _redirect();
       }
     } catch (e) {
       print('Error during ping: $e');
+      if (mounted) setState(() => _showRetry = true);
     }
   }
 
@@ -106,6 +110,12 @@ class _SplashState extends State<Splash> {
                 ),
               ),
             ),
+            if (_showRetry)
+              TextButton.icon(
+                onPressed: _retry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+              ),
             SizedBox(height: height * 0.35),
           ],
         ),

@@ -32,20 +32,33 @@ class LoginApi {
 
       if (response.statusCode == 403) {
         await SessionAuthApi.logout();
-        return {'error': data['message']['message'] ?? 'Access Denied'};
+        // The 403 message may be a map ({message: ...}) or a plain string.
+        final message = data is Map ? data['message'] : null;
+        final detail =
+            message is Map ? message['message']?.toString() : message?.toString();
+        return {
+          'error': (detail == null || detail.isEmpty) ? 'Access Denied' : detail,
+        };
       }
 
       if (response.statusCode == 200 && data['message'] == "Logged In") {
-        await prefs.setString('name', data['full_name']);
-        await prefs.setString('email', data['email']);
-        await prefs.setString('api_key', data['api_key']);
-        await prefs.setString('api_secret', data['api_secret']);
-        await prefs.setString('token', data['token']);
+        // Missing fields must not throw (setString rejects null), so fall back
+        // to the verified Frappe session values or skip the key.
+        Future<void> save(String key, dynamic value) async {
+          final text = value?.toString();
+          if (text != null && text.isNotEmpty) await prefs.setString(key, text);
+        }
+
+        // api_key/api_secret are not used by the app; don't keep them in
+        // plain-text SharedPreferences, and remove copies saved by older builds.
+        await prefs.remove('api_key');
+        await prefs.remove('api_secret');
+        await save('token', data['token']);
         // The standard Frappe session is authoritative for the signed-in user.
         await prefs.setString('email', sessionUser['username']!);
         await prefs.setString(
           'name',
-          data['full_name'] ?? sessionUser['full_name']!,
+          data['full_name']?.toString() ?? sessionUser['full_name']!,
         );
 
         return {

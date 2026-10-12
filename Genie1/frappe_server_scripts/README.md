@@ -150,3 +150,55 @@ Users without an HR User, HR Manager, or Expense Approver role only receive
 their own Active Employee record. Configure Expense Approvers on employees or
 departments (or assign the Expense Approver role) and add Expense Claim Types
 before opening the page in the app.
+
+# Employee Checkin selfie (custom app change)
+
+The mobile app now takes a mandatory selfie before Employee Check-in and
+Check-out. It uploads the GPS-stamped JPEG as a **private, unattached File**
+and then calls the custom app's `checkin` / `checkout` methods with an extra
+parameter `photo_url` (the File's `file_url`).
+
+Frappe ignores parameters a whitelisted method does not declare, so the app
+works before this change; the photo just stays unattached. To link it to the
+Employee Checkin, add `photo_url=None` to both method signatures and call this
+helper after the Employee Checkin document is inserted:
+
+```python
+REQUIRE_CHECKIN_PHOTO = False  # set True once every user has the new app
+
+
+def attach_checkin_photo(checkin_doc, photo_url):
+    """Attach the selfie uploaded by the app to the new Employee Checkin."""
+    if not photo_url:
+        if REQUIRE_CHECKIN_PHOTO:
+            frappe.throw("A selfie is required for Employee Check-in/Check-out.")
+        return
+
+    # Only accept a File this user uploaded that is not attached elsewhere.
+    file_name = frappe.db.get_value(
+        "File",
+        {
+            "file_url": photo_url,
+            "owner": frappe.session.user,
+            "attached_to_name": ["is", "not set"],
+        },
+        "name",
+    )
+    if not file_name:
+        frappe.throw("The check-in photo was not found. Please retake it.")
+
+    file_doc = frappe.get_doc("File", file_name)
+    file_doc.attached_to_doctype = "Employee Checkin"
+    file_doc.attached_to_name = checkin_doc.name
+    file_doc.save(ignore_permissions=True)
+
+    # Optional: show it on the form with an Attach Image custom field.
+    if frappe.get_meta("Employee Checkin").has_field("custom_checkin_photo"):
+        frappe.db.set_value(
+            "Employee Checkin", checkin_doc.name, "custom_checkin_photo", photo_url
+        )
+```
+
+To enforce the photo on the server as well, validate `photo_url` **before**
+inserting the Employee Checkin (so no record is created without a photo) and
+set `REQUIRE_CHECKIN_PHOTO = True` after all users have updated the app.
