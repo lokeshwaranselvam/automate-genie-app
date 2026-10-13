@@ -8,6 +8,88 @@ import 'session_auth.dart';
 class SiteVisitCreationApi {
   static const _method = 'mobile_site_visit';
   static String? _csrfToken;
+  static String? _csrfSession;
+  static Uri? _csrfEndpoint;
+
+  static void _useSession(String sid) {
+    final endpoint = _endpoint();
+    if (_csrfSession != sid || _csrfEndpoint != endpoint) {
+      _csrfToken = null;
+      _csrfSession = sid;
+      _csrfEndpoint = endpoint;
+    }
+  }
+
+  static Future<void> _assertSession(String sid) async {
+    if (await SessionAuthApi.getSessionId() != sid) {
+      throw StateError(
+        'Your session changed. Reopen the visit form and try again.',
+      );
+    }
+  }
+
+  static Future<String> _loadCsrfToken(String sid) async {
+    var uri = _endpoint().resolve('/app');
+    final client = http.Client();
+    try {
+      for (var redirects = 0; redirects <= 3; redirects++) {
+        await _assertSession(sid);
+        final response = await (() async {
+          final streamed = await client.send(
+            http.Request('GET', uri)
+              ..headers.addAll({
+                'Accept': 'text/html',
+                'Cookie': 'sid=$sid',
+                'Cache-Control': 'no-cache, no-store',
+              })
+              ..followRedirects = false,
+          );
+          return http.Response.fromStream(streamed);
+        })().timeout(const Duration(seconds: 40));
+        await _assertSession(sid);
+        if ({301, 302, 303, 307, 308}.contains(response.statusCode)) {
+          final location = response.headers['location'];
+          if (location == null) break;
+          final next = uri.resolve(location);
+          if (next.origin != uri.origin || next.userInfo.isNotEmpty) {
+            throw StateError(
+              'ERP redirected to a different site. Check SITE_URL.',
+            );
+          }
+          uri = next;
+          continue;
+        }
+        if (response.statusCode == 200) {
+          final match = RegExp(
+            r'''frappe\.csrf_token\s*=\s*["']([^"']+)["']''',
+          ).firstMatch(response.body);
+          final token = match?.group(1)?.trim() ?? '';
+          if (token.isNotEmpty) return token;
+        }
+        break;
+      }
+    } finally {
+      client.close();
+    }
+    throw StateError(
+      'ERP could not initialize the visit session token. Sign in again and reopen the visit form.',
+    );
+  }
+
+  static bool _isCsrfFailure(http.Response response) {
+    if (response.statusCode == 200) return false;
+    try {
+      final data = jsonDecode(response.body);
+      return data is Map &&
+          (data['exc_type'] == 'CSRFTokenError' ||
+              data['exception']?.toString().startsWith(
+                    'frappe.exceptions.CSRFTokenError:',
+                  ) ==
+                  true);
+    } catch (_) {
+      return false;
+    }
+  }
 
   static Uri _endpoint({Map<String, String>? query}) {
     final siteUrl = dotenv.env['SITE_URL']?.trim();
@@ -26,19 +108,34 @@ class SiteVisitCreationApi {
       throw StateError('Your ERP session expired. Please sign in again.');
     }
 
-    final response = await http
-        .post(
-          _endpoint(),
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Cookie': 'sid=$sid',
-            if (_csrfToken != null && _csrfToken!.isNotEmpty)
-              'X-Frappe-CSRF-Token': _csrfToken!,
-          },
-          body: fields,
-        )
-        .timeout(const Duration(seconds: 40));
+    _useSession(sid);
+    var token = _csrfToken ?? '';
+    if (token.isEmpty) token = await _loadCsrfToken(sid);
+    Future<http.Response> post(String currentToken) async {
+      await _assertSession(sid);
+      return http
+          .post(
+            _endpoint(),
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Cookie': 'sid=$sid',
+              'X-Frappe-CSRF-Token': currentToken,
+            },
+            body: {...fields, 'csrf_token': currentToken},
+          )
+          .timeout(const Duration(seconds: 40));
+    }
+
+    var response = await post(token);
+    // CSRF rejection happens before the script runs. Retry only this failure;
+    // retrying timeouts or validation errors could duplicate a location/event.
+    if (_isCsrfFailure(response)) {
+      token = await _loadCsrfToken(sid);
+      response = await post(token);
+    }
+    await _assertSession(sid);
+    _csrfToken = token;
 
     return _decodeResponse(response, user);
   }
@@ -58,7 +155,6 @@ class SiteVisitCreationApi {
       throw StateError(_errorMessage(decoded, response.statusCode));
     }
     final result = Map<String, dynamic>.from(message);
-    _csrfToken = result['csrf_token']?.toString();
     final serverUser = result['current_user']?.toString().trim();
     if (serverUser != null &&
         serverUser.isNotEmpty &&
@@ -70,6 +166,8 @@ class SiteVisitCreationApi {
     if (result['status'] == 'error') {
       throw StateError(result['message']?.toString() ?? 'Site visit failed.');
     }
+    final token = result['csrf_token']?.toString().trim() ?? '';
+    if (token.isNotEmpty) _csrfToken = token;
     return result;
   }
 
@@ -120,6 +218,7 @@ class SiteVisitCreationApi {
     if (user == null || sid == null || sid.isEmpty) {
       throw StateError('Your ERP session expired. Please sign in again.');
     }
+    _useSession(sid);
     final response = await http
         .get(
           _endpoint(query: const {'action': 'get'}),
@@ -130,6 +229,7 @@ class SiteVisitCreationApi {
           },
         )
         .timeout(const Duration(seconds: 40));
+    await _assertSession(sid);
     final result = _decodeResponse(response, user);
     if (result['opportunities'] is! List ||
         result['product_enquired_options'] is! List ||
@@ -155,6 +255,7 @@ class SiteVisitCreationApi {
     if (user == null || sid == null || sid.isEmpty) {
       throw StateError('Your ERP session expired. Please sign in again.');
     }
+    _useSession(sid);
     final response = await http
         .get(
           _endpoint(query: {'action': 'search_by_mobile', 'mobile': mobile}),
@@ -165,6 +266,7 @@ class SiteVisitCreationApi {
           },
         )
         .timeout(const Duration(seconds: 40));
+    await _assertSession(sid);
     final result = _decodeResponse(response, user);
     final opportunities = result['opportunities'];
     if (opportunities is! List) {
