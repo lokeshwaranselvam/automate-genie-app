@@ -104,6 +104,13 @@ Create a Frappe **Server Script** with these settings:
 - **Enable Rate Limit:** enabled
 
 Paste `mobile_site_visit_api.py` into the Server Script. The app calls
+`GET /api/method/mobile_site_visit?action=can_create` for a session-bound
+Sales Manager role check. Only Sales Managers see New Visit. The creation
+endpoint also enforces this role for form options, mobile search, location
+saving, and event creation. Visit lists, check-in/out, and visit reports keep
+their existing permissions. Deploy this updated Server Script before the app.
+
+The app calls
 `GET /api/method/mobile_site_visit?action=get` to load Opportunities owned by
 `frappe.session.user` and enabled ERP users. Opportunity is searchable in the
 form, and Location Type is restricted to `Site`, `Home`, and `Others`. If the

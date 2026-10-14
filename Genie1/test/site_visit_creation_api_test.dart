@@ -58,6 +58,45 @@ void main() {
   });
 
   test(
+    'creation capability is session-bound and requires explicit server approval',
+    () async {
+      for (final allowed in [true, false, null, 'true']) {
+        await http.runWithClient(
+          () async {
+            expect(
+              await SiteVisitCreationApi.canCreateVisit(),
+              allowed == true,
+            );
+          },
+          () => MockClient((request) async {
+            expect(request.url.queryParameters['action'], 'can_create');
+            expect(
+              request.headers['cookie'],
+              'sid=visit-session-$sessionNumber',
+            );
+            return success({'can_create': allowed});
+          }),
+        );
+      }
+    },
+  );
+
+  test('capability rejects a different signed-in user', () async {
+    await http.runWithClient(
+      () async {
+        await expectLater(
+          SiteVisitCreationApi.canCreateVisit(),
+          throwsFormatException,
+        );
+      },
+      () => MockClient(
+        (_) async =>
+            success({'current_user': 'other@example.test', 'can_create': true}),
+      ),
+    );
+  });
+
+  test(
     'missing token is initialized before saving and retained for event',
     () async {
       final posts = <http.Request>[];

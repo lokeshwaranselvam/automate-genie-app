@@ -88,7 +88,11 @@ void main() {
       expect(find.text('Add Task'), findsNothing);
       expect(find.text('Lokeshwaran S'), findsOneWidget);
       expect(find.text('22'), findsOneWidget);
-      expect(find.text('Mon, 24 Jun'), findsOneWidget);
+      expect(find.text('Mon, 24 Jun 2024'), findsOneWidget);
+      final dateRect = tester.getRect(find.text('Mon, 24 Jun 2024'));
+      final sunRect = tester.getRect(find.byIcon(Icons.wb_sunny_rounded));
+      expect((dateRect.center.dy - sunRect.center.dy).abs(), lessThan(1));
+
       if (width == 360) {
         await tester.runAsync(() async {
           final boundary =

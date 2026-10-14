@@ -4,6 +4,7 @@
 #   Allow Guest: Disabled
 #   Enable Rate Limit: Enabled
 #
+# GET  /api/method/mobile_site_visit?action=can_create
 # GET  /api/method/mobile_site_visit?action=get
 # GET  /api/method/mobile_site_visit?action=search_by_mobile&mobile=98765
 # POST /api/method/mobile_site_visit
@@ -17,6 +18,14 @@ current_user = frappe.session.user
 
 if not current_user or current_user == "Guest":
     frappe.throw("Sign in to create a site visit.")
+
+can_create_visit = bool(frappe.db.exists(
+    "Has Role",
+    {"parent": current_user, "parenttype": "User", "parentfield": "roles",
+     "role": "Sales Manager"},
+))
+if action != "can_create" and not can_create_visit:
+    frappe.throw("Only users with the Sales Manager role can create site visits.")
 
 
 def get_opportunity(opportunity_name):
@@ -260,7 +269,14 @@ def get_opportunities(query_digits=None):
     return results
 
 
-if action == "get":
+if action == "can_create":
+    frappe.response["message"] = {
+        "status": "success",
+        "current_user": current_user,
+        "can_create": can_create_visit,
+    }
+
+elif action == "get":
     opportunities = get_opportunities()
     user_rows = frappe.get_all(
         "User",

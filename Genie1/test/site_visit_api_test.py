@@ -222,15 +222,39 @@ class SiteVisitApiTest(unittest.TestCase):
         self.frappe.new_doc.assert_not_called()
 
     def test_existing_opportunity_location_and_guest_checks_are_preserved(self):
-        self.frappe.db.exists.return_value = False
+        self.frappe.db.exists.side_effect = lambda doctype, filters: doctype == "Has Role"
         with self.assertRaisesRegex(ValueError, "existing opportunity"):
             self.run_api()
+        self.frappe.db.exists.side_effect = None
         self.frappe.db.exists.return_value = True
         with self.assertRaisesRegex(ValueError, "does not belong"):
             self.run_api(location_row="OTHER-LOCATION")
         self.frappe.session.user = "Guest"
         with self.assertRaisesRegex(ValueError, "Sign in"):
             self.run_api()
+        self.frappe.new_doc.assert_not_called()
+
+    def test_capability_uses_session_role_and_does_not_load_form_data(self):
+        for allowed in [True, False]:
+            self.frappe.db.exists.return_value = allowed
+            result = self.run_api(action="can_create", user="other@example.test")
+            self.assertEqual(result["can_create"], allowed)
+            self.assertEqual(result["current_user"], self.user)
+            self.frappe.db.exists.assert_called_with("Has Role", {
+                "parent": self.user, "parenttype": "User", "parentfield": "roles",
+                "role": "Sales Manager",
+            })
+        self.frappe.get_all.assert_not_called()
+        self.frappe.get_doc.assert_not_called()
+
+    def test_non_manager_cannot_bypass_button_with_direct_api_requests(self):
+        self.frappe.db.exists.return_value = False
+        for action in ["get", "search_by_mobile", "save_location", "create_event"]:
+            with self.subTest(action=action):
+                with self.assertRaisesRegex(ValueError, "Sales Manager"):
+                    self.run_api(action=action)
+        self.frappe.get_all.assert_not_called()
+        self.frappe.get_doc.assert_not_called()
         self.frappe.new_doc.assert_not_called()
 
     def test_other_creators_opportunities_can_be_listed_searched_and_linked(self):

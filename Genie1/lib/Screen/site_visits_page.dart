@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../utils/api/event.dart';
+import '../utils/api/site_visit_creation_api.dart';
+import 'dart:async';
 import 'event_details.dart';
 import 'new_site_visit_page.dart';
 import 'site_visit_report_page.dart';
@@ -33,6 +35,8 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
   String _query = '';
   _VisitTab _tab = _VisitTab.scheduled;
   String? _eventTypeFilter;
+  bool _canCreateVisit = false;
+  int _permissionRequestId = 0;
 
   @override
   void initState() {
@@ -42,6 +46,7 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
 
   Future<void> _refresh() async {
     if (!mounted) return;
+    unawaited(_loadCreationPermission());
     setState(() {
       _loading = true;
       _error = null;
@@ -106,6 +111,20 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
         _error = error.toString().replaceFirst('Bad state: ', '');
         _loading = false;
       });
+    }
+  }
+
+  Future<void> _loadCreationPermission() async {
+    final requestId = ++_permissionRequestId;
+    setState(() => _canCreateVisit = false);
+    var allowed = false;
+    try {
+      allowed = await SiteVisitCreationApi.canCreateVisit();
+    } catch (error) {
+      debugPrint('Could not check site visit creation permission: $error');
+    }
+    if (mounted && requestId == _permissionRequestId) {
+      setState(() => _canCreateVisit = allowed);
     }
   }
 
@@ -262,6 +281,7 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
   }
 
   Future<void> _newVisit() async {
+    if (!_canCreateVisit) return;
     final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(builder: (_) => const NewSiteVisitPage()),
     );
@@ -419,14 +439,17 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
           ),
         ],
       ),
-      floatingActionButton: brandFloatingActionButton(
-        onPressed: _newVisit,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text(
-          'New Visit',
-          style: TextStyle(fontWeight: FontWeight.w700),
-        ),
-      ),
+      floatingActionButton:
+          !_canCreateVisit
+              ? null
+              : brandFloatingActionButton(
+                onPressed: _newVisit,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text(
+                  'New Visit',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
     );
   }
 

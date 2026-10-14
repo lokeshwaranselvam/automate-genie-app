@@ -1656,15 +1656,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             'Sign out of automategenie.ai',
             () => _showLogoutDialog(context),
           ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Center(
-              child: Text(
-                'Version $_version',
-                style: const TextStyle(color: Color(0xFF8994A3), fontSize: 12),
-              ),
-            ),
-          ),
         ],
       ),
     );

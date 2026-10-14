@@ -208,6 +208,25 @@ class SiteVisitCreationApi {
     return 'Site visit request failed ($statusCode).';
   }
 
+  /// Server-side role decision for the signed-in session; no local role cache.
+  static Future<bool> canCreateVisit() async {
+    final user = await SessionAuthApi.getSavedSessionUser();
+    final sid = await SessionAuthApi.getSessionId();
+    if (user == null || sid == null || sid.isEmpty) return false;
+    final response = await http
+        .get(
+          _endpoint(query: const {'action': 'can_create'}),
+          headers: {
+            'Accept': 'application/json',
+            'Cookie': 'sid=$sid',
+            'Cache-Control': 'no-cache, no-store',
+          },
+        )
+        .timeout(const Duration(seconds: 15));
+    await _assertSession(sid);
+    return _decodeResponse(response, user)['can_create'] == true;
+  }
+
   static Future<Map<String, dynamic>> loadOptions() async {
     // This endpoint authenticates the session and returns current_user, which
     // _decodeResponse checks. Avoid an extra session-check HTTP request.

@@ -330,50 +330,49 @@ class HomeDashboardView extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 3),
-                const Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        "Let's make today productive",
-                        maxLines: 2,
-                        style: TextStyle(color: _homeMuted, fontSize: 10.5),
-                      ),
-                    ),
-                    SizedBox(width: 3),
-                    Icon(
-                      Icons.wb_sunny_rounded,
-                      color: Color(0xFFFFA300),
-                      size: 16,
-                    ),
-                  ],
+                const Text(
+                  "Let's make today productive",
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: _homeMuted, fontSize: 10.5),
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 7),
-          Container(
-            width: narrow ? 66 : 77,
-            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 11),
-            decoration: BoxDecoration(
-              color: const Color(0xFFEBEEFF),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Column(
-              children: [
-                FittedBox(
-                  child: Text(
-                    DateFormat('EEE, d MMM').format(date),
-                    style: const TextStyle(
-                      color: Color(0xFF6F7D96),
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                    ),
+                const SizedBox(height: 7),
+                Container(
+                  key: const ValueKey('profile-date-row'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 6,
                   ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  DateFormat('yyyy').format(date),
-                  style: const TextStyle(color: _homeMuted, fontSize: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEBEEFF),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.wb_sunny_rounded,
+                        color: Color(0xFFFFA300),
+                        size: 16,
+                      ),
+                      const SizedBox(width: 7),
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            DateFormat('EEE, d MMM yyyy').format(date),
+                            maxLines: 1,
+                            style: const TextStyle(
+                              color: Color(0xFF6F7D96),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
