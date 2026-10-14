@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -9,8 +11,9 @@ import 'package:homegenie/utils/api/check_in_out.dart';
 import '../utils/api/fcm_device_api.dart';
 import '../utils/api/login_api.dart';
 import '../utils/widget/warning.dart';
+import 'face_enrollment_gate.dart';
 
-const _brandBlue = Color(0xFF1263C4);
+const _brandBlue = BrandColors.ink;
 const _ink = Color(0xFF18243A);
 const _muted = Color(0xFF758195);
 
@@ -157,10 +160,17 @@ class _LoginState extends State<Login> {
       }
 
       Warning.show(context, 'Login Successful', 'Success');
-      unawaited(FcmDeviceApi.requestPermissionAndRegister());
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => Homescreen()),
+        MaterialPageRoute(
+          builder:
+              (context) => FaceEnrollmentGate(
+                child: Homescreen(),
+                onReady:
+                    () =>
+                        unawaited(FcmDeviceApi.requestPermissionAndRegister()),
+              ),
+        ),
       );
     } catch (error) {
       if (!mounted) return;
@@ -216,7 +226,7 @@ class _LoginState extends State<Login> {
               ColoredBox(
                 color: Colors.black.withValues(alpha: 0.12),
                 child: const Center(
-                  child: CircularProgressIndicator(color: _brandBlue),
+                  child: AgPathLoadingIndicator(showBackground: true),
                 ),
               ),
           ],
@@ -364,11 +374,9 @@ class _LoginState extends State<Login> {
           backgroundColor: _brandBlue,
           foregroundColor: Colors.white,
           elevation: 1,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(11),
-          ),
+          shape: const StadiumBorder(),
           textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-        ),
+        ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
         child: const Text('Login'),
       ),
     );

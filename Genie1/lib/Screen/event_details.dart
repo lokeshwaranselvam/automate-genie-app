@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
@@ -725,7 +727,7 @@ class _EventDetailsState extends State<EventDetails> {
           children: [
             const Row(
               children: [
-                Icon(Icons.location_on, color: Colors.blue),
+                Icon(Icons.location_on, color: BrandColors.ink),
                 SizedBox(width: 8),
                 Text(
                   'Customer Location',
@@ -785,7 +787,7 @@ class _EventDetailsState extends State<EventDetails> {
                                 'customer-bike-route',
                               ),
                               points: _customerRoutePoints,
-                              color: Colors.blue,
+                              color: BrandColors.ink,
                               width: 6,
                             ),
                           }
@@ -1297,7 +1299,8 @@ class _EventDetailsState extends State<EventDetails> {
     // Attendance check-in owns the day's live tracking. Only stop it here when
     // the employee is not checked in for the day, otherwise the rest of the
     // shift would go untracked after a single visit checkout.
-    final attendanceCheckedIn = prefs.getBool('is_employee_checked_in') ?? false;
+    final attendanceCheckedIn =
+        prefs.getBool('is_employee_checked_in') ?? false;
     if (!attendanceCheckedIn) {
       try {
         await LiveLocationService().stopTracking();
@@ -1810,6 +1813,10 @@ class _EventDetailsState extends State<EventDetails> {
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
+                  style: const ButtonStyle(
+                    backgroundBuilder: BrandColors.buttonBackground,
+                    foregroundColor: WidgetStatePropertyAll(Colors.white),
+                  ),
                   onPressed: () async {
                     final isValid = await Event.verifyOtp(
                       otpController.text,
@@ -2053,7 +2060,7 @@ class _EventDetailsState extends State<EventDetails> {
           Checkbox(
             value: checked,
             onChanged: null,
-            activeColor: const Color(0xFF1768C4),
+            activeColor: BrandColors.ink,
             visualDensity: VisualDensity.compact,
           ),
           Expanded(
@@ -2142,7 +2149,7 @@ class _EventDetailsState extends State<EventDetails> {
                       item.$2
                           ? Icons.check_circle
                           : Icons.radio_button_unchecked,
-                      color: item.$2 ? const Color(0xFF1768C4) : Colors.black26,
+                      color: item.$2 ? BrandColors.ink : Colors.black26,
                     ),
                     title: Text(item.$1),
                     subtitle: item.$3.isEmpty ? null : Text(item.$3),
@@ -2189,7 +2196,7 @@ class _EventDetailsState extends State<EventDetails> {
             child: Checkbox(
               value: checked,
               onChanged: null,
-              activeColor: const Color(0xFF1768C4),
+              activeColor: BrandColors.ink,
               visualDensity: VisualDensity.compact,
             ),
           ),
@@ -2243,16 +2250,13 @@ class _EventDetailsState extends State<EventDetails> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
-      appBar: AppBar(
-        leading: const HomeBackButton(color: Color(0xFF1768C4)),
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+      appBar: brandAppBar(
+        leading: const HomeBackButton(color: Colors.white),
         elevation: 0,
-        iconTheme: const IconThemeData(color: Color(0xFF1768C4)),
         title: const Text(
           'Task Details',
           style: TextStyle(
-            color: Color(0xFF202B3C),
+            color: Colors.white,
             fontSize: 18,
             fontWeight: FontWeight.w800,
           ),
@@ -2261,15 +2265,13 @@ class _EventDetailsState extends State<EventDetails> {
           IconButton(
             tooltip: 'Refresh',
             onPressed: _isLoading ? null : () => _fetchData(),
-            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF202B3C)),
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
           ),
         ],
       ),
       body:
           _isLoading
-              ? const Center(
-                child: CircularProgressIndicator(color: Color(0xFF1768C4)),
-              )
+              ? const Center(child: AgPathLoadingIndicator())
               : RefreshIndicator(
                 onRefresh: () async {
                   await _checkPing();
@@ -2309,7 +2311,7 @@ class _EventDetailsState extends State<EventDetails> {
                                   priority.toLowerCase() == 'high' ||
                                           priority.toLowerCase() == 'urgent'
                                       ? const Color(0xFFD94343)
-                                      : const Color(0xFF1768C4),
+                                      : BrandColors.ink,
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
                             ),
@@ -2464,13 +2466,11 @@ class _EventDetailsState extends State<EventDetails> {
                                   side: const BorderSide(
                                     color: Color(0xFFDCE2E8),
                                   ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
+                                  shape: const StadiumBorder(),
                                 ),
                                 child: const Icon(
                                   Icons.add_rounded,
-                                  color: Color(0xFF1768C4),
+                                  color: BrandColors.ink,
                                   size: 28,
                                 ),
                               ),
@@ -2547,9 +2547,7 @@ class _EventDetailsState extends State<EventDetails> {
                                   ? Icons.stop_circle_outlined
                                   : Icons.mic_none_rounded,
                               color:
-                                  _isRecording
-                                      ? Colors.red
-                                      : const Color(0xFF1768C4),
+                                  _isRecording ? Colors.red : BrandColors.ink,
                             ),
                           ),
                         ],
@@ -2615,17 +2613,15 @@ class _EventDetailsState extends State<EventDetails> {
                           ? _handleVisitCheckInOut
                           : null,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1768C4),
+                    backgroundColor: BrandColors.ink,
                     foregroundColor: Colors.white,
                     disabledBackgroundColor:
                         checkedIn ? const Color(0xFFE8F6EF) : Colors.black12,
                     disabledForegroundColor:
                         checkedIn ? const Color(0xFF219653) : Colors.black45,
                     minimumSize: const Size.fromHeight(46),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
+                    shape: const StadiumBorder(),
+                  ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
                   child: const Text(
                     'Check In',
                     style: TextStyle(fontWeight: FontWeight.w700),
@@ -2640,17 +2636,15 @@ class _EventDetailsState extends State<EventDetails> {
                           ? _handleVisitCheckInOut
                           : null,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1768C4),
+                    backgroundColor: BrandColors.ink,
                     foregroundColor: Colors.white,
                     disabledBackgroundColor:
                         checkedOut ? const Color(0xFFE8F6EF) : Colors.black12,
                     disabledForegroundColor:
                         checkedOut ? const Color(0xFF219653) : Colors.black45,
                     minimumSize: const Size.fromHeight(46),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
+                    shape: const StadiumBorder(),
+                  ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
                   child:
                       _isActionInProgress
                           ? const SizedBox(

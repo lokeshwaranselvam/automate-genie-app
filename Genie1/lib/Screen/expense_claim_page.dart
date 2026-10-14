@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -8,9 +10,23 @@ import 'package:intl/intl.dart';
 import '../utils/api/expense_claim_api.dart';
 import '../utils/widget/home_back_button.dart';
 
-const _expenseBlue = Color(0xFF1768C4);
+const _expenseBlue = BrandColors.ink;
 const _expenseInk = Color(0xFF26313F);
 const _expenseBorder = Color(0xFFD9DEE5);
+
+class _ExpenseRowDraft {
+  final amountController = TextEditingController();
+  final descriptionController = TextEditingController();
+  String? expenseType;
+  DateTime expenseDate = DateTime.now();
+
+  _ExpenseRowDraft({this.expenseType});
+
+  void dispose() {
+    amountController.dispose();
+    descriptionController.dispose();
+  }
+}
 
 class ExpenseClaimPage extends StatefulWidget {
   const ExpenseClaimPage({super.key});
@@ -21,8 +37,8 @@ class ExpenseClaimPage extends StatefulWidget {
 
 class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
   final _formKey = GlobalKey<FormState>();
-  final _amountController = TextEditingController();
-  final _descriptionController = TextEditingController();
+  final _expenses = <_ExpenseRowDraft>[_ExpenseRowDraft()];
+  final _bills = <XFile>[];
   final _employeeController = TextEditingController();
   final _approverController = TextEditingController();
   final _employeeFocusNode = FocusNode();
@@ -32,9 +48,6 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
   ExpenseClaimFormOptions? _options;
   ExpenseClaimOption? _selectedEmployee;
   ExpenseClaimOption? _selectedApprover;
-  String? _expenseType;
-  DateTime _expenseDate = DateTime.now();
-  XFile? _bill;
   bool _loading = true;
   bool _loadingApprovers = false;
   bool _submitting = false;
@@ -50,8 +63,9 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
 
   @override
   void dispose() {
-    _amountController.dispose();
-    _descriptionController.dispose();
+    for (final row in _expenses) {
+      row.dispose();
+    }
     _employeeController.dispose();
     _approverController.dispose();
     _employeeFocusNode.dispose();
@@ -80,9 +94,7 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
         );
         _employeeController.text = _selectedEmployee?.label ?? '';
         _approverController.text = _selectedApprover?.label ?? '';
-        if (!options.expenseTypes.any((item) => item.value == _expenseType)) {
-          _expenseType = options.expenseTypes.first.value;
-        }
+        _syncExpenseTypes(options);
         _loading = false;
       });
     } catch (error) {
@@ -103,6 +115,43 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
     }
     return null;
   }
+
+  void _syncExpenseTypes(ExpenseClaimFormOptions options) {
+    for (final row in _expenses) {
+      if (!options.expenseTypes.any((item) => item.value == row.expenseType)) {
+        row.expenseType = options.expenseTypes.first.value;
+      }
+    }
+  }
+
+  void _addExpense() {
+    if (_submitting || _loadingApprovers) return;
+    if (!_options!.supportsMultipleExpenses) {
+      _showMessage(
+        'Multiple expenses are not available yet. Contact your administrator to enable them.',
+      );
+      return;
+    }
+    setState(
+      () => _expenses.add(
+        _ExpenseRowDraft(expenseType: _options!.expenseTypes.first.value),
+      ),
+    );
+  }
+
+  void _removeExpense(_ExpenseRowDraft row) {
+    if (_submitting || _expenses.length == 1) return;
+    setState(() => _expenses.remove(row));
+    WidgetsBinding.instance.addPostFrameCallback((_) => row.dispose());
+  }
+
+  double get _totalAmount => _expenses.fold(0, (total, row) {
+    final amount = double.tryParse(
+      row.amountController.text.trim().replaceAll(',', ''),
+    );
+    return total +
+        (amount != null && amount.isFinite && amount > 0 ? amount : 0);
+  });
 
   Future<void> _selectEmployee(ExpenseClaimOption? employee) async {
     final request = ++_approverRequest;
@@ -130,6 +179,7 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
       );
       setState(() {
         _options = options;
+        _syncExpenseTypes(options);
         _selectedApprover = approver;
         _approverController.text = approver?.label ?? '';
         _loadingApprovers = false;
@@ -152,12 +202,31 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
 
   Future<void> _pickBill(ImageSource source) async {
     try {
-      final selected = await _picker.pickImage(
-        source: source,
-        imageQuality: 88,
-        maxWidth: 2200,
-      );
-      if (selected != null && mounted) setState(() => _bill = selected);
+      final multiple = _options!.supportsMultipleExpenses;
+      final List<XFile> selected;
+      if (source == ImageSource.gallery && multiple) {
+        selected = await _picker.pickMultiImage(
+          imageQuality: 88,
+          maxWidth: 2200,
+        );
+      } else {
+        final image = await _picker.pickImage(
+          source: source,
+          imageQuality: 88,
+          maxWidth: 2200,
+        );
+        selected = image == null ? [] : [image];
+      }
+      if (selected.isNotEmpty && mounted && !_submitting) {
+        setState(() {
+          if (!multiple) _bills.clear();
+          for (final bill in selected) {
+            if (!_bills.any((existing) => existing.path == bill.path)) {
+              _bills.add(bill);
+            }
+          }
+        });
+      }
     } catch (error) {
       if (mounted) _showMessage('Could not open the image picker: $error');
     }
@@ -193,11 +262,11 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
     );
   }
 
-  Future<void> _chooseDate() async {
+  Future<void> _chooseDate(_ExpenseRowDraft row) async {
     final today = DateTime.now();
     final selected = await showDatePicker(
       context: context,
-      initialDate: _expenseDate,
+      initialDate: row.expenseDate,
       firstDate: DateTime(today.year - 10),
       lastDate: DateTime(today.year + 1, 12, 31),
       builder:
@@ -210,13 +279,18 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
             child: child!,
           ),
     );
-    if (selected != null && mounted) setState(() => _expenseDate = selected);
+    if (selected != null &&
+        mounted &&
+        _expenses.contains(row) &&
+        !_submitting) {
+      setState(() => row.expenseDate = selected);
+    }
   }
 
   Future<void> _submit() async {
-    if (_submitting || _options == null) return;
+    if (_submitting || _loadingApprovers || _options == null) return;
     if (!_formKey.currentState!.validate()) return;
-    if (_bill == null) {
+    if (_bills.isEmpty) {
       _showMessage('Attach a bill photo before submitting.');
       return;
     }
@@ -226,26 +300,38 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
       _error = null;
     });
     try {
-      final result = await ExpenseClaimApi.submitClaim(
+      final expenseCount = _expenses.length;
+      final billCount = _bills.length;
+      final result = await ExpenseClaimApi.submitExpenses(
         employee: _selectedEmployee?.value ?? '',
         expenseApprover: _selectedApprover?.value ?? '',
-        expenseType: _expenseType ?? '',
-        amount: _amountController.text.trim().replaceAll(',', ''),
-        expenseDate: DateFormat('yyyy-MM-dd').format(_expenseDate),
-        description: _descriptionController.text.trim(),
+        expenses:
+            _expenses
+                .map(
+                  (row) => ExpenseClaimLine(
+                    expenseType: row.expenseType ?? '',
+                    amount: row.amountController.text,
+                    expenseDate: DateFormat(
+                      'yyyy-MM-dd',
+                    ).format(row.expenseDate),
+                    description: row.descriptionController.text,
+                  ),
+                )
+                .toList(),
         csrfToken: _options!.csrfToken,
-        billPath: _bill!.path,
+        billPaths: _bills.map((bill) => bill.path).toList(),
+        supportsMultipleExpenses: _options!.supportsMultipleExpenses,
       );
       if (!mounted) return;
       _clearForm();
       _showMessage(
-        'Expense Claim ${result.name} was created with its bill attached.',
+        'Expense Claim ${result.name} was created with $expenseCount ${expenseCount == 1 ? 'expense' : 'expenses'} and $billCount ${billCount == 1 ? 'bill' : 'bills'} attached.',
       );
     } catch (error) {
       if (!mounted) return;
       if (error is TimeoutException) {
         _showMessage(
-          'Submission timed out. The claim and bill may still have been saved. Check Expense Claims before retrying.',
+          'Submission timed out. The claim and bills may still have been saved. Check Expense Claims before retrying.',
         );
       } else {
         _showMessage(_cleanError(error));
@@ -256,11 +342,17 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
   }
 
   void _clearForm() {
-    _amountController.clear();
-    _descriptionController.clear();
+    final previousRows = _expenses.toList();
     setState(() {
-      _bill = null;
-      _expenseDate = DateTime.now();
+      _bills.clear();
+      _expenses
+        ..clear()
+        ..add(_ExpenseRowDraft(expenseType: previousRows.first.expenseType));
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final row in previousRows) {
+        row.dispose();
+      }
     });
   }
 
@@ -372,8 +464,9 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
           ).copyWith(errorText: loadError),
           validator: (_) {
             if (loadError != null) return loadError;
-            if (selected == null)
+            if (selected == null) {
               return 'Choose an option from the suggestions.';
+            }
             return null;
           },
           onChanged: (text) {
@@ -443,98 +536,76 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
               onChanged: _selectApprover,
             ),
           ),
-          _formField(
-            'Expense Type',
-            DropdownButtonFormField<String>(
-              value: _expenseType,
-              decoration: _inputDecoration(),
-              icon: const Icon(Icons.keyboard_arrow_down_rounded),
-              items:
-                  options.expenseTypes
-                      .map(
-                        (item) => DropdownMenuItem(
-                          value: item.value,
-                          child: Text(
-                            item.label,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      )
-                      .toList(),
-              onChanged:
-                  _submitting
-                      ? null
-                      : (value) => setState(() => _expenseType = value),
-              validator:
-                  (value) =>
-                      value == null || value.isEmpty
-                          ? 'Choose an expense type.'
-                          : null,
+          const Text(
+            'Expenses',
+            style: TextStyle(
+              color: _expenseInk,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
             ),
           ),
-          _formField(
-            'Amount${options.currency.isEmpty ? '' : ' (${options.currency})'}',
-            TextFormField(
-              controller: _amountController,
-              enabled: !_submitting,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
+          const SizedBox(height: 6),
+          const Text('Add each expense as a separate row in this claim.'),
+          const SizedBox(height: 14),
+          for (var index = 0; index < _expenses.length; index++)
+            _buildExpenseRow(_expenses[index], index, options),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _submitting || _loadingApprovers ? null : _addExpense,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Add Expense'),
+            ),
+          ),
+          if (!options.supportsMultipleExpenses)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'Multiple expenses and bill photos are not available yet. You can still submit one expense with one bill.',
               ),
-              decoration: _inputDecoration(hint: 'Enter amount'),
-              validator: (value) {
-                final parsed = double.tryParse(
-                  (value ?? '').replaceAll(',', '').trim(),
-                );
-                if (parsed == null || parsed <= 0) {
-                  return 'Enter an amount greater than zero.';
-                }
-                return null;
-              },
             ),
-          ),
-          _formField(
-            'Date',
-            InkWell(
-              onTap: _submitting ? null : _chooseDate,
-              borderRadius: BorderRadius.circular(11),
-              child: InputDecorator(
-                decoration: _inputDecoration(
-                  suffixIcon: const Icon(
-                    Icons.calendar_month_outlined,
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 20),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F9FF),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 16,
+              runSpacing: 8,
+              children: [
+                Text(
+                  'Total (${_expenses.length} ${_expenses.length == 1 ? 'expense' : 'expenses'})',
+                ),
+                Text(
+                  '${options.currency} ${NumberFormat('#,##0.00').format(_totalAmount)}',
+                  key: const ValueKey('expense-total'),
+                  style: const TextStyle(
                     color: _expenseBlue,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                child: Text(DateFormat('dd MMM yyyy').format(_expenseDate)),
-              ),
+              ],
             ),
           ),
-          _formField(
-            'Description',
-            TextFormField(
-              controller: _descriptionController,
-              enabled: !_submitting,
-              minLines: 1,
-              maxLines: 3,
-              decoration: _inputDecoration(hint: 'Enter expense details'),
-              validator:
-                  (value) =>
-                      (value ?? '').trim().isEmpty
-                          ? 'Description is required.'
-                          : null,
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: Text(
+              'Attach the bill photos for this claim. At least one photo is required.',
             ),
           ),
-          _formField('Attach Bill', _buildBillPicker()),
+          _formField('Attach Bills', _buildBillPicker()),
           SizedBox(
             height: 50,
             child: FilledButton(
-              onPressed: _submitting ? null : _submit,
+              onPressed: _submitting || _loadingApprovers ? null : _submit,
               style: FilledButton.styleFrom(
                 backgroundColor: _expenseBlue,
                 disabledBackgroundColor: _expenseBlue.withValues(alpha: 0.65),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
+                shape: const StadiumBorder(),
+              ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
               child:
                   _submitting
                       ? const SizedBox.square(
@@ -558,58 +629,191 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
     );
   }
 
-  Widget _buildBillPicker() => Row(
+  Widget _buildExpenseRow(
+    _ExpenseRowDraft row,
+    int index,
+    ExpenseClaimFormOptions options,
+  ) => Container(
+    key: ObjectKey(row),
+    margin: const EdgeInsets.only(bottom: 14),
+    padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+    decoration: BoxDecoration(
+      border: Border.all(color: _expenseBorder),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Expense ${index + 1}',
+                style: const TextStyle(
+                  color: _expenseInk,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Remove expense ${index + 1}',
+              onPressed:
+                  _submitting || _expenses.length == 1
+                      ? null
+                      : () => _removeExpense(row),
+              icon: const Icon(Icons.delete_outline_rounded),
+            ),
+          ],
+        ),
+        _formField(
+          'Expense Type',
+          DropdownButtonFormField<String>(
+            initialValue: row.expenseType,
+            decoration: _inputDecoration(),
+            icon: const Icon(Icons.keyboard_arrow_down_rounded),
+            items:
+                options.expenseTypes
+                    .map(
+                      (item) => DropdownMenuItem(
+                        value: item.value,
+                        child: Text(
+                          item.label,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
+            onChanged:
+                _submitting
+                    ? null
+                    : (value) => setState(() => row.expenseType = value),
+            validator:
+                (value) =>
+                    value == null || value.isEmpty
+                        ? 'Choose an expense type.'
+                        : null,
+          ),
+        ),
+        _formField(
+          'Amount${options.currency.isEmpty ? '' : ' (${options.currency})'}',
+          TextFormField(
+            key: ObjectKey(row.amountController),
+            controller: row.amountController,
+            onChanged: (_) => setState(() {}),
+            enabled: !_submitting,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: _inputDecoration(hint: 'Enter amount'),
+            validator: (value) {
+              final parsed = double.tryParse(
+                (value ?? '').replaceAll(',', '').trim(),
+              );
+              if (parsed == null || !parsed.isFinite || parsed <= 0) {
+                return 'Enter an amount greater than zero.';
+              }
+              return null;
+            },
+          ),
+        ),
+        _formField(
+          'Date',
+          InkWell(
+            onTap: _submitting ? null : () => _chooseDate(row),
+            borderRadius: BorderRadius.circular(11),
+            child: InputDecorator(
+              decoration: _inputDecoration(
+                suffixIcon: const Icon(
+                  Icons.calendar_month_outlined,
+                  color: _expenseBlue,
+                ),
+              ),
+              child: Text(DateFormat('dd MMM yyyy').format(row.expenseDate)),
+            ),
+          ),
+        ),
+        _formField(
+          'Description',
+          TextFormField(
+            key: ObjectKey(row.descriptionController),
+            controller: row.descriptionController,
+            enabled: !_submitting,
+            minLines: 1,
+            maxLines: 3,
+            decoration: _inputDecoration(hint: 'Enter expense details'),
+            validator:
+                (value) =>
+                    (value ?? '').trim().isEmpty
+                        ? 'Description is required.'
+                        : null,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildBillPicker() => Wrap(
+    spacing: 12,
+    runSpacing: 12,
     children: [
-      if (_bill != null)
+      for (var index = 0; index < _bills.length; index++)
         ClipRRect(
+          key: ValueKey(_bills[index].path),
           borderRadius: BorderRadius.circular(10),
           child: Stack(
             children: [
               Image.file(
-                File(_bill!.path),
+                File(_bills[index].path),
                 width: 104,
                 height: 100,
                 fit: BoxFit.cover,
+                errorBuilder:
+                    (context, error, stackTrace) => const SizedBox(
+                      width: 104,
+                      height: 100,
+                      child: Icon(Icons.broken_image_outlined),
+                    ),
               ),
               Positioned(
                 right: 2,
                 top: 2,
                 child: IconButton.filledTonal(
+                  tooltip: 'Remove bill ${index + 1}',
                   visualDensity: VisualDensity.compact,
                   onPressed:
-                      _submitting ? null : () => setState(() => _bill = null),
+                      _submitting
+                          ? null
+                          : () => setState(() => _bills.removeAt(index)),
                   icon: const Icon(Icons.close_rounded, size: 18),
                 ),
               ),
             ],
           ),
         ),
-      if (_bill != null) const SizedBox(width: 12),
-      Expanded(
-        child: InkWell(
-          onTap: _submitting ? null : _showBillPicker,
-          borderRadius: BorderRadius.circular(10),
-          child: Container(
-            height: 100,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF5F9FF),
-              border: Border.all(color: const Color(0xFFB9D1F0)),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.add_rounded, color: _expenseBlue, size: 30),
-                const SizedBox(height: 4),
-                Text(
-                  _bill == null ? 'Add Photo' : 'Replace Photo',
-                  style: const TextStyle(
-                    color: _expenseBlue,
-                    fontWeight: FontWeight.w600,
-                  ),
+      InkWell(
+        onTap: _submitting ? null : _showBillPicker,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: 140,
+          height: 100,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F9FF),
+            border: Border.all(color: const Color(0xFFB9D1F0)),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.add_rounded, color: _expenseBlue, size: 30),
+              const SizedBox(height: 4),
+              Text(
+                _bills.isNotEmpty && !_options!.supportsMultipleExpenses
+                    ? 'Replace Photo'
+                    : 'Add Photos',
+                style: const TextStyle(
+                  color: _expenseBlue,
+                  fontWeight: FontWeight.w600,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -620,15 +824,13 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+      appBar: brandAppBar(
         elevation: 0,
-        leading: const HomeBackButton(color: _expenseBlue),
+        leading: const HomeBackButton(color: Colors.white),
         title: const Text(
           'Expense Claim',
           style: TextStyle(
-            color: _expenseInk,
+            color: Colors.white,
             fontSize: 20,
             fontWeight: FontWeight.w800,
           ),
@@ -638,9 +840,7 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
         top: false,
         child:
             _loading
-                ? const Center(
-                  child: CircularProgressIndicator(color: _expenseBlue),
-                )
+                ? const Center(child: AgPathLoadingIndicator())
                 : _error != null
                 ? Center(
                   child: SingleChildScrollView(

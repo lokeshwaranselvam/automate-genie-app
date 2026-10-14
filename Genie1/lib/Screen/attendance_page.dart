@@ -1,3 +1,4 @@
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
@@ -7,6 +8,8 @@ import '../utils/widget/glass_card.dart';
 class AttendancePage extends StatelessWidget {
   final bool checkedIn;
   final bool previousDayPendingCheckout;
+  final bool completedToday;
+  final String? statusError;
   final bool loading;
   final bool actionLoading;
   final Map<String, dynamic> status;
@@ -23,6 +26,8 @@ class AttendancePage extends StatelessWidget {
     super.key,
     required this.checkedIn,
     required this.previousDayPendingCheckout,
+    this.completedToday = false,
+    this.statusError,
     required this.loading,
     required this.actionLoading,
     required this.status,
@@ -150,31 +155,37 @@ class AttendancePage extends StatelessWidget {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
           children: [
-            Row(
-              children: [
-                IconButton(
-                  onPressed: onBack,
-                  icon: const Icon(Icons.arrow_back_rounded),
-                  color: const Color(0xFF1768C4),
-                  tooltip: 'Back to Home',
-                ),
-                const Expanded(
-                  child: Text(
-                    'Attendance',
-                    style: TextStyle(
-                      color: Color(0xFF1D2A3D),
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
+            Container(
+              decoration: BoxDecoration(
+                gradient: BrandColors.gradient,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: onBack,
+                    icon: const Icon(Icons.arrow_back_rounded),
+                    color: Colors.white,
+                    tooltip: 'Back to Home',
+                  ),
+                  const Expanded(
+                    child: Text(
+                      'Attendance',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
-                ),
-                IconButton(
-                  onPressed: onOpenHistory,
-                  icon: const Icon(Icons.calendar_month_rounded),
-                  color: const Color(0xFF1768C4),
-                  tooltip: 'Attendance history',
-                ),
-              ],
+                  IconButton(
+                    onPressed: onOpenHistory,
+                    icon: const Icon(Icons.calendar_month_rounded),
+                    color: Colors.white,
+                    tooltip: 'Attendance history',
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 4),
             Row(
@@ -206,10 +217,13 @@ class AttendancePage extends StatelessWidget {
                   label:
                       loading
                           ? 'Loading'
+                          : completedToday
+                          ? 'Completed'
                           : checkedIn || previousDayPendingCheckout
                           ? 'Checked In'
                           : 'Not Checked In',
-                  checkedIn: checkedIn || previousDayPendingCheckout,
+                  checkedIn:
+                      completedToday || checkedIn || previousDayPendingCheckout,
                 ),
               ],
             ),
@@ -226,7 +240,9 @@ class AttendancePage extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              checkedIn || previousDayPendingCheckout
+              completedToday
+                  ? 'Attendance completed for today'
+                  : checkedIn || previousDayPendingCheckout
                   ? 'At $locationName'
                   : 'Ready to check in',
               textAlign: TextAlign.center,
@@ -303,7 +319,7 @@ class AttendancePage extends StatelessWidget {
                           child: const Icon(
                             Icons.location_searching_rounded,
                             size: 36,
-                            color: Color(0xFF4388D8),
+                            color: BrandColors.ink,
                           ),
                         ),
               ),
@@ -350,10 +366,27 @@ class AttendancePage extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 18),
+            if (statusError != null) ...[
+              Text(
+                statusError!,
+                style: const TextStyle(color: Color(0xFFB3261E)),
+              ),
+              TextButton.icon(
+                onPressed: () async => onRefresh(),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry attendance status'),
+              ),
+            ],
             SizedBox(
               height: 54,
               child: ElevatedButton.icon(
-                onPressed: actionLoading ? null : onAttendanceAction,
+                onPressed:
+                    loading ||
+                            actionLoading ||
+                            completedToday ||
+                            statusError != null
+                        ? null
+                        : onAttendanceAction,
                 icon:
                     actionLoading
                         ? const SizedBox(
@@ -365,13 +398,17 @@ class AttendancePage extends StatelessWidget {
                           ),
                         )
                         : Icon(
-                          checkedIn || previousDayPendingCheckout
+                          completedToday
+                              ? Icons.check_circle_outline_rounded
+                              : checkedIn || previousDayPendingCheckout
                               ? Icons.logout_rounded
                               : Icons.login_rounded,
                           size: 20,
                         ),
                 label: Text(
-                  checkedIn || previousDayPendingCheckout
+                  completedToday
+                      ? 'Completed'
+                      : checkedIn || previousDayPendingCheckout
                       ? 'Check Out'
                       : 'Check In',
                   style: const TextStyle(
@@ -381,13 +418,13 @@ class AttendancePage extends StatelessWidget {
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor:
-                      checkedIn || previousDayPendingCheckout
+                      completedToday
+                          ? const Color(0xFF168A62)
+                          : checkedIn || previousDayPendingCheckout
                           ? const Color(0xFFE7464D)
                           : const Color(0xFF168A62),
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  shape: const StadiumBorder(),
                 ),
               ),
             ),
@@ -402,12 +439,10 @@ class AttendancePage extends StatelessWidget {
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                 ),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1768C4),
+                  backgroundColor: BrandColors.ink,
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
+                  shape: const StadiumBorder(),
+                ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
               ),
             ),
           ],

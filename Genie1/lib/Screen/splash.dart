@@ -1,8 +1,10 @@
 import 'dart:async';
+import '../utils/widget/ag_path_loading_indicator.dart';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'login.dart';
 import 'homescreen.dart';
+import 'face_enrollment_gate.dart';
 import 'package:flutter/material.dart';
 import 'package:homegenie/utils/widget/warning.dart';
 import 'package:homegenie/utils/api/check_in_out.dart';
@@ -67,16 +69,22 @@ class _SplashState extends State<Splash> {
 
   Future<void> _redirect() async {
     final activeUser = await SessionAuthApi.getActiveSessionUser();
-    await Future.delayed(const Duration(seconds: 3));
     if (!mounted) return;
 
     if (activeUser != null && activeUser.isNotEmpty) {
       // A saved Frappe session skips the login screen on app restart, so
       // register/refresh its FCM token here as well as after a fresh login.
-      unawaited(FcmDeviceApi.requestPermissionAndRegister());
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => const Homescreen()),
+        MaterialPageRoute(
+          builder:
+              (context) => FaceEnrollmentGate(
+                child: const Homescreen(),
+                onReady:
+                    () =>
+                        unawaited(FcmDeviceApi.requestPermissionAndRegister()),
+              ),
+        ),
       );
     } else {
       Navigator.pushReplacement(
@@ -102,11 +110,16 @@ class _SplashState extends State<Splash> {
                 child: SizedBox(
                   height: 150,
                   width: 300,
-                  child: Image.asset(
-                    'assets/images/logoAG.png',
-                    fit: BoxFit.contain,
-                    semanticLabel: 'automategenie.ai',
-                  ),
+                  child:
+                      _showRetry
+                          ? Image.asset(
+                            'assets/images/logoAG.png',
+                            fit: BoxFit.contain,
+                            semanticLabel: 'automategenie.ai',
+                          )
+                          : const Center(
+                            child: AgPathLoadingIndicator(size: 150),
+                          ),
                 ),
               ),
             ),

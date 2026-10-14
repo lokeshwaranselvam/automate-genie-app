@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 import 'package:homegenie/utils/widget/live_location_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -269,21 +271,19 @@ class _HistoryOverviewState extends State<HistoryOverview> {
     return DefaultTabController(
       length: 2,
       child: Scaffold(
-        appBar: AppBar(
+        appBar: brandAppBar(
           leading: const HomeBackButton(color: Colors.white),
-          iconTheme: const IconThemeData(color: Colors.white),
           title: Text('History Overview', style: TextStyle(fontSize: 20)),
-          backgroundColor: Colors.blueAccent,
         ),
         body:
             _isLoading
-                ? Center(child: CircularProgressIndicator())
+                ? Center(child: AgPathLoadingIndicator())
                 : RefreshIndicator(
                   onRefresh: () async {
                     await _checkPing();
                     _fetchData();
                   },
-                  color: Colors.blueAccent,
+                  color: BrandColors.ink,
                   child: Padding(
                     padding: EdgeInsets.all(16),
                     child: Column(
@@ -292,8 +292,7 @@ class _HistoryOverviewState extends State<HistoryOverview> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.start,
                           children: [
-                            CircleAvatar(
-                              backgroundColor: Colors.blueAccent,
+                            brandCircleAvatar(
                               radius: 40,
                               child: Text(
                                 (eventData['reference_details'] != null &&
@@ -338,7 +337,7 @@ class _HistoryOverviewState extends State<HistoryOverview> {
                                     children: [
                                       Icon(
                                         Icons.location_pin,
-                                        color: Colors.blue,
+                                        color: BrandColors.ink,
                                       ),
                                       SizedBox(width: 5),
                                       Flexible(

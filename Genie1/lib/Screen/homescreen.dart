@@ -1,9 +1,12 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 import 'package:homegenie/utils/widget/live_location_service.dart';
 import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
 import 'attendance_page.dart';
+import 'home_dashboard_view.dart';
 import 'leave_application_page.dart';
 import 'site_visits_page.dart';
 import 'package:intl/intl.dart';
@@ -19,6 +22,8 @@ import 'package:homegenie/Screen/session_webview.dart';
 import 'pending_work_page.dart';
 import 'pending_work_overview_page.dart';
 import 'lead_creation_page.dart';
+import 'my_leads_page.dart';
+import 'my_performance_page.dart';
 import 'expense_claim_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -30,7 +35,10 @@ import '../utils/api/session_web_links_api.dart';
 import '../utils/api/pending_work_monitor.dart';
 import '../utils/api/pending_work_api.dart';
 import '../utils/api/event.dart';
+import '../utils/api/lead_api.dart';
 import '../utils/api/location_api.dart';
+import '../utils/face/face_auth_flow.dart';
+import '../utils/face/face_embedding_service.dart';
 import '../utils/widget/floating_widget.dart';
 import '../utils/widget/glass_card.dart';
 import '../utils/widget/location_tracker.dart';
@@ -83,6 +91,13 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
 
   bool _isLoading = false;
   bool _checkedIn = false;
+  bool _attendanceCompletedToday = false;
+  bool _attendanceStatusVerified = false;
+  bool _attendanceStatusRefreshing = false;
+  String? _attendanceStatusError;
+  int _attendanceStatusRequestId = 0;
+  int _attendanceActionRevision = 0;
+  Timer? _attendanceStatusRefreshTimer;
   bool _isActionLoading = false;
   bool _attendancePageOpen = false;
   bool _leaveApplicationOpen = false;
@@ -90,6 +105,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   Map<String, dynamic> _attendanceStatusDetails = {};
   int _selectedTab = 0;
   int? _homePendingCount;
+  int? _homeLeadCount;
   int? _homeTaskTodayCount;
   final GlobalKey<PendingWorkPageState> _pendingWorkPageKey =
       GlobalKey<PendingWorkPageState>();
@@ -209,8 +225,21 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           );
         });
     _checkPing();
+    _attendanceStatusRefreshTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) {
+        if (_appIsResumed &&
+            _prefsInitialized &&
+            _attendancePageOpen &&
+            !_leaveApplicationOpen &&
+            !_isActionLoading) {
+          unawaited(_getStatusFromServer());
+        }
+      },
+    );
     unawaited(_loadHomePendingCount());
     unawaited(_loadHomeTaskTodayCount());
+    unawaited(_loadHomeLeadCount());
     _homeScheduleRefreshTimer = Timer.periodic(const Duration(seconds: 30), (
       _,
     ) {
@@ -240,6 +269,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       _selectedTab = 0;
     });
     unawaited(_loadHomeTaskTodayCount());
+    unawaited(_loadHomeLeadCount());
     if (shouldRefresh) unawaited(_refreshHomeSchedule());
   }
 
@@ -249,6 +279,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       _appIsResumed = true;
       PendingWorkMonitor.start();
+      if (!_isActionLoading) unawaited(_getStatusFromServer(force: true));
       if (_selectedTab == 0) unawaited(_refreshHomeSchedule());
     } else {
       _appIsResumed = false;
@@ -262,6 +293,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     PendingWorkMonitor.stop();
     _homeScheduleRefreshTimer?.cancel();
+    FaceEmbeddingService.instance.clear().ignore();
+    _attendanceStatusRefreshTimer?.cancel();
     _pendingDashboardRefreshDebounce?.cancel();
     final subscription = _pendingWorkUpdatesSubscription;
     if (subscription != null) unawaited(subscription.cancel());
@@ -311,6 +344,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             'Error',
           );
           await LiveLocationService.stopForSignOut();
+          await SessionAuthApi.clearSession();
           await prefs.clear();
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
@@ -334,6 +368,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     try {
       prefs = await SharedPreferences.getInstance();
       _prefsInitialized = true;
+      _checkedIn = prefs.getBool('is_employee_checked_in') ?? false;
+      _attendanceCompletedToday =
+          prefs.getString('attendance_completed_date') ==
+          DateFormat('yyyy-MM-dd').format(DateTime.now());
       await _loadHomeScheduleCache();
       unawaited(_loadSessionWebLinks());
       unawaited(_loadUserAvatar());
@@ -498,6 +536,22 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _loadHomeLeadCount() async {
+    try {
+      final leads = await LeadApi.getMyLeads();
+      if (mounted) setState(() => _homeLeadCount = leads.length);
+    } catch (error) {
+      debugPrint('Home lead count refresh failed: $error');
+    }
+  }
+
+  Future<void> _openMyLeads() async {
+    await Navigator.of(
+      context,
+    ).push<void>(MaterialPageRoute<void>(builder: (_) => const MyLeadsPage()));
+    if (mounted) unawaited(_loadHomeLeadCount());
+  }
+
   Future<bool> _safeCheckPing() async {
     try {
       var connectivity = await Connectivity().checkConnectivity();
@@ -532,20 +586,95 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   bool _previousDayPendingCheckout = false;
-  Future<void> _getStatusFromServer() async {
+  Future<void> _getStatusFromServer({bool force = false}) async {
+    if (!mounted ||
+        !_prefsInitialized ||
+        (_attendanceStatusRefreshing && !force)) {
+      return;
+    }
     final email = prefs.getString('email');
-    if (email == null) return;
-
-    final response = await Check.getStatus(email);
-
-    setState(() {
-      if (response is Map) {
-        _attendanceStatusDetails = Map<String, dynamic>.from(response);
+    if (email == null || email.isEmpty) return;
+    final requestId = ++_attendanceStatusRequestId;
+    final actionRevision = _attendanceActionRevision;
+    _attendanceStatusRefreshing = true;
+    bool isCurrent() =>
+        mounted &&
+        requestId == _attendanceStatusRequestId &&
+        actionRevision == _attendanceActionRevision &&
+        prefs.getString('email') == email;
+    try {
+      final response = await Check.getStatus(email);
+      if (!isCurrent()) return;
+      if (response['attendance_records_verified'] != true) {
+        throw StateError('Attendance records could not be verified.');
       }
-      _checkedIn = response["checked_in"] ?? false;
-      _previousDayPendingCheckout =
-          response["previous_checkout_pending"] ?? false;
+      final completedToday = response['completed_today'] == true;
+      final checkedIn = response['checked_in'] == true;
+      await _saveAttendanceCompletion(completedToday);
+      await prefs.setBool('is_employee_checked_in', checkedIn);
+      if (!isCurrent()) return;
+      setState(() {
+        _attendanceStatusDetails = Map<String, dynamic>.from(response);
+        _checkedIn = checkedIn;
+        _previousDayPendingCheckout =
+            response['previous_checkout_pending'] == true;
+        _attendanceCompletedToday = completedToday;
+        _attendanceStatusVerified = true;
+        _attendanceStatusError = null;
+      });
+      if (checkedIn) {
+        unawaited(
+          LiveLocationService().ensureTracking().catchError((Object error) {
+            if (!isCurrent()) return;
+            debugPrint('Live tracking could not be restored: $error');
+            if (_attendancePageOpen) {
+              Warning.show(
+                context,
+                'Attendance is checked in, but live tracking could not start: $error',
+                'Tracking warning',
+              );
+            }
+          }),
+        );
+      }
+    } catch (_) {
+      if (!isCurrent()) return;
+      // An unavailable/malformed response is not evidence of deleted records.
+      setState(() {
+        _attendanceStatusVerified = false;
+        _attendanceStatusError =
+            'Could not refresh attendance. Check your connection and retry.';
+      });
+    } finally {
+      if (requestId == _attendanceStatusRequestId) {
+        _attendanceStatusRefreshing = false;
+      }
+    }
+  }
+
+  Future<void> _saveAttendanceCompletion(bool completed) async {
+    if (completed) {
+      await prefs.setString(
+        'attendance_completed_date',
+        DateFormat('yyyy-MM-dd').format(DateTime.now()),
+      );
+    } else {
+      await prefs.remove('attendance_completed_date');
+    }
+  }
+
+  Future<void> _handleAttendanceStatusUpdate(bool isNowCheckedIn) async {
+    if (!mounted) return;
+    ++_attendanceActionRevision;
+    final completedToday = !isNowCheckedIn;
+    setState(() {
+      _previousDayPendingCheckout = false;
+      _checkedIn = isNowCheckedIn;
+      _attendanceCompletedToday = completedToday;
+      _attendanceStatusError = null;
     });
+    await _saveAttendanceCompletion(completedToday);
+    await _getStatusFromServer(force: true);
   }
 
   Future<void> _fetchOfficeType() async {
@@ -813,6 +942,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
 
   void _selectBottomTab(int index) {
     if (index == 0) unawaited(_loadHomeTaskTodayCount());
+    if (index == 0) unawaited(_loadHomeLeadCount());
     if (_attendancePageOpen || _leaveApplicationOpen) {
       setState(() {
         _attendancePageOpen = false;
@@ -858,7 +988,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             const Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
-                child: CircularProgressIndicator(),
+                child: AgPathLoadingIndicator(size: 64),
               ),
             ),
           if (_webLinksError != null)
@@ -882,7 +1012,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
               child: ListTile(
                 leading: Icon(
                   _webLinkIcon(link['icon']),
-                  color: Colors.blueAccent,
+                  color: BrandColors.ink,
                 ),
                 title: Text(link['title'] ?? 'Dashboard'),
                 trailing: const Icon(Icons.open_in_new, size: 18),
@@ -911,13 +1041,13 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           content: Text("Are you sure you want to logout?"),
           actions: <Widget>[
             TextButton(
-              child: Text("Cancel", style: TextStyle(color: Colors.blueAccent)),
+              child: Text("Cancel", style: TextStyle(color: BrandColors.ink)),
               onPressed: () {
                 Navigator.of(alertContext).pop();
               },
             ),
             TextButton(
-              child: Text("Logout", style: TextStyle(color: Colors.blueAccent)),
+              child: Text("Logout", style: TextStyle(color: BrandColors.ink)),
               onPressed: () async {
                 var connectivity = await Connectivity().checkConnectivity();
 
@@ -1135,7 +1265,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         time: _scheduleDateTime(event['starts_on']),
         title: 'Event Scheduled',
         subtitle: summary.isEmpty ? eventType : summary,
-        color: const Color(0xFF4388D8),
+        color: BrandColors.ink,
         eventId: eventId,
       ),
     ];
@@ -1185,306 +1315,50 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   Widget _buildHomeDashboard() {
-    final todayEvents = _todaySchedule;
-    final displayEvents = todayEvents.take(4).toList();
-    final scheduleMilestones =
-        displayEvents.expand(_scheduleMilestones).toList();
+    final displayEvents = _todaySchedule.take(4).toList();
+    final milestones = displayEvents.expand(_scheduleMilestones).toList();
     final clearableEventIds =
-        scheduleMilestones
+        milestones
             .where((milestone) => milestone.clearable)
             .map((milestone) => milestone.eventId)
             .where((eventId) => eventId.isNotEmpty)
             .toSet();
-    return SafeArea(
-      child: RefreshIndicator(
-        onRefresh: () async {
-          await Future.wait([
-            _fetchData(),
-            _loadHomePendingCount(),
-            _loadHomeTaskTodayCount(),
-            _loadSessionWebLinks(forceRefresh: true),
-          ]);
-        },
-        color: const Color(0xFF1768C4),
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 22),
-          children: [
-            _buildHomeTopBar(),
-            const SizedBox(height: 17),
-            _buildHomeProfile(),
-            const SizedBox(height: 17),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildMetricCard(
-                    icon: Icons.event_available_rounded,
-                    count:
-                        _homeTaskTodayCount?.toString().padLeft(2, '0') ?? '—',
-                    label: 'Tasks Today',
-                    color: const Color(0xFF2D7DD2),
-                    background: const Color(0xFFEAF3FF),
-                    onTap: () => setState(() => _selectedTab = 1),
-                  ),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: _buildMetricCard(
-                    icon: Icons.apartment_rounded,
-                    count: _assignedIncompleteSiteVisitCount.toString().padLeft(
-                      2,
-                      '0',
-                    ),
-                    label: 'Site Visits',
-                    color: const Color(0xFF149778),
-                    background: const Color(0xFFE6F7F2),
-                    onTap: () => setState(() => _selectedTab = 2),
-                  ),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: _buildMetricCard(
-                    icon: Icons.handshake_rounded,
-                    count: '—',
-                    label: 'My Leads',
-                    color: const Color(0xFFBE8A18),
-                    background: const Color(0xFFFFF5DD),
-                    onTap: () => setState(() => _selectedTab = 3),
-                  ),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: _buildMetricCard(
-                    icon: Icons.assignment_late_rounded,
-                    count: _homePendingCount?.toString().padLeft(2, '0') ?? '—',
-                    label: 'Pending',
-                    color: const Color(0xFFD95060),
-                    background: const Color(0xFFFFECEF),
-                    onTap: _openPendingWork,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    "Today's Schedule",
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-                  ),
-                ),
-                if (clearableEventIds.isNotEmpty)
-                  TextButton(
-                    onPressed:
-                        () => _clearHomeScheduleEvents(clearableEventIds),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: const Text(
-                      'Clear',
-                      style: TextStyle(
-                        color: Color(0xFF1768C4),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                TextButton(
-                  onPressed: () => setState(() => _selectedTab = 2),
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.only(left: 8),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: const Text(
-                    'View All',
-                    style: TextStyle(
-                      color: Color(0xFF1768C4),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (_isLoading)
-              const LinearProgressIndicator(
-                minHeight: 2,
-                color: Color(0xFF1768C4),
-                backgroundColor: Color(0xFFE8EEF6),
-              )
-            else if (displayEvents.isEmpty)
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 18,
-                  horizontal: 4,
-                ),
-                alignment: Alignment.centerLeft,
-                child: const Text(
-                  'No events scheduled for today.',
-                  style: TextStyle(color: Color(0xFF8A95A5), fontSize: 13),
-                ),
-              )
-            else
-              ...List.generate(scheduleMilestones.length, (index) {
-                return _buildScheduleRow(
-                  scheduleMilestones[index],
-                  isLast: index == scheduleMilestones.length - 1,
-                );
-              }),
-            const SizedBox(height: 15),
-            const Divider(height: 1, color: Color(0xFFE9EDF2)),
-            const SizedBox(height: 17),
-            const Text(
-              'Quick Actions',
-              style: TextStyle(
-                color: Color(0xFF202B3C),
-                fontSize: 17,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 15),
-            Row(
-              children: [
-                _buildQuickAction(
-                  icon:
-                      _isActionLoading
-                          ? Icons.hourglass_top_rounded
-                          : Icons.access_time_filled_rounded,
-                  label: _isActionLoading ? 'Working...' : 'Attendance',
-                  color: const Color(0xFF1976D2),
-                  onTap: _openAttendance,
-                ),
-                _buildQuickAction(
-                  icon: Icons.person_add_alt_1_rounded,
-                  label: 'Add Lead',
-                  color: const Color(0xFF159B78),
-                  onTap: () => setState(() => _selectedTab = 3),
-                ),
-                _buildQuickAction(
-                  icon: Icons.location_on_rounded,
-                  label: 'Site Visit',
-                  color: const Color(0xFF8D49C6),
-                  onTap: () => setState(() => _selectedTab = 2),
-                ),
-                _buildQuickAction(
-                  icon: Icons.add_task_rounded,
-                  label: 'New Task',
-                  color: const Color(0xFFF07818),
-                  onTap: () => setState(() => _selectedTab = 1),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHomeTopBar() {
-    return Row(
-      children: [
-        IconButton(
-          tooltip: 'Open navigation menu',
-          visualDensity: VisualDensity.compact,
-          onPressed: _openNavigationDrawer,
-          icon: const Icon(
-            Icons.menu_rounded,
-            color: Color(0xFF23405F),
-            size: 25,
-          ),
-        ),
-        const SizedBox(width: 4),
-        SizedBox(
-          width: 136,
-          height: 62,
-          child: Image.asset(
-            'assets/images/logoAG.png',
-            fit: BoxFit.cover,
-            semanticLabel: 'automategenie.ai',
-          ),
-        ),
-        const Spacer(),
-        _buildHeaderIcon(Icons.notifications_outlined, () {
-          setState(() => _selectedTab = 1);
-        }, badge: true),
+    return HomeDashboardView(
+      avatar: _buildUserAvatar(58, fallbackColor: const Color(0xFF7E8DA2)),
+      name: _displayCurrentUserName,
+      greeting: _greeting(),
+      date: DateTime.now(),
+      taskCount: _homeTaskTodayCount?.toString().padLeft(2, '0') ?? '?',
+      visitCount: _assignedIncompleteSiteVisitCount.toString().padLeft(2, '0'),
+      leadCount: _homeLeadCount?.toString().padLeft(2, '0') ?? '?',
+      pendingCount: _homePendingCount?.toString().padLeft(2, '0') ?? '?',
+      loading: _isLoading,
+      attendanceBusy: _isActionLoading,
+      schedule: [
+        for (var i = 0; i < milestones.length; i++)
+          _buildScheduleRow(milestones[i], isLast: i == milestones.length - 1),
       ],
-    );
-  }
-
-  Widget _buildHeaderIcon(
-    IconData icon,
-    VoidCallback onTap, {
-    bool badge = false,
-  }) {
-    return IconButton(
-      visualDensity: VisualDensity.compact,
-      onPressed: onTap,
-      icon: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Icon(icon, color: const Color(0xFF23405F), size: 23),
-          if (badge)
-            Positioned(
-              right: -3,
-              top: -2,
-              child: Container(
-                width: 9,
-                height: 9,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE64C5C),
-                  border: Border.all(color: Colors.white, width: 1),
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHomeProfile() {
-    final displayName = _displayCurrentUserName;
-    return Row(
-      children: [
-        Container(
-          width: 57,
-          height: 57,
-          decoration: BoxDecoration(
-            color: const Color(0xFFE6EDF6),
-            border: Border.all(color: Colors.white, width: 2),
-            shape: BoxShape.circle,
-          ),
-          child: ClipOval(
-            child: _buildUserAvatar(55, fallbackColor: const Color(0xFF7E8DA2)),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _greeting(),
-                style: const TextStyle(color: Color(0xFF7A8799), fontSize: 12),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF1D2A3D),
-                  fontWeight: FontWeight.w800,
-                  fontSize: 17,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
+      onRefresh: () async {
+        await Future.wait([
+          _fetchData(),
+          _loadHomePendingCount(),
+          _loadHomeTaskTodayCount(),
+          _loadHomeLeadCount(),
+          _loadSessionWebLinks(forceRefresh: true),
+        ]);
+      },
+      onMenu: _openNavigationDrawer,
+      onNotifications: () => setState(() => _selectedTab = 1),
+      onTasks: () => setState(() => _selectedTab = 1),
+      onVisits: () => setState(() => _selectedTab = 2),
+      onLeads: _openMyLeads,
+      onPending: _openPendingWork,
+      onAttendance: _openAttendance,
+      onAddLead: () => setState(() => _selectedTab = 3),
+      onClearSchedule:
+          clearableEventIds.isEmpty
+              ? null
+              : () => _clearHomeScheduleEvents(clearableEventIds),
     );
   }
 
@@ -1499,51 +1373,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       return savedName;
     }
     return 'Employee';
-  }
-
-  Widget _buildMetricCard({
-    required IconData icon,
-    required String count,
-    required String label,
-    required Color color,
-    required Color background,
-    required VoidCallback onTap,
-  }) {
-    return GlassCard(
-      tintColor: background.withValues(alpha: 0.72),
-      borderRadius: BorderRadius.circular(15),
-      onTap: onTap,
-      child: SizedBox(
-        height: 100,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 10),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Icon(icon, color: color, size: 23),
-              Text(
-                count,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 9.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _buildScheduleRow(
@@ -1639,57 +1468,40 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildQuickAction({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return Expanded(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-          child: Column(
-            children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: Icon(icon, size: 23, color: Colors.white),
-              ),
-              const SizedBox(height: 7),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 10,
-                  color: Color(0xFF536174),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Future<void> _openAttendance() async {
     setState(() => _attendancePageOpen = true);
+    unawaited(
+      FaceAuthFlow.instance.prepare().catchError((Object _) {
+        // Optional preparation must not block the page. A real scan retries
+        // with fresh server state and reports any error through its usual UI.
+        debugPrint(
+          'Attendance face preparation will be retried during capture.',
+        );
+      }),
+    );
     await _refreshAttendancePage();
   }
 
   Future<void> _refreshAttendancePage() async {
-    await Future.wait([_getStatusFromServer(), _getCurrentLocation()]);
+    await Future.wait([
+      _getStatusFromServer(force: true),
+      _getCurrentLocation(),
+    ]);
   }
 
   Future<void> _performAttendanceAction() async {
+    if (_isActionLoading || _attendanceStatusRefreshing) return;
+    await _getStatusFromServer(force: true);
+    if (!mounted) return;
+    if (!_attendanceStatusVerified) {
+      Warning.show(
+        context,
+        _attendanceStatusError ?? 'Refresh attendance and try again.',
+        'Warning',
+      );
+      return;
+    }
+    if (_attendanceCompletedToday) return;
     final ok = await _safeCheckPing();
     if (!ok || !mounted) return;
 
@@ -1704,17 +1516,14 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         if (mounted) setState(() => _isActionLoading = true);
       },
       onApiEnd: () {
-        if (mounted) setState(() => _isActionLoading = false);
-        unawaited(_getStatusFromServer());
+        if (mounted) {
+          setState(() => _isActionLoading = false);
+          unawaited(_getStatusFromServer(force: true));
+        }
       },
-      onStatusUpdate: (isNowCheckedIn) {
-        if (!mounted) return;
-        setState(() {
-          _previousDayPendingCheckout = false;
-          _checkedIn = isNowCheckedIn;
-        });
-        unawaited(_getStatusFromServer());
-      },
+      onStatusUpdate:
+          (isNowCheckedIn) =>
+              unawaited(_handleAttendanceStatusUpdate(isNowCheckedIn)),
     );
   }
 
@@ -1727,6 +1536,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     return AttendancePage(
       checkedIn: _checkedIn,
       previousDayPendingCheckout: _previousDayPendingCheckout,
+      completedToday: _attendanceCompletedToday,
+      statusError: _attendanceStatusError,
       loading: _isLoading,
       actionLoading: _isActionLoading,
       status: _attendanceStatusDetails,
@@ -1749,10 +1560,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   Widget _buildMoreTab() {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
-      appBar: AppBar(
-        leading: const HomeBackButton(color: Color(0xFF1768C4)),
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+      appBar: brandAppBar(
+        leading: const HomeBackButton(color: Colors.white),
         title: const Text(
           'More',
           style: TextStyle(fontWeight: FontWeight.w800),
@@ -1761,6 +1570,25 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       body: ListView(
         padding: const EdgeInsets.all(14),
         children: [
+          _moreTile(
+            Icons.bar_chart_rounded,
+            'My Performance',
+            'View your sales, activity and attendance trends',
+            () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (_) => MyPerformancePage(
+                        onNavigate: (index) {
+                          Navigator.pop(context);
+                          _selectBottomTab(index);
+                        },
+                      ),
+                ),
+              );
+            },
+          ),
           _moreTile(
             Icons.fact_check_outlined,
             'Attendance',
@@ -1782,7 +1610,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                 MaterialPageRoute(
                   builder:
                       (_) => Scaffold(
-                        appBar: AppBar(
+                        appBar: brandAppBar(
                           leading: const HomeBackButton(),
                           title: const Text('Dashboards'),
                         ),
@@ -1851,7 +1679,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 9),
       child: ListTile(
-        leading: Icon(icon, color: const Color(0xFF1768C4)),
+        leading: Icon(icon, color: BrandColors.ink),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
         subtitle: Text(subtitle),
         trailing: const Icon(Icons.chevron_right_rounded),
@@ -1863,7 +1691,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     if (!_prefsInitialized) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: Center(child: AgPathLoadingIndicator()));
     }
 
     return WillPopScope(
@@ -1898,7 +1726,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
               SizedBox(
                 height: 120,
                 child: DrawerHeader(
-                  decoration: BoxDecoration(color: Colors.blue),
+                  decoration: BoxDecoration(gradient: BrandColors.gradient),
                   child: Row(
                     children: [
                       SizedBox(
@@ -1924,12 +1752,12 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                   padding: EdgeInsets.zero,
                   children: [
                     ListTile(
-                      leading: Icon(Icons.home, color: Colors.blueAccent),
+                      leading: Icon(Icons.home, color: BrandColors.ink),
                       title: Text('Home'),
                       onTap: () => Navigator.pop(context),
                     ),
                     ListTile(
-                      leading: Icon(Icons.event, color: Colors.blueAccent),
+                      leading: Icon(Icons.event, color: BrandColors.ink),
                       title: Text('Events'),
                       onTap: () {
                         Navigator.push(
@@ -1944,7 +1772,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                       },
                     ),
                     ListTile(
-                      leading: Icon(Icons.history, color: Colors.blueAccent),
+                      leading: Icon(Icons.history, color: BrandColors.ink),
                       title: Text('History'),
                       onTap: () {
                         Navigator.push(
@@ -1958,7 +1786,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                     ListTile(
                       leading: Icon(
                         Icons.person_add_alt_1_outlined,
-                        color: Colors.blueAccent,
+                        color: BrandColors.ink,
                       ),
                       title: Text('Create Lead'),
                       onTap: () {
@@ -1997,7 +1825,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                       (link) => ListTile(
                         leading: Icon(
                           _webLinkIcon(link['icon']),
-                          color: Colors.blueAccent,
+                          color: BrandColors.ink,
                         ),
                         title: Text(link['title'] ?? 'Web page'),
                         trailing: const Icon(
@@ -2012,7 +1840,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                       ),
                     ),
                     ListTile(
-                      leading: Icon(Icons.logout, color: Colors.blueAccent),
+                      leading: Icon(Icons.logout, color: BrandColors.ink),
                       title: Text('Logout'),
                       onTap: () => _showLogoutDialog(context),
                     ),
@@ -2051,44 +1879,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                     _buildMoreTab(),
                   ],
                 ),
-        bottomNavigationBar: BottomNavigationBar(
+        bottomNavigationBar: HomeNavigationBar(
           currentIndex: _selectedTab,
           onTap: _selectBottomTab,
-          type: BottomNavigationBarType.fixed,
-          backgroundColor: Colors.white,
-          selectedItemColor: const Color(0xFF1768C4),
-          unselectedItemColor: const Color(0xFF7F8998),
-          selectedFontSize: 10,
-          unselectedFontSize: 10,
-          showUnselectedLabels: true,
-          elevation: 8,
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.home_outlined),
-              activeIcon: Icon(Icons.home_rounded),
-              label: 'Home',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.assignment_outlined),
-              activeIcon: Icon(Icons.assignment_rounded),
-              label: 'Tasks',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.location_on_outlined),
-              activeIcon: Icon(Icons.location_on_rounded),
-              label: 'Visits',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.people_outline_rounded),
-              activeIcon: Icon(Icons.people_rounded),
-              label: 'Leads',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.more_horiz_rounded),
-              activeIcon: Icon(Icons.more_horiz_rounded),
-              label: 'More',
-            ),
-          ],
         ),
       ),
     );

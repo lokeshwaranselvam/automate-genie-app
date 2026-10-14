@@ -1,3 +1,4 @@
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -6,8 +7,6 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:homegenie/utils/api/check_in_out.dart';
 import 'package:homegenie/utils/api/event.dart';
-import 'package:homegenie/utils/api/image_upload_api.dart';
-import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as maps;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,9 +14,9 @@ import 'warning.dart';
 import '../widget/location_tracker.dart';
 import '../widget/live_location_service.dart';
 import '../widget/battery_optimization_helper.dart';
-import '../widget/camera_service.dart';
-import '../widget/gps_photo_stamper.dart';
-import '../api/location_api.dart';
+import '../api/face_auth_api.dart';
+import '../face/face_auth_flow.dart';
+import '../face/face_performance_trace.dart';
 
 class Action_Bottom {
   static Future<bool> _handleLocationPermission(
@@ -66,81 +65,44 @@ class Action_Bottom {
     return true;
   }
 
-  /// Mandatory selfie for attendance: capture, GPS-stamp, compress and upload
-  /// it before the check-in/check-out request. Returns the uploaded file_url,
-  /// or null when the user cancelled or the upload failed (a message is shown
-  /// and no attendance request is made).
-  static Future<String?> _captureAttendancePhoto(
+  /// Match the temporary blink selfie locally; submit only a verification receipt.
+  static Future<FaceVerifiedResult?> _captureAttendancePhoto(
     BuildContext context, {
     required bool checkingOut,
-    required Position position,
-    required String address,
-    required String? email,
+    required Future<FaceLocation> Function() refreshLocation,
+    bool overlapLocationWithMatching = true,
     Function()? onApiStart,
     Function()? onApiEnd,
   }) async {
-    final action = checkingOut ? 'Check-out' : 'Check-in';
-    final photo = await CameraService.capturePhoto(front: true);
-    if (photo == null) {
-      Warning.show(
-        context,
-        'A selfie is required for Employee $action. Please try again and capture a photo.',
-        'Photo required',
-      );
-      return null;
-    }
-
     onApiStart?.call();
-    File? stamped;
     try {
-      stamped = await GpsPhotoStamper.stamp(
-        file: photo,
-        lat: position.latitude,
-        lng: position.longitude,
-        address: address,
-        title: 'Employee $action',
+      final receipt = await FaceAuthFlow.instance.verify(
+        context: context,
+        action: checkingOut ? 'attendance_out' : 'attendance_in',
+        refreshLocation: refreshLocation,
+        overlapLocationWithMatching: overlapLocationWithMatching,
       );
-      final user = (email ?? 'user')
-          .split('@')
-          .first
-          .replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
-      final time = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
-      final fileUrl = await ImageUploadApi.uploadAttendancePhoto(
-        filePath: stamped.path,
-        fileName: '${checkingOut ? 'checkout' : 'checkin'}_${user}_$time.jpg',
-      );
-      if (fileUrl == null) {
-        onApiEnd?.call();
-        Warning.show(
-          context,
-          'Your photo could not be uploaded. Check your connection and try again. '
-              'Employee $action was not recorded.',
-          'Photo upload failed',
-        );
+      if (receipt != null) {
+        await FaceAuthApi.instance.assertSessionUser(receipt.currentUser);
       }
-      return fileUrl;
-    } catch (e) {
+      if (!context.mounted) return null;
+      if (receipt == null) onApiEnd?.call();
+      return receipt;
+    } catch (error) {
       onApiEnd?.call();
-      Warning.show(
-        context,
-        'Your photo could not be processed: $e',
-        'Photo upload failed',
-      );
-      return null;
-    } finally {
-      if (stamped != null &&
-          stamped.path != photo.path &&
-          stamped.existsSync()) {
-        try {
-          stamped.deleteSync();
-        } catch (_) {}
+      if (context.mounted) {
+        Warning.show(context, error.toString(), 'Face verification failed');
       }
+      return null;
     }
   }
 
   static Future<String?> _startEmployeeLiveLocationTracking() async {
     try {
-      await LiveLocationService().startTracking();
+      await const FacePerformanceTrace().measure(
+        'live tracking start',
+        LiveLocationService().startTracking,
+      );
       return null;
     } catch (e) {
       print("Failed to start employee live location tracking: $e");
@@ -150,7 +112,10 @@ class Action_Bottom {
 
   static Future<void> _stopEmployeeLiveLocationTracking() async {
     try {
-      await LiveLocationService().stopTracking();
+      await const FacePerformanceTrace().measure(
+        'live tracking stop',
+        LiveLocationService().stopTracking,
+      );
     } catch (e) {
       print("Failed to stop employee live location tracking: $e");
     }
@@ -178,7 +143,7 @@ class Action_Bottom {
           ),
           GestureDetector(
             onTap: () => Navigator.pop(context),
-            child: const Icon(Icons.close, color: Colors.blueAccent),
+            child: const Icon(Icons.close, color: BrandColors.ink),
           ),
         ],
       ),
@@ -190,7 +155,7 @@ class Action_Bottom {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(option, style: TextStyle(fontSize: 20)),
-                      const Icon(Icons.chevron_right, color: Colors.blueAccent),
+                      const Icon(Icons.chevron_right, color: BrandColors.ink),
                     ],
                   ),
                   onPressed: (_) async {
@@ -225,31 +190,23 @@ class Action_Bottom {
                       );
                       if (!hasPermission) return;
 
-                      Position position = await Geolocator.getCurrentPosition(
-                        desiredAccuracy: LocationAccuracy.high,
-                      );
-                      final address =
-                          await LocationHelper.getAddressFromCoordinates(
-                            position.latitude,
-                            position.longitude,
-                          );
-
                       final lastCheckoutAddress =
                           prefs.getString('last_checkout_address') ?? '';
 
-                      final photoUrl = await _captureAttendancePhoto(
+                      final faceReceipt = await _captureAttendancePhoto(
                         context,
                         checkingOut: isCheckedIn,
-                        position: position,
-                        address: address,
-                        email: email,
+                        refreshLocation: FaceAuthFlow.freshLocation,
                         onApiStart: onApiStart,
                         onApiEnd: onApiEnd,
                       );
-                      if (photoUrl == null) return;
+                      if (faceReceipt == null || !context.mounted) return;
+                      final position = faceReceipt.position;
+                      final address = faceReceipt.address;
 
                       var response;
                       onApiStart?.call();
+                      final saveClock = Stopwatch()..start();
                       if (isCheckedIn) {
                         LocationTrackerService.stopTracking();
                         double returnDistance =
@@ -288,7 +245,7 @@ class Action_Bottom {
                           formattedDistanceWithUnit,
                           option,
                           locationLogs,
-                          photoUrl: photoUrl,
+                          faceVerification: faceReceipt.recordId,
                         );
                       } else {
                         response = await Check.checkin(
@@ -297,12 +254,17 @@ class Action_Bottom {
                           position.longitude,
                           address,
                           option,
-                          photoUrl: photoUrl,
+                          faceVerification: faceReceipt.recordId,
                         );
                       }
+                      FacePerformanceTrace.logDuration(
+                        'attendance save',
+                        saveClock.elapsed,
+                      );
                       onApiEnd?.call();
 
                       if (response?['status'] == "Success") {
+                        onStatusUpdate?.call(!isCheckedIn);
                         String? trackingError;
                         if (isCheckedIn) {
                           await _stopEmployeeLiveLocationTracking();
@@ -312,8 +274,12 @@ class Action_Bottom {
                               await _startEmployeeLiveLocationTracking();
                           await prefs.setBool('is_employee_checked_in', true);
                           if (trackingError == null) {
-                            await BatteryOptimizationHelper.showBatteryOptimizationDialog(
-                              context,
+                            await const FacePerformanceTrace().measure(
+                              'battery guidance (includes user wait)',
+                              () =>
+                                  BatteryOptimizationHelper.showBatteryOptimizationDialog(
+                                    context,
+                                  ),
                             );
                           }
                         }
@@ -347,7 +313,6 @@ class Action_Bottom {
                           'last_lat_lng',
                           '${position.latitude},${position.longitude}',
                         );
-                        onStatusUpdate?.call(!isCheckedIn);
                         // if (!isCheckedIn) {
                         //   onStatusUpdate?.call(true);
                         // } else {
@@ -386,7 +351,7 @@ class Action_Bottom {
           ),
           GestureDetector(
             onTap: () => Navigator.pop(context),
-            child: const Icon(Icons.close, color: Colors.blueAccent),
+            child: const Icon(Icons.close, color: BrandColors.ink),
           ),
         ],
       ),
@@ -398,7 +363,7 @@ class Action_Bottom {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(option),
-                      const Icon(Icons.chevron_right, color: Colors.blueAccent),
+                      const Icon(Icons.chevron_right, color: BrandColors.ink),
                     ],
                   ),
                   onPressed: (_) async {
@@ -437,28 +402,39 @@ class Action_Bottom {
 
                       if (distance <= geofenceRadius) {
                         final email = prefs.getString('email');
-                        final address =
-                            await LocationHelper.getAddressFromCoordinates(
-                              position.latitude,
-                              position.longitude,
-                            );
-
                         final lastCheckoutAddress =
                             prefs.getString('last_checkout_address') ?? '';
 
-                        final photoUrl = await _captureAttendancePhoto(
+                        final faceReceipt = await _captureAttendancePhoto(
                           context,
                           checkingOut: isCheckedIn,
-                          position: position,
-                          address: address,
-                          email: email,
+                          // Preserve both Head Office GPS/geofence checks at
+                          // their original points, including after matching.
+                          overlapLocationWithMatching: false,
+                          refreshLocation:
+                              () => FaceAuthFlow.freshLocation(
+                                isAllowed:
+                                    (fresh) =>
+                                        Geolocator.distanceBetween(
+                                          fresh.latitude,
+                                          fresh.longitude,
+                                          geofenceCenter.latitude,
+                                          geofenceCenter.longitude,
+                                        ) <=
+                                        geofenceRadius,
+                                restrictionMessage:
+                                    'You are outside the geofence!',
+                              ),
                           onApiStart: onApiStart,
                           onApiEnd: onApiEnd,
                         );
-                        if (photoUrl == null) return;
+                        if (faceReceipt == null || !context.mounted) return;
+                        position = faceReceipt.position;
+                        final address = faceReceipt.address;
 
                         var response;
                         onApiStart?.call();
+                        final saveClock = Stopwatch()..start();
                         if (isCheckedIn) {
                           // LocationTrackerService.stopTracking();
                           // onTrackingStopped?.call();
@@ -497,7 +473,7 @@ class Action_Bottom {
                             formattedDistanceWithUnit,
                             option,
                             locationLogs,
-                            photoUrl: photoUrl,
+                            faceVerification: faceReceipt.recordId,
                           );
                         } else {
                           response = await Check.checkin(
@@ -506,12 +482,17 @@ class Action_Bottom {
                             position.longitude,
                             address,
                             option,
-                            photoUrl: photoUrl,
+                            faceVerification: faceReceipt.recordId,
                           );
                         }
+                        FacePerformanceTrace.logDuration(
+                          'attendance save',
+                          saveClock.elapsed,
+                        );
                         onApiEnd?.call();
 
                         if (response?['status'] == "Success") {
+                          onStatusUpdate?.call(!isCheckedIn);
                           String? trackingError;
                           if (isCheckedIn) {
                             await _stopEmployeeLiveLocationTracking();
@@ -524,8 +505,12 @@ class Action_Bottom {
                                 await _startEmployeeLiveLocationTracking();
                             await prefs.setBool('is_employee_checked_in', true);
                             if (trackingError == null) {
-                              await BatteryOptimizationHelper.showBatteryOptimizationDialog(
-                                context,
+                              await const FacePerformanceTrace().measure(
+                                'battery guidance (includes user wait)',
+                                () =>
+                                    BatteryOptimizationHelper.showBatteryOptimizationDialog(
+                                      context,
+                                    ),
                               );
                             }
                           }
@@ -558,7 +543,6 @@ class Action_Bottom {
                             'last_lat_lng',
                             '${position.latitude},${position.longitude}',
                           );
-                          onStatusUpdate?.call(!isCheckedIn);
                         } else {
                           Warning.show(context, response['message'], 'Warning');
                         }

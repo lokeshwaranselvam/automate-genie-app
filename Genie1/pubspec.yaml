@@ -66,6 +66,10 @@ dependencies:
   package_info_plus: ^8.3.1
   image_picker: ^1.1.2
   image: ^4.5.4
+  camera: ^0.12.1
+  camera_android: ^0.10.12
+  google_mlkit_face_detection: ^0.15.1
+  flutter_onnxruntime: ^1.9.0
   flutter_local_notifications: ^18.0.1
   path: ^1.9.0
   firebase_core: ^4.15.0
@@ -117,6 +121,7 @@ flutter:
     - .env
     - assets/images/
     - assets/audio/
+    - assets/face_recognition/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

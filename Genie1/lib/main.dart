@@ -1,3 +1,4 @@
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 
 import 'Screen/splash.dart';
@@ -16,7 +17,10 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(statusBarColor: Colors.blueAccent),
+    const SystemUiOverlayStyle(
+      statusBarColor: BrandColors.electricBlue,
+      statusBarIconBrightness: Brightness.light,
+    ),
   );
 
   await dotenv.load(fileName: ".env");
@@ -97,7 +101,7 @@ class _MyappState extends State<Myapp> {
         final mediaQuery = MediaQuery.of(context);
         return MediaQuery(
           data: mediaQuery.copyWith(
-            textScaler: _SlightlyLargerTextScaler(mediaQuery.textScaler, 1.08),
+            textScaler: _SlightlyLargerTextScaler(mediaQuery.textScaler, 1.18),
           ),
           child: child ?? const SizedBox.shrink(),
         );
@@ -106,6 +110,17 @@ class _MyappState extends State<Myapp> {
         scaffoldBackgroundColor: const Color(0xFFF0F4FA),
         useMaterial3: true,
         fontFamily: 'Roboto',
+        colorScheme: ColorScheme.fromSeed(seedColor: BrandColors.indigo),
+        filledButtonTheme: const FilledButtonThemeData(
+          style: BrandButtons.style,
+        ),
+        outlinedButtonTheme: const OutlinedButtonThemeData(
+          style: BrandButtons.style,
+        ),
+        textButtonTheme: const TextButtonThemeData(style: BrandButtons.style),
+        iconButtonTheme: const IconButtonThemeData(
+          style: ButtonStyle(shape: WidgetStatePropertyAll(CircleBorder())),
+        ),
         appBarTheme: const AppBarTheme(
           systemOverlayStyle: SystemUiOverlayStyle(
             statusBarColor: Colors.transparent,
@@ -115,21 +130,19 @@ class _MyappState extends State<Myapp> {
           ),
           backgroundColor: Colors.transparent,
           titleTextStyle: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.normal,
+            fontSize: 19,
+            fontWeight: FontWeight.w600,
             color: Colors.white,
             fontFamily: 'Roboto',
           ),
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.deepPurple,
+            backgroundColor: BrandColors.indigo,
             foregroundColor: Colors.white,
             textStyle: const TextStyle(fontSize: 16, fontFamily: 'Roboto'),
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
+            shape: BrandButtons.shape,
           ),
         ),
       ),

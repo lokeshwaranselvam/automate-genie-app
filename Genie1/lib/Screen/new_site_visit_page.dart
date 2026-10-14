@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -11,7 +13,7 @@ import '../utils/api/location_api.dart';
 import '../utils/api/site_visit_creation_api.dart';
 import '../utils/site_visit_schedule.dart';
 
-const _visitBlue = Color(0xFF1768C4);
+const _visitBlue = BrandColors.ink;
 const _visitInk = Color(0xFF202B3C);
 const _visitMuted = Color(0xFF7B8492);
 const _siteLocationTypes = ['Site', 'Home', 'Others'];
@@ -1457,8 +1459,8 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
       style: FilledButton.styleFrom(
         backgroundColor: _visitBlue,
         foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
+        shape: const StadiumBorder(),
+      ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
       icon:
           _saving
               ? const SizedBox(
@@ -1512,14 +1514,14 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+      appBar: brandAppBar(
         elevation: 0,
-        iconTheme: const IconThemeData(color: _visitInk),
         title: Text(
           _eventStep ? 'Event Details' : 'New Visit',
-          style: const TextStyle(color: _visitInk, fontWeight: FontWeight.w800),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w800,
+          ),
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(4),
@@ -1533,9 +1535,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
       ),
       body:
           _loading
-              ? const Center(
-                child: CircularProgressIndicator(color: _visitBlue),
-              )
+              ? const Center(child: AgPathLoadingIndicator())
               : SafeArea(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),

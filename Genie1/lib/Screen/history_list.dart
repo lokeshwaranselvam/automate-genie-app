@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:homegenie/utils/widget/live_location_service.dart';
 import 'package:homegenie/Screen/login.dart';
@@ -203,14 +205,17 @@ class _HistoryListState extends State<HistoryList> {
   Widget build(BuildContext context) {
     if (isLoading) {
       return Scaffold(
-        appBar: AppBar(leading: const HomeBackButton(), title: Text("History")),
-        body: Center(child: CircularProgressIndicator()),
+        appBar: brandAppBar(
+          leading: const HomeBackButton(),
+          title: Text("History"),
+        ),
+        body: Center(child: AgPathLoadingIndicator()),
       );
     }
 
     if (errorMessage != null) {
       return Scaffold(
-        appBar: AppBar(
+        appBar: brandAppBar(
           leading: const HomeBackButton(),
           title: const Text("History"),
         ),
@@ -235,10 +240,8 @@ class _HistoryListState extends State<HistoryList> {
     }
     final totalKm = calculateTotalDistance(filteredHistory);
     return Scaffold(
-      appBar: AppBar(
+      appBar: brandAppBar(
         leading: const HomeBackButton(color: Colors.white),
-        iconTheme: const IconThemeData(color: Colors.white),
-        backgroundColor: Colors.blue,
         title: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [

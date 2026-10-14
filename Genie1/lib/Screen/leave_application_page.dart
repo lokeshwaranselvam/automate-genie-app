@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -6,7 +8,7 @@ import 'package:intl/intl.dart';
 import '../utils/api/leave_application_api.dart';
 import '../utils/widget/warning.dart';
 
-const _leaveBlue = Color(0xFF1768C4);
+const _leaveBlue = BrandColors.ink;
 const _leaveInk = Color(0xFF202B3C);
 const _leaveBorder = Color(0xFFDDE2E7);
 
@@ -358,10 +360,8 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
             style: FilledButton.styleFrom(
               backgroundColor: _leaveBlue,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
+              shape: const StadiumBorder(),
+            ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
             child:
                 _submitting
                     ? const SizedBox.square(
@@ -387,20 +387,18 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: Colors.white,
-    appBar: AppBar(
-      backgroundColor: Colors.white,
-      surfaceTintColor: Colors.white,
+    appBar: brandAppBar(
       elevation: 0,
       leading: IconButton(
         tooltip: 'Back to Attendance',
         onPressed: widget.onBack,
-        icon: const Icon(Icons.arrow_back_rounded, color: _leaveBlue),
+        icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
       ),
       titleSpacing: 0,
       title: const Text(
         'Leave Application',
         style: TextStyle(
-          color: _leaveInk,
+          color: Colors.white,
           fontSize: 18,
           fontWeight: FontWeight.w700,
         ),
@@ -409,7 +407,7 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
         IconButton(
           tooltip: 'Notifications',
           onPressed: widget.onNotifications,
-          icon: const Icon(Icons.notifications_rounded, color: _leaveBlue),
+          icon: const Icon(Icons.notifications_rounded, color: Colors.white),
         ),
         const SizedBox(width: 6),
       ],
@@ -418,9 +416,7 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
       top: false,
       child:
           _loading
-              ? const Center(
-                child: CircularProgressIndicator(color: _leaveBlue),
-              )
+              ? const Center(child: AgPathLoadingIndicator())
               : _loadError != null
               ? Center(
                 child: Padding(

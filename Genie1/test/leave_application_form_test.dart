@@ -285,6 +285,7 @@ void main() {
           'to_date': DateFormat('yyyy-MM-dd').format(today),
           'description': 'Family function',
           'half_day': '1',
+          'csrf_token': 'leave-csrf',
         });
         expect(request.headers['X-Frappe-CSRF-Token'], 'leave-csrf');
         expect(request.headers['Cookie'], 'sid=leave-session');
@@ -561,6 +562,42 @@ void main() {
       }, () => client);
     },
   );
+
+  testWidgets('completed attendance shows a disabled Completed button', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AttendancePage(
+            checkedIn: true,
+            previousDayPendingCheckout: false,
+            completedToday: true,
+            loading: false,
+            actionLoading: false,
+            status: const {},
+            position: null,
+            accuracy: null,
+            currentAddress: '',
+            onRefresh: () async {},
+            onBack: () {},
+            onOpenHistory: () {},
+            onAttendanceAction: () {},
+            onLeaveApplication: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Completed'), findsNWidgets(2));
+    final button = tester.widget<ElevatedButton>(
+      find.ancestor(
+        of: find.text('Completed'),
+        matching: find.byType(ElevatedButton),
+      ),
+    );
+    expect(button.onPressed, isNull);
+  });
 
   testWidgets('phone layout matches the reference without overflow', (
     tester,

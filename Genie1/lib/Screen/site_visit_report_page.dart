@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,7 +8,7 @@ import '../utils/api/event.dart';
 import '../utils/api/session_auth.dart';
 import '../utils/widget/home_back_button.dart';
 
-const _reportBlue = Color(0xFF1768C4);
+const _reportBlue = BrandColors.ink;
 const _reportInk = Color(0xFF202B3C);
 const _reportMuted = Color(0xFF7B8492);
 const _reportOutcomes = ['Interested', 'Not Interested', 'Follow-up Required'];
@@ -244,6 +246,10 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
               ),
               actions: [
                 FilledButton(
+                  style: const ButtonStyle(
+                    backgroundBuilder: BrandColors.buttonBackground,
+                    foregroundColor: WidgetStatePropertyAll(Colors.white),
+                  ),
                   onPressed: () => Navigator.of(dialogContext).pop(),
                   child: const Text('Done'),
                 ),
@@ -271,29 +277,24 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
-      appBar: AppBar(
-        leading: const HomeBackButton(color: _reportBlue),
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+      appBar: brandAppBar(
+        leading: const HomeBackButton(color: Colors.white),
         elevation: 0,
-        iconTheme: const IconThemeData(color: _reportBlue),
         title: const Text(
           'Visit Report',
-          style: TextStyle(color: _reportInk, fontWeight: FontWeight.w800),
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
         ),
         actions: [
           IconButton(
             tooltip: 'Refresh report',
             onPressed: _loading ? null : _loadReport,
-            icon: const Icon(Icons.refresh_rounded, color: _reportInk),
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
           ),
         ],
       ),
       body:
           _loading && _visit.isEmpty
-              ? const Center(
-                child: CircularProgressIndicator(color: _reportBlue),
-              )
+              ? const Center(child: AgPathLoadingIndicator())
               : RefreshIndicator(
                 onRefresh: _loadReport,
                 child: ListView(
@@ -452,9 +453,9 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
                         style: FilledButton.styleFrom(
                           backgroundColor: _reportBlue,
                           foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
+                          shape: const StadiumBorder(),
+                        ).copyWith(
+                          backgroundBuilder: BrandColors.buttonBackground,
                         ),
                         icon:
                             _saving
@@ -769,10 +770,8 @@ class _VisitPhotoGalleryState extends State<_VisitPhotoGallery> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(
+      appBar: brandAppBar(
         leading: const HomeBackButton(color: Colors.white),
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
         title: Text('${_index + 1} / ${widget.photos.length}'),
       ),
       body: PageView.builder(

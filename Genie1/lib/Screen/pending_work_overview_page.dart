@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 
 import '../utils/api/pending_work_api.dart';
@@ -166,7 +168,7 @@ class _PendingWorkOverviewPageState extends State<PendingWorkOverviewPage> {
             child: ListTile(
               leading: CircleAvatar(
                 backgroundColor: const Color(0xFFEAF3FF),
-                child: Icon(section.icon, color: const Color(0xFF1768C4)),
+                child: Icon(section.icon, color: BrandColors.ink),
               ),
               title: Text(
                 section.title,
@@ -195,11 +197,9 @@ class _PendingWorkOverviewPageState extends State<PendingWorkOverviewPage> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7FB),
-      appBar: AppBar(
+      appBar: brandAppBar(
         leading: const HomeBackButton(),
         title: const Text('Pending Work'),
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
         actions: [
           IconButton(
             tooltip: 'Refresh',
@@ -210,7 +210,7 @@ class _PendingWorkOverviewPageState extends State<PendingWorkOverviewPage> {
       ),
       body:
           _loading && _dashboard.isEmpty
-              ? const Center(child: CircularProgressIndicator())
+              ? const Center(child: AgPathLoadingIndicator())
               : _error != null && _dashboard.isEmpty
               ? Center(
                 child: Padding(
@@ -221,6 +221,10 @@ class _PendingWorkOverviewPageState extends State<PendingWorkOverviewPage> {
                       Text(_error!, textAlign: TextAlign.center),
                       const SizedBox(height: 12),
                       FilledButton(
+                        style: const ButtonStyle(
+                          backgroundBuilder: BrandColors.buttonBackground,
+                          foregroundColor: WidgetStatePropertyAll(Colors.white),
+                        ),
                         onPressed: _refresh,
                         child: const Text('Try Again'),
                       ),
@@ -234,7 +238,7 @@ class _PendingWorkOverviewPageState extends State<PendingWorkOverviewPage> {
                   padding: const EdgeInsets.all(16),
                   children: [
                     Card(
-                      color: const Color(0xFF1768C4),
+                      color: BrandColors.ink,
                       child: Padding(
                         padding: const EdgeInsets.all(18),
                         child: Row(

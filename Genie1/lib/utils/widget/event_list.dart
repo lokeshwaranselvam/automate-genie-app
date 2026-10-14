@@ -1,3 +1,4 @@
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:homegenie/Screen/event_details.dart';
 import 'glass_card.dart';
@@ -28,7 +29,7 @@ class EventCard extends StatelessWidget {
     return GlassCard(
       margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       borderRadius: BorderRadius.circular(12),
-      borderColor: Colors.blueAccent.withValues(alpha: 0.25),
+      borderColor: BrandColors.ink.withValues(alpha: 0.25),
       onTap: () {
         Navigator.push(
           context,
@@ -46,9 +47,8 @@ class EventCard extends StatelessWidget {
                 Container(
                   width: cardWidth * 0.15,
                   alignment: Alignment.topCenter,
-                  child: CircleAvatar(
+                  child: brandCircleAvatar(
                     radius: 24,
-                    backgroundColor: Colors.blueAccent,
                     child: Text(
                       initials,
                       style: TextStyle(
@@ -101,9 +101,7 @@ class EventCard extends StatelessWidget {
                           216,
                           216,
                         ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                        shape: const StadiumBorder(),
                         padding: EdgeInsets.symmetric(horizontal: 6),
                       ),
                       child: Text(
@@ -120,7 +118,7 @@ class EventCard extends StatelessWidget {
 
             // Row(
             //   children: [
-            //     Icon(Icons.location_pin, color: Colors.blue),
+            //     Icon(Icons.location_pin, color: BrandColors.ink),
             //     SizedBox(width: 10),
             //     Expanded(child: Text(location, style: TextStyle(fontSize: 14))),
             //   ],

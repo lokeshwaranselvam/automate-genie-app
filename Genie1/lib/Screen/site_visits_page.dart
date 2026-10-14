@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,7 +11,7 @@ import 'new_site_visit_page.dart';
 import 'site_visit_report_page.dart';
 import '../utils/widget/home_back_button.dart';
 
-const _visitBlue = Color(0xFF1768C4);
+const _visitBlue = BrandColors.ink;
 const _visitInk = Color(0xFF202B3C);
 const _visitMuted = Color(0xFF7B8492);
 
@@ -317,20 +319,18 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     final visits = _visibleVisits;
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
-      appBar: AppBar(
-        leading: const HomeBackButton(color: _visitInk),
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+      appBar: brandAppBar(
+        leading: const HomeBackButton(color: Colors.white),
         elevation: 0,
         title: const Text(
           'Site Visits',
-          style: TextStyle(color: _visitInk, fontWeight: FontWeight.w800),
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
         ),
         actions: [
           IconButton(
             tooltip: 'Refresh visits',
             onPressed: _loading ? null : _refresh,
-            icon: const Icon(Icons.refresh_rounded, color: _visitInk),
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
           ),
         ],
         bottom: PreferredSize(
@@ -379,9 +379,7 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
           Expanded(
             child:
                 _loading && _visits.isEmpty
-                    ? const Center(
-                      child: CircularProgressIndicator(color: _visitBlue),
-                    )
+                    ? const Center(child: AgPathLoadingIndicator())
                     : _error != null && _visits.isEmpty
                     ? _errorView()
                     : RefreshIndicator(
@@ -421,10 +419,8 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: brandFloatingActionButton(
         onPressed: _newVisit,
-        backgroundColor: _visitBlue,
-        foregroundColor: Colors.white,
         icon: const Icon(Icons.add_rounded),
         label: const Text(
           'New Visit',
@@ -448,7 +444,14 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
         children: [
           Text(_error!, textAlign: TextAlign.center),
           const SizedBox(height: 12),
-          FilledButton(onPressed: _refresh, child: const Text('Try Again')),
+          FilledButton(
+            style: const ButtonStyle(
+              backgroundBuilder: BrandColors.buttonBackground,
+              foregroundColor: WidgetStatePropertyAll(Colors.white),
+            ),
+            onPressed: _refresh,
+            child: const Text('Try Again'),
+          ),
         ],
       ),
     ),
@@ -476,7 +479,9 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
             ),
             Container(
               height: 3,
-              color: selected ? _visitBlue : Colors.transparent,
+              decoration: BoxDecoration(
+                gradient: selected ? BrandColors.gradient : null,
+              ),
             ),
           ],
         ),
@@ -628,6 +633,8 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(horizontal: 10),
                         minimumSize: const Size(0, 34),
+                      ).copyWith(
+                        backgroundBuilder: BrandColors.buttonBackground,
                       ),
                       child: Text(
                         actionLabel,

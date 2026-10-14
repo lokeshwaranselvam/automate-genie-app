@@ -1,10 +1,12 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 
 import 'session_webview.dart';
 import '../utils/api/pending_work_api.dart';
 import '../utils/widget/home_back_button.dart';
 
-const _blue = Color(0xFF1768C4);
+const _blue = BrandColors.ink;
 const _ink = Color(0xFF202B3C);
 const _muted = Color(0xFF7B8492);
 
@@ -273,15 +275,13 @@ class PendingWorkPageState extends State<PendingWorkPage> {
     final tasks = _visibleTasks;
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+      appBar: brandAppBar(
         elevation: 0,
-        leading: const HomeBackButton(color: _blue),
+        leading: const HomeBackButton(color: Colors.white),
         title: const Text(
           'My Tasks',
           style: TextStyle(
-            color: _ink,
+            color: Colors.white,
             fontWeight: FontWeight.w700,
             fontSize: 19,
           ),
@@ -309,7 +309,7 @@ class PendingWorkPageState extends State<PendingWorkPage> {
           IconButton(
             tooltip: 'Refresh',
             onPressed: _loading ? null : refresh,
-            icon: const Icon(Icons.refresh, color: _ink),
+            icon: const Icon(Icons.refresh, color: Colors.white),
           ),
         ],
         bottom: PreferredSize(
@@ -358,9 +358,7 @@ class PendingWorkPageState extends State<PendingWorkPage> {
           Expanded(
             child:
                 _loading && _tasks.isEmpty
-                    ? const Center(
-                      child: CircularProgressIndicator(color: _blue),
-                    )
+                    ? const Center(child: AgPathLoadingIndicator())
                     : _error != null && _tasks.isEmpty
                     ? Center(
                       child: Padding(
@@ -371,6 +369,12 @@ class PendingWorkPageState extends State<PendingWorkPage> {
                             Text(_error!, textAlign: TextAlign.center),
                             const SizedBox(height: 12),
                             FilledButton(
+                              style: const ButtonStyle(
+                                backgroundBuilder: BrandColors.buttonBackground,
+                                foregroundColor: WidgetStatePropertyAll(
+                                  Colors.white,
+                                ),
+                              ),
                               onPressed: refresh,
                               child: const Text('Try Again'),
                             ),
@@ -536,9 +540,7 @@ class PendingWorkPageState extends State<PendingWorkPage> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: _blue,
-        foregroundColor: Colors.white,
+      floatingActionButton: brandFloatingActionButton(
         onPressed: _openTaskCreator,
         icon: const Icon(Icons.add),
         label: const Text(
@@ -569,7 +571,12 @@ class PendingWorkPageState extends State<PendingWorkPage> {
                 ),
               ),
             ),
-            Container(height: 2, color: selected ? _blue : Colors.transparent),
+            Container(
+              height: 2,
+              decoration: BoxDecoration(
+                gradient: selected ? BrandColors.gradient : null,
+              ),
+            ),
           ],
         ),
       ),

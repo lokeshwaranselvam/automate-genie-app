@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:homegenie/utils/widget/live_location_service.dart';
 import 'package:homegenie/Screen/login.dart';
@@ -233,14 +235,13 @@ class _EventsPageState extends State<EventsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: brandAppBar(
         leading: const HomeBackButton(color: Colors.white),
         title: Text("Events"),
-        backgroundColor: Colors.blue,
       ),
       body:
           isLoading
-              ? Center(child: CircularProgressIndicator())
+              ? Center(child: AgPathLoadingIndicator())
               : RefreshIndicator(
                 onRefresh: () async {
                   await _checkPing();
@@ -248,7 +249,7 @@ class _EventsPageState extends State<EventsPage> {
                     DateFormat('yyyy-MM-dd').format(selectedDate),
                   );
                 },
-                color: Colors.blueAccent,
+                color: BrandColors.ink,
                 child: SingleChildScrollView(
                   physics: AlwaysScrollableScrollPhysics(),
                   child: Column(
@@ -321,7 +322,7 @@ class _EventsPageState extends State<EventsPage> {
                               },
                               child: Text(
                                 "All Events",
-                                style: TextStyle(color: Colors.blue),
+                                style: TextStyle(color: BrandColors.ink),
                               ),
                             ),
                           ],
@@ -356,7 +357,7 @@ class _EventsPageState extends State<EventsPage> {
                                 decoration: BoxDecoration(
                                   color:
                                       selectedDateIndex == index
-                                          ? Colors.blue
+                                          ? BrandColors.ink
                                           : Colors.white,
                                   borderRadius: BorderRadius.circular(8),
                                   border: Border.all(

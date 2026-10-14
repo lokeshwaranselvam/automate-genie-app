@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -6,7 +8,7 @@ import '../utils/api/location_api.dart';
 import '../utils/widget/home_back_button.dart';
 import '../utils/widget/warning.dart';
 
-const _leadBlue = Color(0xFF1768C4);
+const _leadBlue = BrandColors.ink;
 const _leadInk = Color(0xFF202B3C);
 
 class LeadCreationPage extends StatefulWidget {
@@ -230,7 +232,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
         padding: EdgeInsets.symmetric(vertical: 72),
         child: Column(
           children: [
-            CircularProgressIndicator(color: _leadBlue),
+            AgPathLoadingIndicator(),
             SizedBox(height: 16),
             Text(
               'Loading Lead Source and Product Category…',
@@ -294,15 +296,13 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        leading: const HomeBackButton(color: _leadBlue),
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+      appBar: brandAppBar(
+        leading: const HomeBackButton(color: Colors.white),
         elevation: 0,
         title: const Text(
           'Create Lead',
           style: TextStyle(
-            color: _leadInk,
+            color: Colors.white,
             fontSize: 17,
             fontWeight: FontWeight.w700,
           ),
@@ -312,7 +312,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
             tooltip: 'Reload form',
             onPressed: _loadingOptions || _submitting ? null : _loadOptions,
             icon: const Icon(Icons.refresh_rounded),
-            color: _leadBlue,
+            color: Colors.white,
           ),
         ],
       ),
@@ -430,9 +430,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
                             ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(9),
-                            ),
+                            shape: const StadiumBorder(),
                           ),
                         ),
                       ],
@@ -502,9 +500,9 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
                         style: FilledButton.styleFrom(
                           backgroundColor: _leadBlue,
                           foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(9),
-                          ),
+                          shape: const StadiumBorder(),
+                        ).copyWith(
+                          backgroundBuilder: BrandColors.buttonBackground,
                         ),
                         child:
                             _submitting

@@ -195,22 +195,31 @@ object LocationTrackingManager {
         }
 
         return try {
-            val request = Request.Builder()
+            val requestBuilder = Request.Builder()
                 .url(siteUrl.trimEnd('/') + "/api/resource/Live%20Location")
                 .post(
                     payload.toString()
                         .toRequestBody("application/json; charset=utf-8".toMediaType())
                 )
-                .addHeader("Cookie", "sid=$authToken")
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Accept", "application/json")
-                .build()
+
+            // Attendance supplies the same API token used by its REST calls.
+            // Session-cookie POSTs without a CSRF token can be rejected by ERP.
+            if (authToken.startsWith("token ")) {
+                requestBuilder.addHeader("Authorization", authToken)
+            } else {
+                // Keep the prior credential format readable for existing
+                // persisted services until the next attendance start refreshes it.
+                requestBuilder.addHeader("Cookie", "sid=$authToken")
+            }
+            val request = requestBuilder.build()
 
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     Log.w(
                         TAG,
-                        "Location sync failed: code=${response.code} body=${response.body?.string()}"
+                        "Location sync failed: code=${response.code}"
                     )
                     false
                 } else {

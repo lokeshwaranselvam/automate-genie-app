@@ -147,6 +147,36 @@ class LeadApi {
     );
   }
 
+  static Future<List<Map<String, dynamic>>> getMyLeads() async {
+    final sid = await _sessionId();
+    final response = await _client
+        .get(
+          _endpoint().replace(queryParameters: {'view': 'list'}),
+          headers: {
+            'Accept': 'application/json',
+            'Cookie': 'sid=$sid',
+            'Cache-Control': 'no-cache, no-store',
+          },
+        )
+        .timeout(const Duration(seconds: 20));
+    final message = _message(response);
+    final rawLeads = message['leads'];
+    if (rawLeads is! List) {
+      throw const FormatException(
+        "The server did not return the signed-in user's Leads.",
+      );
+    }
+
+    return rawLeads.map((lead) {
+      if (lead is! Map) {
+        throw const FormatException(
+          'The server returned an invalid Lead record.',
+        );
+      }
+      return Map<String, dynamic>.from(lead);
+    }).toList();
+  }
+
   static Future<Map<String, dynamic>> createLead({
     required String firstName,
     required String mobileNo,

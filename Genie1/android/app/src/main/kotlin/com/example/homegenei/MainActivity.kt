@@ -79,6 +79,10 @@ class MainActivity : FlutterActivity() {
                         }
                     }
 
+                    "isLocationTracking" -> {
+                        result.success(LocationService.isRunning)
+                    }
+
                     "hasLocationPermissions" -> {
                         result.success(LocationTrackingManager.hasRequiredLocationPermissions(this))
                     }

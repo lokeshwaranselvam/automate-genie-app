@@ -26,6 +26,7 @@ class GpsPhotoStamper {
     required double lng,
     required String address,
     String? title,
+    bool includeMapThumbnail = true,
   }) async {
     try {
       return await _stamp(
@@ -34,6 +35,7 @@ class GpsPhotoStamper {
         lng: lng,
         address: address,
         title: title,
+        includeMapThumbnail: includeMapThumbnail,
       );
     } catch (error) {
       debugPrint('[GpsPhotoStamper] Stamping failed, compressing only: $error');
@@ -120,14 +122,15 @@ class GpsPhotoStamper {
     required double lng,
     required String address,
     String? title,
+    required bool includeMapThumbnail,
   }) async {
     final bytes = await file.readAsBytes();
     final ui.Image originalImage = await decodeImageFromList(bytes);
     final capturedOn = await file.lastModified();
-    final Uint8List? mapBytes = await LocationHelper.getStaticMapImageBytes(
-      lat,
-      lng,
-    );
+    final Uint8List? mapBytes =
+        includeMapThumbnail
+            ? await LocationHelper.getStaticMapImageBytes(lat, lng)
+            : null;
     ui.Image? mapImage;
     if (mapBytes != null) {
       mapImage = await decodeImageFromList(mapBytes);
@@ -256,10 +259,7 @@ class GpsPhotoStamper {
   }
 
   static Future<File> _writeJpeg(File source, Uint8List bytes, String suffix) {
-    final outputPath = source.path.replaceFirst(
-      RegExp(r'(\.[^.]*)?$'),
-      suffix,
-    );
+    final outputPath = source.path.replaceFirst(RegExp(r'(\.[^.]*)?$'), suffix);
     debugPrint(
       '[GpsPhotoStamper] Saved ${(bytes.length / 1024).toStringAsFixed(0)} KB '
       'to $outputPath',

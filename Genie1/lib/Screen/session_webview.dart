@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -128,18 +130,15 @@ class _SessionWebViewState extends State<SessionWebView> {
               children: [
                 if (_controller != null)
                   WebViewWidget(controller: _controller!),
-                if (_isLoading)
-                  const Center(child: CircularProgressIndicator()),
+                if (_isLoading) const Center(child: AgPathLoadingIndicator()),
               ],
             );
 
     if (widget.embedded) return body;
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: brandAppBar(
         leading: const HomeBackButton(color: Colors.white),
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
         title: Text(widget.title),
       ),
       body: body,

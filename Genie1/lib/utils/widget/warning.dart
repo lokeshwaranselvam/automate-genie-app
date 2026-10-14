@@ -1,3 +1,4 @@
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:collection';
 
 import 'package:flutter/material.dart';
@@ -49,7 +50,7 @@ class Warning extends StatelessWidget {
       'Warning' => Colors.orange.shade700,
       'Error' => Colors.red.shade700,
       'Success' => Colors.green.shade700,
-      _ => Colors.blue.shade700,
+      _ => BrandColors.ink,
     };
     final icon = switch (request.type) {
       'Warning' || 'Error' => Icons.warning_amber_rounded,

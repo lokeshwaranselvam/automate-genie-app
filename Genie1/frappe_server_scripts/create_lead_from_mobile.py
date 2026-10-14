@@ -63,6 +63,7 @@ def get_lead_field_options(lead_meta, fieldname, label):
 
 
 lead_view = (frappe.form_dict.get("view") or "").strip()
+request_method = (frappe.request.method or "").upper()
 lead_meta = frappe.get_meta("Lead")
 lead_fields = ["name"]
 lead_fields.extend(["creation", "modified"])
@@ -76,7 +77,7 @@ for fieldname in [
     if lead_meta.get_field(fieldname):
         lead_fields.append(fieldname)
 
-if frappe.request.method == "GET" and lead_view == "list":
+if request_method == "GET" and lead_view == "list":
     leads = frappe.get_all(
         "Lead",
         filters={"lead_owner": current_user},
@@ -86,7 +87,7 @@ if frappe.request.method == "GET" and lead_view == "list":
     )
     frappe.response["message"] = {"leads": leads}
 
-elif frappe.request.method == "GET" and lead_view == "detail":
+elif request_method == "GET" and lead_view == "detail":
     lead_name = (frappe.form_dict.get("lead") or "").strip()
     lead = frappe.db.get_value(
         "Lead",
@@ -98,7 +99,7 @@ elif frappe.request.method == "GET" and lead_view == "detail":
         frappe.throw("Lead not found or you are not allowed to view it.")
     frappe.response["message"] = {"lead": lead}
 
-elif frappe.request.method == "GET":
+elif request_method == "GET":
     # The mobile form reads these two arrays to populate its dropdowns.
     lead_meta = frappe.get_meta("Lead")
     source_options = get_lead_field_options(
@@ -107,16 +108,20 @@ elif frappe.request.method == "GET":
     product_category_options = get_lead_field_options(
         lead_meta, "custom_product_enquired", "Product Category"
     )
+    csrf_token = (
+        frappe.session.get("csrf_token")
+        or frappe.session.data.csrf_token
+    )
     frappe.response["message"] = {
         "lead_owner": current_user,
         "lead_owner_name": frappe.db.get_value("User", current_user, "full_name")
         or current_user,
         "source_options": source_options,
         "product_category_options": product_category_options,
-        "csrf_token": frappe.session.data.csrf_token,
+        "csrf_token": csrf_token,
     }
 
-elif frappe.request.method == "POST":
+elif request_method == "POST":
     first_name = (frappe.form_dict.get("first_name") or "").strip()
     mobile_no = (frappe.form_dict.get("mobile_no") or "").strip()
     requirement = (frappe.form_dict.get("custom_requirement") or "").strip()

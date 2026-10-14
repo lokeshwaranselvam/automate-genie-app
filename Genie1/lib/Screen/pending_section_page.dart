@@ -1,3 +1,5 @@
+import '../utils/widget/ag_path_loading_indicator.dart';
+import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -9,8 +11,8 @@ import '../utils/widget/pending_work_alarm_player.dart';
 import '../utils/widget/glass_card.dart';
 import '../utils/widget/home_back_button.dart';
 
-const Color _primary = Colors.blueAccent;
-const Color _primaryDark = Color(0xFF1565C0);
+const Color _primary = BrandColors.ink;
+const Color _primaryDark = BrandColors.indigo;
 const Color _background = Color(0xFFF4F7FB);
 const Color _textDark = Color(0xFF17202A);
 const Color _textMuted = Color(0xFF697586);
@@ -456,19 +458,17 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _background,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+      appBar: brandAppBar(
         elevation: 0,
         centerTitle: false,
-        leading: const HomeBackButton(color: _textDark),
+        leading: const HomeBackButton(color: Colors.white),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               widget.title,
               style: const TextStyle(
-                color: _textDark,
+                color: Colors.white,
                 fontSize: 20,
                 fontWeight: FontWeight.w800,
               ),
@@ -477,7 +477,7 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
               const SizedBox(height: 2),
               Text(
                 widget.subtitle!,
-                style: const TextStyle(color: _textMuted, fontSize: 11.5),
+                style: const TextStyle(color: Colors.white, fontSize: 11.5),
               ),
             ],
           ],
@@ -486,7 +486,7 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
           IconButton(
             tooltip: 'Refresh',
             onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh_rounded, color: _textDark),
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
           ),
           const SizedBox(width: 6),
         ],
@@ -497,9 +497,7 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
 
   Widget _buildBody() {
     if (_loading && _items.isEmpty) {
-      return const Center(
-        child: CircularProgressIndicator(color: _primary, strokeWidth: 2.5),
-      );
+      return const Center(child: AgPathLoadingIndicator());
     }
 
     if (_error != null && _items.isEmpty) {
@@ -721,7 +719,9 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
             ),
             const SizedBox(height: 20),
             FilledButton.icon(
-              style: FilledButton.styleFrom(backgroundColor: _primary),
+              style: FilledButton.styleFrom(
+                backgroundColor: _primary,
+              ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
               onPressed: _load,
               icon: const Icon(Icons.refresh_rounded),
               label: const Text('Try Again'),
@@ -787,15 +787,13 @@ class PendingDetailPage extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: _background,
-      appBar: AppBar(
-        leading: const HomeBackButton(color: _textDark),
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+      appBar: brandAppBar(
+        leading: const HomeBackButton(color: Colors.white),
         elevation: 0,
         title: Text(
           '$sectionTitle Details',
           style: const TextStyle(
-            color: _textDark,
+            color: Colors.white,
             fontSize: 18,
             fontWeight: FontWeight.w800,
           ),
@@ -808,11 +806,7 @@ class PendingDetailPage extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [_primaryDark, _primary],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+              gradient: BrandColors.gradient,
               borderRadius: BorderRadius.circular(22),
             ),
             child: Row(

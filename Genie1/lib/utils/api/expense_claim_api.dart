@@ -28,6 +28,7 @@ class ExpenseClaimFormOptions {
   final List<ExpenseClaimOption> employees;
   final List<ExpenseClaimOption> expenseApprovers;
   final List<ExpenseClaimOption> expenseTypes;
+  final bool supportsMultipleExpenses;
 
   const ExpenseClaimFormOptions({
     required this.defaultEmployee,
@@ -37,6 +38,7 @@ class ExpenseClaimFormOptions {
     required this.employees,
     required this.expenseApprovers,
     required this.expenseTypes,
+    this.supportsMultipleExpenses = false,
   });
 
   static List<ExpenseClaimOption> _readOptions(dynamic raw, String label) {
@@ -66,6 +68,7 @@ class ExpenseClaimFormOptions {
         defaultExpenseApprover: json['expense_approver']?.toString() ?? '',
         currency: json['currency']?.toString() ?? '',
         csrfToken: json['csrf_token']?.toString() ?? '',
+        supportsMultipleExpenses: json['supports_multiple_expenses'] == true,
         employees: _readOptions(json['employee_options'], 'Employee'),
         expenseApprovers: _readOptions(
           json['expense_approver_options'],
@@ -73,6 +76,27 @@ class ExpenseClaimFormOptions {
         ),
         expenseTypes: _readOptions(json['expense_types'], 'Expense Type'),
       );
+}
+
+class ExpenseClaimLine {
+  final String expenseType;
+  final String amount;
+  final String expenseDate;
+  final String description;
+
+  const ExpenseClaimLine({
+    required this.expenseType,
+    required this.amount,
+    required this.expenseDate,
+    required this.description,
+  });
+
+  Map<String, String> toJson() => {
+    'expense_type': expenseType.trim(),
+    'amount': amount.trim().replaceAll(',', ''),
+    'expense_date': expenseDate,
+    'description': description.trim(),
+  };
 }
 
 class ExpenseClaimCreationResult {
@@ -87,7 +111,6 @@ class ExpenseClaimCreationResult {
 
 class ExpenseClaimApi {
   static const _method = 'create_expense_claim_from_mobile';
-  static final http.Client _client = http.Client();
 
   static Uri _endpoint(String path) {
     final siteUrl = dotenv.env['SITE_URL']?.trim();
@@ -165,7 +188,7 @@ class ExpenseClaimApi {
         employee == null || employee.isEmpty
             ? uri
             : uri.replace(queryParameters: {'employee': employee});
-    final response = await _client
+    final response = await http
         .get(
           requestUri,
           headers: {
@@ -187,11 +210,62 @@ class ExpenseClaimApi {
     required String description,
     required String csrfToken,
     required String billPath,
+  }) => submitExpenses(
+    employee: employee,
+    expenseApprover: expenseApprover,
+    expenses: [
+      ExpenseClaimLine(
+        expenseType: expenseType,
+        amount: amount,
+        expenseDate: expenseDate,
+        description: description,
+      ),
+    ],
+    csrfToken: csrfToken,
+    billPaths: [billPath],
+  );
+
+  static Future<ExpenseClaimCreationResult> submitExpenses({
+    required String employee,
+    required String expenseApprover,
+    required List<ExpenseClaimLine> expenses,
+    required String csrfToken,
+    required List<String> billPaths,
+    bool supportsMultipleExpenses = false,
   }) async {
+    if (expenses.isEmpty) {
+      throw StateError('Add at least one expense.');
+    }
+    if (billPaths.isEmpty) {
+      throw StateError('Attach a bill photo before submitting.');
+    }
+    if (!supportsMultipleExpenses &&
+        (expenses.length > 1 || billPaths.length > 1)) {
+      throw StateError(
+        'Update the Expense Claim Server Script to submit multiple expenses or bills.',
+      );
+    }
+    for (var index = 0; index < expenses.length; index++) {
+      final row = expenses[index].toJson();
+      final amount = double.tryParse(row['amount']!);
+      if (row['expense_type']!.isEmpty ||
+          row['expense_date']!.isEmpty ||
+          row['description']!.isEmpty ||
+          amount == null ||
+          !amount.isFinite ||
+          amount <= 0) {
+        throw StateError(
+          'Complete the required fields in expense ${index + 1}.',
+        );
+      }
+    }
     final sid = await _sessionId();
-    final bill = File(billPath);
-    if (!await bill.exists()) {
-      throw StateError('The selected bill image is missing. Choose it again.');
+    for (final billPath in billPaths) {
+      if (!await File(billPath).exists()) {
+        throw StateError(
+          'The selected bill image is missing. Choose it again.',
+        );
+      }
     }
 
     final request = http.MultipartRequest(
@@ -206,26 +280,33 @@ class ExpenseClaimApi {
     request.fields.addAll({
       'employee': employee,
       'expense_approver': expenseApprover,
-      'expense_type': expenseType,
-      'amount': amount,
-      'expense_date': expenseDate,
-      'description': description,
+      ...expenses.first.toJson(),
+      if (supportsMultipleExpenses)
+        'expenses': jsonEncode(expenses.map((row) => row.toJson()).toList()),
     });
-    request.files.add(
-      await http.MultipartFile.fromPath(
-        'file',
-        billPath,
-        filename: path.basename(billPath),
-      ),
-    );
+    for (final billPath in billPaths) {
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'file',
+          billPath,
+          filename: path.basename(billPath),
+        ),
+      );
+    }
 
-    // Submit the image and claim together. The server stores the image against
-    // the newly created claim before returning, so there is no second upload
-    // request that can be skipped when the claim response is delayed.
-    final response = await _client
-        .send(request)
-        .then(http.Response.fromStream)
-        .timeout(const Duration(seconds: 90));
+    // Submit all expenses and bill images together. The server attaches every
+    // image to the newly created claim before returning, so a delayed claim
+    // response cannot skip a separate upload request.
+    final client = http.Client();
+    final http.Response response;
+    try {
+      response = await client
+          .send(request)
+          .then(http.Response.fromStream)
+          .timeout(const Duration(seconds: 90));
+    } finally {
+      client.close();
+    }
     final message = _decodeMessage(response);
     final claimName = message['name']?.toString() ?? '';
     final expenseRow = message['expense_row']?.toString() ?? '';
@@ -237,6 +318,22 @@ class ExpenseClaimApi {
       throw const FormatException(
         'ERPNext created the claim but did not confirm that the bill was attached.',
       );
+    }
+    if (supportsMultipleExpenses) {
+      final savedExpenses = message['expenses'];
+      final savedBills = message['bill_files'];
+      if (savedExpenses is! List ||
+          savedExpenses.length != expenses.length ||
+          savedBills is! List ||
+          savedBills.length != billPaths.length ||
+          savedBills.any(
+            (bill) =>
+                bill is! Map || (bill['file_url']?.toString() ?? '').isEmpty,
+          )) {
+        throw FormatException(
+          'ERPNext returned claim $claimName without confirming every expense and bill. Check this claim before retrying.',
+        );
+      }
     }
     return ExpenseClaimCreationResult(name: claimName, expenseRow: expenseRow);
   }

@@ -13,16 +13,33 @@ class LiveLocationService {
   static const platform = MethodChannel('com.example.homegenieapp/tracking');
 
   bool _isTracking = false;
+  Future<void> _trackingOperations = Future<void>.value();
   late SharedPreferences prefs;
   final String baseUrl = dotenv.env['URL'] ?? '';
 
   /// Start tracking live location through the Android foreground service.
-  Future<void> startTracking() async {
-    if (_isTracking) return;
+  Future<void> startTracking() => _serialize(_startTracking);
 
+  /// Restore tracking after a confirmed active attendance read, including when
+  /// the native service has stopped while the Dart session stayed open.
+  Future<void> ensureTracking() => _serialize(() async {
+    final saved = await SharedPreferences.getInstance();
+    if (saved.getBool('is_employee_checked_in') != true) return;
+    final active = await platform.invokeMethod<bool>('isLocationTracking');
+    if (active == true) {
+      _isTracking = true;
+      return;
+    }
+    await _startTracking();
+  });
+
+  Future<void> _startTracking() async {
+    // Reconcile with native state even when Dart thinks tracking is active.
+    // Android may have stopped the service since the last check-in.
     prefs = await SharedPreferences.getInstance();
     final userEmail = prefs.getString('email')?.trim();
-    final token = prefs.getString('session_sid')?.trim();
+    final sid = prefs.getString('session_sid')?.trim();
+    final token = prefs.getString('token')?.trim();
     final siteUrl = dotenv.env['SITE_URL']?.trim() ?? '';
 
     if (userEmail == null || userEmail.isEmpty) {
@@ -30,9 +47,15 @@ class LiveLocationService {
         'Cannot start live tracking: signed-in email is missing.',
       );
     }
-    if (token == null || token.isEmpty) {
+    if (sid == null || sid.isEmpty) {
       throw StateError(
         'Cannot start live tracking: Frappe session has expired.',
+      );
+    }
+    if (token == null ||
+        !RegExp(r'^token\s+[^\s:]+:[^\s:]+$').hasMatch(token)) {
+      throw StateError(
+        'Cannot start live tracking: API credentials are missing. Sign in again.',
       );
     }
     if (siteUrl.isEmpty) {
@@ -47,6 +70,7 @@ class LiveLocationService {
       print('Live Location Tracking Started');
     } catch (e) {
       _isTracking = false;
+      await _stopAndroidBackgroundService();
       rethrow;
     }
   }
@@ -63,7 +87,9 @@ class LiveLocationService {
   }
 
   /// Stop tracking live location by stopping the Android service.
-  Future<void> stopTracking() async {
+  Future<void> stopTracking() => _serialize(_stopTracking);
+
+  Future<void> _stopTracking() async {
     _isTracking = false;
 
     try {
@@ -85,7 +111,18 @@ class LiveLocationService {
         'startLocationTracking',
         {'userId': userId, 'authToken': authToken, 'siteUrl': siteUrl},
       );
-      print('Android background service started: $result');
+      // The method-channel call only launches a service. Confirm that GPS
+      // registration succeeded rather than reporting a silently stopped service.
+      for (var attempt = 0; attempt < 15; attempt++) {
+        if (await platform.invokeMethod<bool>('isLocationTracking') == true) {
+          print('Android background service started: $result');
+          return;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      }
+      throw StateError(
+        'Android could not start live location updates. Check location permissions and retry.',
+      );
     } on PlatformException catch (e) {
       print('Failed to start Android service: ${e.message}');
       rethrow;
@@ -155,4 +192,13 @@ class LiveLocationService {
   }
 
   bool get isTracking => _isTracking;
+
+  Future<void> _serialize(Future<void> Function() operation) {
+    final result = _trackingOperations.then((_) => operation());
+    _trackingOperations = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return result;
+  }
 }

@@ -1,0 +1,55 @@
+Scope: two replacement Employee Checkin restriction Server Scripts only.
+
+Install by replacing the code of the two EXISTING scripts, retaining each
+script's current DocType Event and enabled setting. Do not create duplicate
+active scripts, disable restrictions, or change the face scripts/api.py.
+
+Unprocessed MR-Checkout Restriction:
+  frappe_server_scripts/unprocessed_mr_checkout_restriction.py
+Bioman– Confirmed Quotation Pending SO Checkout:
+  frappe_server_scripts/bioman_confirmed_quotation_checkout_restriction.py
+
+The MR query joins to distinct Material Requests with submitted POs rather
+than a correlated NOT EXISTS subquery. The ToDo join and its original row
+multiplicity/count remain intact. Null workflow states still fail the same
+predicate. Half-day/permission exemptions are unchanged.
+
+The project query joins to distinct projects with submitted Sales Orders.
+Confirmed quotation rows, grouping, ordering and project/quotation links stay
+the same. Draft and cancelled orders do not satisfy either restriction.
+
+MariaDB can materialize and index distinct derived tables for equality joins:
+https://mariadb.com/docs/server/ha-and-performance/optimization-and-tuning/query-optimizations/optimizations-for-derived-tables/derived-table-with-key-optimization
+
+These are query-plan candidates, not measured speed fixes. The new plans may
+still scan large order tables. Before production rollout, compare original
+and replacement SQL with EXPLAIN and measure them on the ERP database; keep
+the faster plan only when equivalent results are confirmed. The project's
+configured event must be kept; the user's source comment said Before Save,
+while the Recorder showed Before Insert. Comments do not configure events.
+
+Read-only index inventory, from a MariaDB console:
+  SHOW INDEX FROM `tabToDo`;
+  SHOW INDEX FROM `tabPurchase Order Item`;
+  SHOW INDEX FROM `tabPurchase Order`;
+  SHOW INDEX FROM `tabProject`;
+  SHOW INDEX FROM `tabQuotation`;
+  SHOW INDEX FROM `tabSales Order`;
+
+If plans remain slow, inspect indexes covering:
+  ToDo: allocated_to, reference_type, status, reference_name
+  Purchase Order Item: parent, material_request
+  Purchase Order: docstatus, name
+  Project: owner, project_type
+  Quotation: custom_project, workflow_state
+  Sales Order: docstatus, project
+These are candidates, not commands to create every index. Existing indexes,
+cardinality, join order and write cost determine which are appropriate.
+
+Local test:
+  python -m unittest discover -s test -p checkout_restriction_queries_test.py
+
+Tests compare old/new SQL results in SQLite and exercise the Server Script
+gates with mocked Frappe. They do not measure MariaDB or live ERP performance.
+The separate paid-quotation query (2.74 sec in the trace) is not changed here;
+its full Server Script is still needed to preserve all surrounding behavior.

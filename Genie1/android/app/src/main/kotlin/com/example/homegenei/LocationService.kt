@@ -131,6 +131,7 @@ class LocationService : Service() {
     }
 
     override fun onDestroy() {
+        isRunning = false
         fusedLocationClient.removeLocationUpdates(locationCallback)
         serviceScope.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -146,7 +147,14 @@ class LocationService : Service() {
                 locationRequest,
                 locationCallback,
                 Looper.getMainLooper()
-            )
+            ).addOnSuccessListener {
+                isRunning = true
+                Log.d(TAG, "Live tracking location updates started")
+            }.addOnFailureListener { error ->
+                isRunning = false
+                Log.e(TAG, "Unable to register location updates", error)
+                stopSelf()
+            }
         } catch (securityException: SecurityException) {
             Log.e(TAG, "Location permission denied", securityException)
             stopSelf()
@@ -191,6 +199,8 @@ class LocationService : Service() {
     }
 
     companion object {
+        @Volatile var isRunning = false
+            private set
         private const val TAG = "LocationService"
         private const val LOCATION_INTERVAL_MS = 10_000L
         private const val POST_INTERVAL_MS = 15 * 60 * 1000L // 15 minutes
