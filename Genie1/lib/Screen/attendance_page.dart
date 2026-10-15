@@ -219,6 +219,8 @@ class AttendancePage extends StatelessWidget {
                           ? 'Loading'
                           : completedToday
                           ? 'Completed'
+                          : previousDayPendingCheckout
+                          ? 'Checkout Pending'
                           : checkedIn || previousDayPendingCheckout
                           ? 'Checked In'
                           : 'Not Checked In',
@@ -242,6 +244,8 @@ class AttendancePage extends StatelessWidget {
             Text(
               completedToday
                   ? 'Attendance completed for today'
+                  : previousDayPendingCheckout
+                  ? 'Your previous day check-in is still open'
                   : checkedIn || previousDayPendingCheckout
                   ? 'At $locationName'
                   : 'Ready to check in',
@@ -408,6 +412,8 @@ class AttendancePage extends StatelessWidget {
                 label: Text(
                   completedToday
                       ? 'Completed'
+                      : previousDayPendingCheckout
+                      ? 'Previous Day Checkout'
                       : checkedIn || previousDayPendingCheckout
                       ? 'Check Out'
                       : 'Check In',

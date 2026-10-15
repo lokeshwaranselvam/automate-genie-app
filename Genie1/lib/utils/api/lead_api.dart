@@ -23,8 +23,81 @@ class LeadFormOptions {
 
 class LeadApi {
   static const _method = 'create_lead_from_mobile';
-  // Reuse the connection between loading form options and submitting the form.
-  static final http.Client _client = http.Client();
+  static String? _formSession;
+  static Uri? _formEndpoint;
+  static String? _csrfToken;
+
+  static Future<void> _assertSession(String sid) async {
+    if (await _sessionId() != sid) {
+      throw StateError(
+        'Your session changed. Reopen the Lead form and try again.',
+      );
+    }
+  }
+
+  static Future<String> _loadCsrfToken(String sid) async {
+    var uri = _endpoint().resolve('/app');
+    final client = http.Client();
+    try {
+      for (var redirects = 0; redirects <= 3; redirects++) {
+        await _assertSession(sid);
+        final response = await (() async {
+          final streamed = await client.send(
+            http.Request('GET', uri)
+              ..headers.addAll({
+                'Accept': 'text/html',
+                'Cookie': 'sid=$sid',
+                'Cache-Control': 'no-cache, no-store',
+              })
+              ..followRedirects = false,
+          );
+          return http.Response.fromStream(streamed);
+        })().timeout(const Duration(seconds: 20));
+        await _assertSession(sid);
+        if ({301, 302, 303, 307, 308}.contains(response.statusCode)) {
+          final location = response.headers['location'];
+          if (location == null) break;
+          final next = uri.resolve(location);
+          if (next.origin != uri.origin || next.userInfo.isNotEmpty) {
+            throw StateError(
+              'ERP redirected to a different site. Check SITE_URL.',
+            );
+          }
+          uri = next;
+          continue;
+        }
+        if (response.statusCode == 200) {
+          final token =
+              RegExp(
+                r'''frappe\.csrf_token\s*=\s*["']([^"']+)["']''',
+              ).firstMatch(response.body)?.group(1)?.trim() ??
+              '';
+          if (token.isNotEmpty) return token;
+        }
+        break;
+      }
+    } finally {
+      client.close();
+    }
+    throw StateError(
+      'Could not initialize the Lead session token. Sign in again and reopen the form.',
+    );
+  }
+
+  static bool _isCsrfFailure(http.Response response) {
+    if (response.statusCode == 200) return false;
+    try {
+      final decoded = jsonDecode(response.body);
+      return decoded is Map &&
+          (decoded['exc_type'] == 'CSRFTokenError' ||
+              decoded['exception']?.toString().startsWith(
+                    'frappe.exceptions.CSRFTokenError:',
+                  ) ==
+                  true);
+    } catch (_) {
+      return false;
+    }
+  }
 
   static Uri _endpoint() {
     final siteUrl = dotenv.env['SITE_URL']?.trim();
@@ -98,9 +171,10 @@ class LeadApi {
     // This authenticated endpoint verifies the session itself and returns the
     // owner, so a separate get_logged_user request is unnecessary.
     final sid = await _sessionId();
-    final response = await _client
+    final endpoint = _endpoint();
+    final response = await http
         .get(
-          _endpoint(),
+          endpoint,
           headers: {
             'Accept': 'application/json',
             'Cookie': 'sid=$sid',
@@ -109,6 +183,7 @@ class LeadApi {
         )
         .timeout(const Duration(seconds: 20));
     final message = _message(response);
+    await _assertSession(sid);
     final rawSources = message['source_options'];
     final rawCategories = message['product_category_options'];
     if (rawSources is! List || rawCategories is! List) {
@@ -138,18 +213,21 @@ class LeadApi {
       );
     }
 
+    _formSession = sid;
+    _formEndpoint = endpoint;
+    _csrfToken = message['csrf_token']?.toString().trim();
     return LeadFormOptions(
       leadOwner: message['lead_owner']?.toString() ?? '',
       leadOwnerName: message['lead_owner_name']?.toString() ?? '',
       sourceOptions: sourceOptions,
       productCategoryOptions: productCategoryOptions,
-      csrfToken: message['csrf_token']?.toString(),
+      csrfToken: _csrfToken,
     );
   }
 
   static Future<List<Map<String, dynamic>>> getMyLeads() async {
     final sid = await _sessionId();
-    final response = await _client
+    final response = await http
         .get(
           _endpoint().replace(queryParameters: {'view': 'list'}),
           headers: {
@@ -186,33 +264,57 @@ class LeadApi {
     required String address,
     required String csrfToken,
   }) async {
-    // The form already loaded the session and CSRF token. Reuse them instead
-    // of making extra validation and form-options requests on every submit.
     final sid = await _sessionId();
-    final headers = <String, String>{
-      'Accept': 'application/json',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Cookie': 'sid=$sid',
-    };
-    if (csrfToken.isNotEmpty) {
-      headers['X-Frappe-CSRF-Token'] = csrfToken;
+    final endpoint = _endpoint();
+    if (_formSession != null &&
+        (_formSession != sid || _formEndpoint != endpoint)) {
+      throw StateError(
+        'Your session changed. Reopen the Lead form and try again.',
+      );
+    }
+    var token = (_csrfToken ?? csrfToken).trim();
+    if (token.isEmpty) token = await _loadCsrfToken(sid);
+    Future<http.Response> post(String currentToken) async {
+      await _assertSession(sid);
+      return http
+          .post(
+            endpoint,
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Cookie': 'sid=$sid',
+              'X-Frappe-CSRF-Token': currentToken,
+            },
+            body: {
+              'first_name': firstName.trim(),
+              'mobile_no': mobileNo.trim(),
+              'custom_requirement': requirement.trim(),
+              'custom_source': source.trim(),
+              'custom_product_enquired': productCategory.trim(),
+              'custom_address': address.trim(),
+              'csrf_token': currentToken,
+            },
+          )
+          .timeout(const Duration(seconds: 30));
     }
 
-    final response = await _client
-        .post(
-          _endpoint(),
-          headers: headers,
-          body: {
-            'first_name': firstName.trim(),
-            'mobile_no': mobileNo.trim(),
-            'custom_requirement': requirement.trim(),
-            'custom_source': source.trim(),
-            'custom_product_enquired': productCategory.trim(),
-            'custom_address': address.trim(),
-          },
-        )
-        .timeout(const Duration(seconds: 30));
-
-    return _message(response);
+    var response = await post(token);
+    // Frappe rejects CSRF before executing the API. Never retry ambiguous
+    // network failures or validation errors: the Lead may already exist.
+    if (_isCsrfFailure(response)) {
+      token = await _loadCsrfToken(sid);
+      response = await post(token);
+    }
+    await _assertSession(sid);
+    _csrfToken = token;
+    final message = _message(response);
+    if (message['status'] != 'success' ||
+        (message['name']?.toString().trim() ?? '').isEmpty) {
+      throw StateError(
+        message['message']?.toString() ??
+            'The server did not confirm Lead creation.',
+      );
+    }
+    return message;
   }
 }

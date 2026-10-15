@@ -186,4 +186,69 @@ void main() {
       isNull,
     );
   });
+
+  testWidgets(
+    'previous-day option uses checkout and refresh restores today check-in',
+    (tester) async {
+      var pending = true;
+      var actions = 0;
+      late StateSetter update;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) {
+                update = setState;
+                return AttendancePage(
+                  checkedIn: false,
+                  previousDayPendingCheckout: pending,
+                  completedToday: false,
+                  loading: false,
+                  actionLoading: false,
+                  status: const {'check_in_time': '2026-10-14 09:30:00'},
+                  position: null,
+                  accuracy: null,
+                  currentAddress: 'Office',
+                  onRefresh: () async => update(() => pending = false),
+                  onBack: () {},
+                  onOpenHistory: () {},
+                  onAttendanceAction: () => actions++,
+                  onLeaveApplication: () {},
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Previous Day Checkout'), findsOneWidget);
+      expect(find.text('Checkout Pending'), findsOneWidget);
+      expect(
+        find.text('Your previous day check-in is still open'),
+        findsOneWidget,
+      );
+      expect(find.text('09:30 AM'), findsOneWidget);
+      expect(find.text('Check In'), findsNothing);
+      await tester.scrollUntilVisible(find.text('Previous Day Checkout'), 150);
+      await tester.ensureVisible(find.text('Previous Day Checkout'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Previous Day Checkout'));
+      expect(actions, 1);
+      await tester
+          .widget<RefreshIndicator>(find.byType(RefreshIndicator))
+          .onRefresh();
+      await tester.pumpAndSettle();
+      expect(find.text('Previous Day Checkout'), findsNothing);
+      expect(find.text('Check In'), findsOneWidget);
+      expect(find.text('Completed'), findsNothing);
+      expect(
+        tester
+            .widget<ElevatedButton>(
+              find.widgetWithText(ElevatedButton, 'Check In'),
+            )
+            .onPressed,
+        isNotNull,
+      );
+      expect(find.text('Leave Application'), findsOneWidget);
+    },
+  );
 }

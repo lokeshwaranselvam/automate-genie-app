@@ -676,7 +676,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   Future<void> _handleAttendanceStatusUpdate(bool isNowCheckedIn) async {
     if (!mounted) return;
     ++_attendanceActionRevision;
-    final completedToday = !isNowCheckedIn;
+    // Closing an earlier day's IN must not complete today's attendance.
+    final completedToday = !isNowCheckedIn && !_previousDayPendingCheckout;
     setState(() {
       _previousDayPendingCheckout = false;
       _checkedIn = isNowCheckedIn;

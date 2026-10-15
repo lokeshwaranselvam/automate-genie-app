@@ -194,8 +194,54 @@ void main() {
       );
       expect(status['previous_checkout_pending'], isTrue);
       expect(status['completed_today'], isFalse);
+      expect(status['checked_in'], isFalse);
+      expect(status['check_in_time'], inRow['time']);
     },
   );
+
+  test(
+    'previous checkout closes without completing today, then today works normally',
+    () async {
+      var logs = <Map<String, dynamic>>[];
+      Future<Map<String, dynamic>> read() => http.runWithClient(
+        () => Check.getStatus('staff@example.test', recordsFirst: true),
+        () => recordClient(logs, prior: [inRow]),
+      );
+      expect((await read())['previous_checkout_pending'], isTrue);
+      // The first OUT today closes yesterday's open IN.
+      logs = [outRow];
+      var status = await read();
+      expect(status['previous_checkout_pending'], isFalse);
+      expect(status['completed_today'], isFalse);
+      expect(status['checked_in'], isFalse);
+      logs = [
+        {'name': 'IN-TODAY', 'log_type': 'IN', 'time': '2026-10-12 21:00:00'},
+        outRow,
+      ];
+      status = await read();
+      expect(status['previous_checkout_pending'], isFalse);
+      expect(status['checked_in'], isTrue);
+      expect(status['completed_today'], isFalse);
+      logs = [
+        {'name': 'OUT-TODAY', 'log_type': 'OUT', 'time': '2026-10-12 22:00:00'},
+        ...logs,
+      ];
+      status = await read();
+      expect(status['previous_checkout_pending'], isFalse);
+      expect(status['checked_in'], isFalse);
+      expect(status['completed_today'], isTrue);
+    },
+  );
+
+  test('a previous OUT does not offer previous-day checkout', () async {
+    final status = await http.runWithClient(
+      () => Check.getStatus('staff@example.test'),
+      () => recordClient([], prior: [outRow]),
+    );
+    expect(status['previous_checkout_pending'], isFalse);
+    expect(status['checked_in'], isFalse);
+    expect(status['completed_today'], isFalse);
+  });
 
   test('record query can recover when legacy status fails', () async {
     final status = await http.runWithClient(

@@ -255,16 +255,18 @@ class Check {
       final hasOut = outs.isNotEmpty;
       final active = hasIn && logs.first['log_type'] == 'IN';
       final completed = hasIn && hasOut && !active;
+      final previousPending =
+          logs.isEmpty &&
+          results[1].isNotEmpty &&
+          results[1].first['log_type'] == 'IN';
       return {
         'checked_in': active,
         'checked_out': completed,
         'completed_today': completed,
         'check_in_exists_today': hasIn,
         'check_out_exists_today': hasOut,
-        'previous_checkout_pending':
-            logs.isEmpty &&
-            results[1].isNotEmpty &&
-            results[1].first['log_type'] == 'IN',
+        'previous_checkout_pending': previousPending,
+        if (previousPending) 'check_in_time': results[1].first['time'],
         if (hasIn) 'check_in_time': ins.first['time'],
         if (completed) 'check_out_time': outs.first['time'],
       };

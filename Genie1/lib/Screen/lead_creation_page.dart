@@ -50,6 +50,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
   }
 
   Future<void> _loadOptions() async {
+    if (_submitting) return;
     setState(() {
       _loadingOptions = true;
       _error = null;
@@ -74,7 +75,8 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
   }
 
   Future<void> _submit() async {
-    if (!_formKey.currentState!.validate() || _submitting) return;
+    if (_submitting || _loadingOptions || _options == null) return;
+    if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() {
       _submitting = true;
       _error = null;
