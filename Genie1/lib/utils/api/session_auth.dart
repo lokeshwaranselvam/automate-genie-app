@@ -4,6 +4,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../face/face_template_cache.dart';
+import 'mobile_login_device.dart';
 
 /// Thrown when the ERP server could not be reached to verify a session.
 class SessionUnreachableException implements Exception {
@@ -50,16 +51,43 @@ class SessionAuthApi {
     String username,
     String password,
   ) async {
-    final response = await http.post(
-      _methodUri('login'),
-      headers: const {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({'usr': username, 'pwd': password}),
-    );
+    await MobileLoginDevice.completePendingLogout();
+    final apiBase = dotenv.env['URL']?.trim() ?? '';
+    if (apiBase.isEmpty) throw StateError('URL is not configured in .env');
+    final response = await http
+        .post(
+          Uri.parse('$apiBase.login'),
+          headers: const {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'usr': username,
+            'pwd': password,
+            'device_key': await MobileLoginDevice.key(),
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
     final data = _decode(response);
-    final message = data is Map ? data['message']?.toString() : null;
+    final rawMessage = data is Map ? data['message'] : null;
+    String? message =
+        rawMessage is Map
+            ? rawMessage['message']?.toString()
+            : rawMessage?.toString();
+    if (data is Map && data['_server_messages'] is String) {
+      try {
+        final messages = jsonDecode(data['_server_messages'] as String) as List;
+        if (messages.isNotEmpty) {
+          final first =
+              messages.first is String
+                  ? jsonDecode(messages.first)
+                  : messages.first;
+          if (first is Map) message = first['message']?.toString() ?? message;
+        }
+      } catch (_) {
+        /* Preserve the ordinary response message. */
+      }
+    }
 
     if (response.statusCode != 200 || message != 'Logged In') {
       final detail = message;
@@ -68,6 +96,17 @@ class SessionAuthApi {
             ? 'Session login failed (${response.statusCode}).'
             : detail,
       );
+    }
+
+    if (data is! Map || data['single_device_login'] != true) {
+      throw StateError(
+        'The ERP mobile login update is required. Contact your administrator.',
+      );
+    }
+    final token = data['token']?.toString().trim() ?? '';
+    final expectedUser = data['email']?.toString().trim() ?? '';
+    if (token.isEmpty || expectedUser.isEmpty) {
+      throw StateError('ERP did not return complete mobile login credentials.');
     }
 
     final sid = _sidFrom(response);
@@ -79,26 +118,34 @@ class SessionAuthApi {
 
     final loggedInUser = await _fetchLoggedInUser(sid);
     if (loggedInUser == null ||
-        loggedInUser.toLowerCase() != username.trim().toLowerCase()) {
-      await _endRemoteSession(sid);
+        loggedInUser.toLowerCase() != expectedUser.toLowerCase()) {
       throw Exception(
         'The server session does not match the user who signed in.',
       );
     }
 
     final prefs = await SharedPreferences.getInstance();
-    final fullName = data is Map ? data['full_name']?.toString() : null;
+    final fullName = data['full_name']?.toString();
+    await MobileLoginDevice.rememberSession(
+      Uri.parse('$apiBase.mobile_logout'),
+      loggedInUser,
+    );
     await prefs.setString(_sidKey, sid);
     await prefs.setString(_usernameKey, loggedInUser);
     await prefs.setString(
       _fullNameKey,
       (fullName == null || fullName.isEmpty) ? loggedInUser : fullName,
     );
+    await prefs.setString('token', token);
+    await prefs.setBool('single_device_login', true);
+    await prefs.setString('mobile_logout_endpoint', '$apiBase.mobile_logout');
 
     return {
       'username': loggedInUser,
       'full_name':
           (fullName == null || fullName.isEmpty) ? loggedInUser : fullName,
+      'token': token,
+      'employee_id': data['employee_id']?.toString() ?? '',
     };
   }
 
@@ -342,6 +389,24 @@ class SessionAuthApi {
 
   static Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
+    if (await MobileLoginDevice.logoutRememberedSession()) {
+      await clearSession();
+      await prefs.remove('token');
+      return;
+    }
+    if (prefs.getBool('single_device_login') == true) {
+      final user = prefs.getString(_usernameKey) ?? prefs.getString('email');
+      final endpoint = prefs.getString('mobile_logout_endpoint');
+      if (user == null || endpoint == null) {
+        throw StateError(
+          'Could not identify the ERP mobile session. Please retry sign-out.',
+        );
+      }
+      await MobileLoginDevice.logout(Uri.parse(endpoint), user);
+      await clearSession();
+      await prefs.remove('token');
+      return;
+    }
     final sid = prefs.getString(_sidKey);
     if (sid != null && sid.isNotEmpty) await _endRemoteSession(sid);
     await clearSession();
@@ -353,5 +418,7 @@ class SessionAuthApi {
     await prefs.remove(_sidKey);
     await prefs.remove(_usernameKey);
     await prefs.remove(_fullNameKey);
+    await prefs.remove('single_device_login');
+    await prefs.remove('mobile_logout_endpoint');
   }
 }

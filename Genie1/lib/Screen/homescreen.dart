@@ -1130,7 +1130,18 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                   );
                   return;
                 } else {
-                  await SessionAuthApi.logout();
+                  try {
+                    await SessionAuthApi.logout();
+                  } catch (_) {
+                    if (mounted) {
+                      Warning.show(
+                        this.context,
+                        'Could not sign out on ERP. Check your connection and retry before using another phone.',
+                        'Sign-out failed',
+                      );
+                    }
+                    return;
+                  }
                   SharedPreferences prefs =
                       await SharedPreferences.getInstance();
                   await LiveLocationService.stopForSignOut();

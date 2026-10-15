@@ -1,11 +1,15 @@
 # Attendance API update
 
+For the subsequent single-phone login changes, see
+[SINGLE_DEVICE_LOGIN.md](SINGLE_DEVICE_LOGIN.md). Install that backend update
+before distributing the new Flutter login flow.
+
 ## Complete file for restoring the supplied backup
 
-`api.py` is the **complete server module** rebuilt from the supplied
-`api.py.bak` paste. All 20 functions are present. Every byte outside the
-`checkin()` and `checkout()` definitions was verified unchanged against the
-Python source in that paste (terminal prompts were excluded).
+`api.py` is the **complete server module** originally rebuilt from the supplied
+`api.py.bak` paste. The attendance restoration retained the other business
+functions. The later single-phone update replaces `login()` with a guarded
+delegate and adds `mobile_logout()`; see the rollout guide linked above.
 
 Use this complete `api.py` when replacing the whole server file. Back up the
 current server file first and restart bench after installation. Keep the

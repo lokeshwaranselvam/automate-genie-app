@@ -8,62 +8,17 @@ from frappe.utils import now, now_datetime
 from frappe.utils import nowdate,getdate
 from frappe.core.doctype.user.user import generate_keys
 
-@frappe.whitelist(allow_guest=True)
-def login(usr,pwd):
-    try:
-        login_manager = frappe.auth.LoginManager()
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def login(usr, pwd, device_key=None):
+    # Keep this public method path; implementation is isolated from visits and attendance.
+    from .mobile_auth import login as mobile_login
+    return mobile_login(usr, pwd, device_key)
 
-        login_manager.authenticate(usr, pwd)
 
-        login_manager.post_login()
-        
-        user = frappe.get_doc('User', frappe.session.user)
-        
-        if not frappe.db.exists({"doctype":'Employee',"user_id": user.name, "status": "Active"}):
-            
-            frappe.throw('Employee Not Found')
-
-        employee = frappe.get_doc("Employee", {"user_id": user.name, "status": "Active"})
-
-        if not employee.get("custom_office_type_mapping"):
-            frappe.local.response["message"] = {
-                "key": 0,
-                "message": "Access Denied: No office type mapped to your profile."
-            }
-            frappe.local.response["http_status_code"] = 403
-            return
-
-        api_generate = generate_keys(frappe.session.user)
-
-        frappe.db.commit()
-
-        frappe.local.response["email"]=user.email
-        frappe.local.response["token"]= "token "+user.api_key+":"+api_generate["api_secret"] 
-
-        frappe.local.response["name"]=user.full_name
-        frappe.local.response["api_secret"]=api_generate["api_secret"]
-        frappe.local.response["api_key"]=user.api_key
-
-        
-        employee = frappe.get_doc("Employee",{"user_id":user.name,"status":"Active"})
-        frappe.local.response["employee_id"]=employee.name 
-        
-    except frappe.exceptions.AuthenticationError:
-        frappe.clear_messages()
-        frappe.local.response["message"] = {
-            "key":0,
-            "message":"Incorrect Username or Password"
-        }
-        frappe.local.response["http_status_code"] = 401
-        
-    except Exception as e:
-        frappe.log_error(message=frappe.get_traceback(), title=f"Login Error - {frappe.session.user}")
- 
-        frappe.local.response["message"] = {
-            "key": 0,
-            "message": f"Login Failed, Kindly Check Error Log"
-        }
-        frappe.local.response["http_status_code"] = 403
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def mobile_logout(user, device_key):
+    from .mobile_auth import logout as release_mobile_login
+    return release_mobile_login(user, device_key)
 
 
 @frappe.whitelist(allow_guest = False)
