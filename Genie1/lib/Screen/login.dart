@@ -15,7 +15,6 @@ import 'face_enrollment_gate.dart';
 
 const _brandBlue = BrandColors.ink;
 const _ink = Color(0xFF18243A);
-const _muted = Color(0xFF758195);
 
 class Login extends StatefulWidget {
   const Login({super.key});
@@ -208,14 +207,6 @@ class _LoginState extends State<Login> {
                         _buildRememberAndForgot(),
                         const SizedBox(height: 16),
                         _buildLoginButton(),
-                        const SizedBox(height: 21),
-                        _buildOrDivider(),
-                        const SizedBox(height: 15),
-                        _buildOtpButton(),
-                        const SizedBox(height: 25),
-                        _buildLanguageSelector(),
-                        const SizedBox(height: 38),
-                        _buildFooter(),
                       ],
                     ),
                   ),
@@ -382,114 +373,7 @@ class _LoginState extends State<Login> {
     );
   }
 
-  Widget _buildOrDivider() {
-    return Row(
-      children: [
-        const Expanded(child: Divider(color: Color(0xFFE6EAF0))),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Text(
-            'OR',
-            style: TextStyle(
-              color: _muted,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        const Expanded(child: Divider(color: Color(0xFFE6EAF0))),
-      ],
-    );
-  }
 
-  Widget _buildOtpButton() {
-    return Container(
-      height: 48,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: const Color(0xFFD5E0EF)),
-        borderRadius: BorderRadius.circular(11),
-      ),
-      child: const Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.sms_outlined, size: 19, color: _brandBlue),
-          SizedBox(width: 8),
-          Text(
-            'Login with OTP',
-            style: TextStyle(
-              color: _brandBlue,
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLanguageSelector() {
-    const languages = ['English', 'தமிழ்', 'हिंदी'];
-    return Row(
-      children: [
-        for (final language in languages) ...[
-          Expanded(
-            child: Container(
-              height: 43,
-              decoration: BoxDecoration(
-                color:
-                    language == 'English'
-                        ? const Color(0xFFE0EDFB)
-                        : const Color(0xFFF0F2F5),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                language,
-                style: TextStyle(
-                  color:
-                      language == 'English'
-                          ? _brandBlue
-                          : const Color(0xFF4F5B6B),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ),
-          if (language != languages.last) const SizedBox(width: 10),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildFooter() {
-    return Column(
-      children: [
-        RichText(
-          text: const TextSpan(
-            style: TextStyle(fontSize: 12, color: _muted),
-            children: [
-              TextSpan(text: 'Powered by '),
-              TextSpan(
-                text: 'ERPNext',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 5),
-        const Text(
-          'automategenie.ai',
-          style: TextStyle(
-            fontSize: 14,
-            color: _ink,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
-    );
-  }
 }
 
 class _FieldLabel extends StatelessWidget {

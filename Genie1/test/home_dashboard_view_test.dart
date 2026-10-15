@@ -74,6 +74,8 @@ void main() {
               onPending: () => calls.add('pending'),
               onAttendance: () => calls.add('attendance'),
               onAddLead: () => calls.add('add-lead'),
+              onNewVisit: () => calls.add('new-visit'),
+              onNewTask: () => calls.add('new-task'),
             ),
             bottomNavigationBar: HomeNavigationBar(
               currentIndex: 0,
@@ -116,8 +118,8 @@ void main() {
             'View All': 'visits',
             'Attendance': 'attendance',
             'Add Lead': 'add-lead',
-            'Site Visit': 'visits',
-            'New Task': 'tasks',
+            'Site Visit': 'new-visit',
+            'New Task': 'new-task',
           }.entries) {
         await tester.ensureVisible(find.text(entry.key));
         await tester.tap(find.text(entry.key));

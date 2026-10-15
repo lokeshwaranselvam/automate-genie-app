@@ -25,6 +25,11 @@ class HomeNavigation {
     _selectHome = null;
   }
 
+  /// Uses the same route and embedded-page back handling as system Back.
+  static Future<bool> goBack(BuildContext context) {
+    return Navigator.of(context).maybePop();
+  }
+
   static void goHome(BuildContext context) {
     final navigator = Navigator.of(context, rootNavigator: true);
     final homeRoute = _homeRoute;

@@ -5,7 +5,6 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../utils/api/session_auth.dart';
-import '../utils/widget/home_back_button.dart';
 
 class SessionWebView extends StatefulWidget {
   final String url;
@@ -134,14 +133,21 @@ class _SessionWebViewState extends State<SessionWebView> {
               ],
             );
 
-    if (widget.embedded) return body;
+    if (widget.embedded) return PopScope(canPop: false, child: body);
 
-    return Scaffold(
-      appBar: brandAppBar(
-        leading: const HomeBackButton(color: Colors.white),
-        title: Text(widget.title),
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        appBar: brandAppBar(
+          leading: IconButton(
+            tooltip: 'Back',
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+          ),
+          title: Text(widget.title),
+        ),
+        body: body,
       ),
-      body: body,
     );
   }
 }

@@ -102,9 +102,26 @@ class Check {
     }
   }
 
-  static Future<Map<String, dynamic>> getStatus(String email) async {
+  static Future<Map<String, dynamic>> getStatus(
+    String email, {
+    bool recordsFirst = false,
+  }) async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final auth = prefs.getString('token') ?? '';
+    if (recordsFirst) {
+      final records = await const FacePerformanceTrace().measure(
+        'direct attendance records',
+        () => _readAttendanceRecords(email, auth),
+      );
+      if (records != null) {
+        return {
+          ...records,
+          'attendance_records_verified': true,
+          'attendance_status_source': 'employee_checkin_records',
+        };
+      }
+      // Preserve the paired-status fallback for permission-limited accounts.
+    }
     final results = await Future.wait<Object?>([
       http
           .post(
@@ -118,7 +135,9 @@ class Check {
           )
           .timeout(const Duration(seconds: 15))
           .catchError((Object _) => http.Response('', 503)),
-      _readAttendanceRecords(email, auth),
+      recordsFirst
+          ? Future<Map<String, dynamic>?>.value(null)
+          : _readAttendanceRecords(email, auth),
     ]);
     final response = results[0] as http.Response;
     Map<String, dynamic> status = {};

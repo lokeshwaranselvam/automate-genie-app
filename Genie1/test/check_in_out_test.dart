@@ -73,6 +73,45 @@ void main() {
     'time': '2026-10-12 20:04:22',
   };
 
+  test(
+    'camera preparation does not wait for legacy status when rows are verified',
+    () async {
+      final client = recordClient([inRow]);
+      final status = await http.runWithClient(
+        () => Check.getStatus('staff@example.test', recordsFirst: true),
+        () => MockClient((request) async {
+          expect(
+            request.url.path.endsWith('.get_checkin_checkout_status'),
+            isFalse,
+          );
+          final forwarded = http.Request(request.method, request.url)
+            ..headers.addAll(request.headers);
+          return http.Response.fromStream(await client.send(forwarded));
+        }),
+      );
+      expect(status['checked_in'], isTrue);
+      expect(status['attendance_records_verified'], isTrue);
+      client.close();
+    },
+  );
+
+  test(
+    'camera preparation retains paired-status fallback when records are denied',
+    () async {
+      final status = await http.runWithClient(
+        () => Check.getStatus('staff@example.test', recordsFirst: true),
+        () => recordClient(
+          [],
+          permissionDenied: true,
+          legacy: {'checked_in': true, 'checked_out': false},
+        ),
+      );
+      expect(status['checked_in'], isTrue);
+      expect(status['attendance_records_verified'], isTrue);
+      expect(status['attendance_status_source'], 'paired_server_status');
+    },
+  );
+
   for (final state in [
     (
       logs: <Map<String, dynamic>>[outRow, inRow],

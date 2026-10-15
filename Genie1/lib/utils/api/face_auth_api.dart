@@ -198,7 +198,10 @@ class FaceAuthApi {
     final responseToken = message['csrf_token']?.toString() ?? '';
     if (responseToken.isNotEmpty) return _status(message);
 
-    final token = await _loadDeskCsrfToken(auth);
+    final token = await const FacePerformanceTrace().measure(
+      'face CSRF bootstrap',
+      () => _loadDeskCsrfToken(auth),
+    );
     await assertSessionUser(auth.user);
     return _status({...message, 'csrf_token': token});
   }

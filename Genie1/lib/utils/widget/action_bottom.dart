@@ -126,6 +126,7 @@ class Action_Bottom {
     required String title,
     required List<String> options,
     required bool isCheckedIn,
+    Future<bool?> Function()? resolveAttendanceAction,
     VoidCallback? onTrackingStarted,
     VoidCallback? onTrackingStopped,
     Function(bool isNowCheckedIn)? onStatusUpdate,
@@ -160,11 +161,20 @@ class Action_Bottom {
                   ),
                   onPressed: (_) async {
                     Navigator.pop(context);
+                    var currentCheckedIn = isCheckedIn;
+                    if (!context.mounted) return;
                     if (option == "Head Office") {
-                      List<dynamic> officeList = await Event.head_office_list(
-                        context,
-                      );
+                      List<dynamic> officeList;
+                      try {
+                        officeList = await Event.head_office_list(context);
+                      } catch (error) {
+                        if (context.mounted) {
+                          Warning.show(context, error.toString(), 'Head Office');
+                        }
+                        return;
+                      }
 
+                      if (!context.mounted) return;
                       List<String> officeNames =
                           officeList.map((e) => e.toString()).toList();
 
@@ -172,7 +182,8 @@ class Action_Bottom {
                         context: context,
                         title: option,
                         options: officeNames,
-                        isCheckedIn: isCheckedIn,
+                        isCheckedIn: currentCheckedIn,
+                        resolveAttendanceAction: resolveAttendanceAction,
                         onTrackingStarted: onTrackingStarted,
                         onTrackingStopped: onTrackingStopped,
                         onApiStart: onApiStart,
@@ -180,13 +191,18 @@ class Action_Bottom {
                         onStatusUpdate: onStatusUpdate,
                       );
                     } else {
+                      if (resolveAttendanceAction != null) {
+                        final resolved = await resolveAttendanceAction();
+                        if (resolved == null || !context.mounted) return;
+                        currentCheckedIn = resolved;
+                      }
                       final SharedPreferences prefs =
                           await SharedPreferences.getInstance();
                       final email = prefs.getString('email');
 
                       bool hasPermission = await _handleLocationPermission(
                         context,
-                        startingTracking: !isCheckedIn,
+                        startingTracking: !currentCheckedIn,
                       );
                       if (!hasPermission) return;
 
@@ -195,7 +211,7 @@ class Action_Bottom {
 
                       final faceReceipt = await _captureAttendancePhoto(
                         context,
-                        checkingOut: isCheckedIn,
+                        checkingOut: currentCheckedIn,
                         refreshLocation: FaceAuthFlow.freshLocation,
                         onApiStart: onApiStart,
                         onApiEnd: onApiEnd,
@@ -207,7 +223,7 @@ class Action_Bottom {
                       var response;
                       onApiStart?.call();
                       final saveClock = Stopwatch()..start();
-                      if (isCheckedIn) {
+                      if (currentCheckedIn) {
                         LocationTrackerService.stopTracking();
                         double returnDistance =
                             LocationTrackerService.calculateTotalDistance();
@@ -264,9 +280,9 @@ class Action_Bottom {
                       onApiEnd?.call();
 
                       if (response?['status'] == "Success") {
-                        onStatusUpdate?.call(!isCheckedIn);
+                        onStatusUpdate?.call(!currentCheckedIn);
                         String? trackingError;
-                        if (isCheckedIn) {
+                        if (currentCheckedIn) {
                           await _stopEmployeeLiveLocationTracking();
                           await prefs.setBool('is_employee_checked_in', false);
                         } else {
@@ -334,6 +350,7 @@ class Action_Bottom {
     required String title,
     required List<String> options,
     required bool isCheckedIn,
+    Future<bool?> Function()? resolveAttendanceAction,
     VoidCallback? onTrackingStarted,
     VoidCallback? onTrackingStopped,
     Function()? onApiStart,
@@ -368,12 +385,24 @@ class Action_Bottom {
                   ),
                   onPressed: (_) async {
                     Navigator.pop(context);
+                    if (!context.mounted) return;
                     try {
+                      // Both reads must finish before GPS/face verification;
+                      // neither needs to wait for the other to start.
+                      final preparation = await Future.wait<dynamic>([
+                        resolveAttendanceAction != null
+                            ? resolveAttendanceAction()
+                            : Future<bool?>.value(isCheckedIn),
+                        const FacePerformanceTrace().measure(
+                          'Head Office details before camera',
+                          () => Event.Head_office_details(option, context),
+                        ),
+                      ]);
+                      final currentCheckedIn = preparation[0] as bool?;
+                      if (currentCheckedIn == null || !context.mounted) return;
+                      final officeDetails = preparation[1] as Map<String, dynamic>;
                       final SharedPreferences prefs =
                           await SharedPreferences.getInstance();
-
-                      Map<String, dynamic> officeDetails =
-                          await Event.Head_office_details(option, context);
 
                       double geofenceRadius =
                           officeDetails['allowd_distance_meters'];
@@ -385,13 +414,16 @@ class Action_Bottom {
 
                       bool hasPermission = await _handleLocationPermission(
                         context,
-                        startingTracking: !isCheckedIn,
+                        startingTracking: !currentCheckedIn,
                       );
                       if (!hasPermission) return;
 
-                      Position? position;
-                      position = await Geolocator.getCurrentPosition(
-                        desiredAccuracy: LocationAccuracy.high,
+                      Position position;
+                      position = await const FacePerformanceTrace().measure(
+                        'Head Office GPS before camera',
+                        () => Geolocator.getCurrentPosition(
+                          desiredAccuracy: LocationAccuracy.high,
+                        ),
                       );
                       double distance = Geolocator.distanceBetween(
                         position.latitude,
@@ -407,7 +439,7 @@ class Action_Bottom {
 
                         final faceReceipt = await _captureAttendancePhoto(
                           context,
-                          checkingOut: isCheckedIn,
+                          checkingOut: currentCheckedIn,
                           // Preserve both Head Office GPS/geofence checks at
                           // their original points, including after matching.
                           overlapLocationWithMatching: false,
@@ -435,7 +467,7 @@ class Action_Bottom {
                         var response;
                         onApiStart?.call();
                         final saveClock = Stopwatch()..start();
-                        if (isCheckedIn) {
+                        if (currentCheckedIn) {
                           // LocationTrackerService.stopTracking();
                           // onTrackingStopped?.call();
 
@@ -492,9 +524,9 @@ class Action_Bottom {
                         onApiEnd?.call();
 
                         if (response?['status'] == "Success") {
-                          onStatusUpdate?.call(!isCheckedIn);
+                          onStatusUpdate?.call(!currentCheckedIn);
                           String? trackingError;
-                          if (isCheckedIn) {
+                          if (currentCheckedIn) {
                             await _stopEmployeeLiveLocationTracking();
                             await prefs.setBool(
                               'is_employee_checked_in',

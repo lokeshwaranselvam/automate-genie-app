@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../utils/api/lead_api.dart';
 import '../utils/widget/home_back_button.dart';
 import 'lead_creation_page.dart';
+import 'lead_details_page.dart';
 
 class MyLeadsPage extends StatefulWidget {
   const MyLeadsPage({super.key});
@@ -79,9 +80,9 @@ class _MyLeadsPageState extends State<MyLeadsPage> {
         title: const Text('My Leads'),
         actions: [
           IconButton(
-            tooltip: 'Create Lead',
-            onPressed: _createLead,
-            icon: const Icon(Icons.person_add_alt_1_rounded),
+            tooltip: 'Refresh',
+            onPressed: _loading ? null : _loadLeads,
+            icon: const Icon(Icons.refresh_rounded),
           ),
         ],
       ),
@@ -140,7 +141,7 @@ class _MyLeadsPageState extends State<MyLeadsPage> {
                 )
                 : ListView.separated(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
                   itemCount: _leads.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {
@@ -151,6 +152,13 @@ class _MyLeadsPageState extends State<MyLeadsPage> {
                       elevation: 0,
                       color: const Color(0xFFF6F8FB),
                       child: ListTile(
+                        onTap:
+                            () => Navigator.of(context).push<void>(
+                              MaterialPageRoute<void>(
+                                builder: (_) => LeadDetailsPage(lead: lead),
+                              ),
+                            ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
                         leading: const CircleAvatar(
                           backgroundColor: Color(0xFFEAF3FF),
                           child: Icon(
@@ -180,7 +188,7 @@ class _MyLeadsPageState extends State<MyLeadsPage> {
       floatingActionButton: brandFloatingActionButton(
         onPressed: _createLead,
         icon: const Icon(Icons.add_rounded),
-        label: const Text('Add Lead'),
+        label: const Text('New Lead'),
       ),
     );
   }

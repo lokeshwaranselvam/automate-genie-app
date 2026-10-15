@@ -9,6 +9,8 @@ import 'attendance_page.dart';
 import 'home_dashboard_view.dart';
 import 'leave_application_page.dart';
 import 'site_visits_page.dart';
+import 'new_site_visit_page.dart';
+import '../utils/api/site_visit_creation_api.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -38,6 +40,7 @@ import '../utils/api/event.dart';
 import '../utils/api/lead_api.dart';
 import '../utils/api/location_api.dart';
 import '../utils/face/face_auth_flow.dart';
+import '../utils/face/face_performance_trace.dart';
 import '../utils/face/face_embedding_service.dart';
 import '../utils/widget/floating_widget.dart';
 import '../utils/widget/glass_card.dart';
@@ -99,6 +102,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   int _attendanceActionRevision = 0;
   Timer? _attendanceStatusRefreshTimer;
   bool _isActionLoading = false;
+  bool _attendanceChooserOpen = false;
   bool _attendancePageOpen = false;
   bool _leaveApplicationOpen = false;
   bool _prefsInitialized = false;
@@ -586,7 +590,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   bool _previousDayPendingCheckout = false;
-  Future<void> _getStatusFromServer({bool force = false}) async {
+  Future<void> _getStatusFromServer({
+    bool force = false,
+    bool recordsFirst = false,
+  }) async {
     if (!mounted ||
         !_prefsInitialized ||
         (_attendanceStatusRefreshing && !force)) {
@@ -603,7 +610,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         actionRevision == _attendanceActionRevision &&
         prefs.getString('email') == email;
     try {
-      final response = await Check.getStatus(email);
+      final response = await Check.getStatus(email, recordsFirst: recordsFirst);
       if (!isCurrent()) return;
       if (response['attendance_records_verified'] != true) {
         throw StateError('Attendance records could not be verified.');
@@ -614,7 +621,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       await prefs.setBool('is_employee_checked_in', checkedIn);
       if (!isCurrent()) return;
       setState(() {
-        _attendanceStatusDetails = Map<String, dynamic>.from(response);
+        _attendanceStatusDetails =
+            recordsFirst
+                ? {..._attendanceStatusDetails, ...response}
+                : Map<String, dynamic>.from(response);
         _checkedIn = checkedIn;
         _previousDayPendingCheckout =
             response['previous_checkout_pending'] == true;
@@ -965,6 +975,44 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       MaterialPageRoute<void>(builder: (_) => const PendingWorkOverviewPage()),
     );
     if (mounted) unawaited(_loadHomePendingCount());
+  }
+
+  Future<void> _openNewVisit() async {
+    try {
+      final allowed = await SiteVisitCreationApi.canCreateVisit();
+      if (!mounted) return;
+      if (!allowed) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Only Sales Managers can create site visits.'),
+          ),
+        );
+        return;
+      }
+      await Navigator.of(context).push<bool>(
+        MaterialPageRoute<bool>(builder: (_) => const NewSiteVisitPage()),
+      );
+      if (mounted) unawaited(_refreshHomeSchedule());
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Bad state: ', '')),
+        ),
+      );
+    }
+  }
+
+  Future<void> _openNewTask() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const SessionWebView(
+          url: 'https://16.itgenie.online/TGC',
+          title: 'New Task',
+        ),
+      ),
+    );
+    if (mounted) unawaited(_loadHomeTaskTodayCount());
   }
 
   Future<void> _setCurrentTime() async {
@@ -1354,7 +1402,12 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       onLeads: _openMyLeads,
       onPending: _openPendingWork,
       onAttendance: _openAttendance,
-      onAddLead: () => setState(() => _selectedTab = 3),
+      onAddLead:
+          () => Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(builder: (_) => const LeadCreationPage()),
+          ),
+      onNewVisit: _openNewVisit,
+      onNewTask: _openNewTask,
       onClearSchedule:
           clearableEventIds.isEmpty
               ? null
@@ -1470,6 +1523,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
 
   Future<void> _openAttendance() async {
     setState(() => _attendancePageOpen = true);
+    unawaited(Event.head_office_list(context).catchError((Object error) {
+      debugPrint('Head Office list preparation will retry on selection: $error');
+      return <dynamic>[];
+    }));
     unawaited(
       FaceAuthFlow.instance.prepare().catchError((Object _) {
         // Optional preparation must not block the page. A real scan retries
@@ -1489,42 +1546,58 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     ]);
   }
 
-  Future<void> _performAttendanceAction() async {
-    if (_isActionLoading || _attendanceStatusRefreshing) return;
-    await _getStatusFromServer(force: true);
-    if (!mounted) return;
-    if (!_attendanceStatusVerified) {
-      Warning.show(
-        context,
-        _attendanceStatusError ?? 'Refresh attendance and try again.',
-        'Warning',
+  Future<bool?> _resolveAttendanceAction() async {
+    setState(() => _isActionLoading = true);
+    try {
+      await const FacePerformanceTrace().measure(
+        'attendance records before camera',
+        () => _getStatusFromServer(force: true, recordsFirst: true),
       );
-      return;
+      if (!mounted) return null;
+      if (!_attendanceStatusVerified) {
+        Warning.show(
+          context,
+          _attendanceStatusError ?? 'Refresh attendance and try again.',
+          'Warning',
+        );
+        return null;
+      }
+      if (_attendanceCompletedToday) return null;
+      // Verified server records already establish authenticated connectivity.
+      return _checkedIn || _previousDayPendingCheckout;
+    } finally {
+      if (mounted) setState(() => _isActionLoading = false);
     }
-    if (_attendanceCompletedToday) return;
-    final ok = await _safeCheckPing();
-    if (!ok || !mounted) return;
+  }
 
-    await Action_Bottom.show(
-      context: context,
-      title: 'Choose Location',
-      options: officeTypes,
-      isCheckedIn: _checkedIn || _previousDayPendingCheckout,
-      onTrackingStarted: _showDistanceOverlay,
-      onTrackingStopped: _removeDistanceOverlay,
-      onApiStart: () {
-        if (mounted) setState(() => _isActionLoading = true);
-      },
-      onApiEnd: () {
-        if (mounted) {
-          setState(() => _isActionLoading = false);
-          unawaited(_getStatusFromServer(force: true));
-        }
-      },
-      onStatusUpdate:
-          (isNowCheckedIn) =>
-              unawaited(_handleAttendanceStatusUpdate(isNowCheckedIn)),
-    );
+  Future<void> _performAttendanceAction() async {
+    if (_isActionLoading || _attendanceChooserOpen) return;
+    _attendanceChooserOpen = true;
+    try {
+      await Action_Bottom.show(
+        context: context,
+        title: 'Choose Location',
+        options: officeTypes,
+        resolveAttendanceAction: _resolveAttendanceAction,
+        isCheckedIn: _checkedIn || _previousDayPendingCheckout,
+        onTrackingStarted: _showDistanceOverlay,
+        onTrackingStopped: _removeDistanceOverlay,
+        onApiStart: () {
+          if (mounted) setState(() => _isActionLoading = true);
+        },
+        onApiEnd: () {
+          if (mounted) {
+            setState(() => _isActionLoading = false);
+            unawaited(_getStatusFromServer(force: true));
+          }
+        },
+        onStatusUpdate:
+            (isNowCheckedIn) =>
+                unawaited(_handleAttendanceStatusUpdate(isNowCheckedIn)),
+      );
+    } finally {
+      _attendanceChooserOpen = false;
+    }
   }
 
   Widget _buildAttendancePage() {
@@ -1621,17 +1694,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             },
           ),
           _moreTile(
-            Icons.history_rounded,
-            'Visit History',
-            'Review previous visits',
-            () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => HistoryList()),
-              );
-            },
-          ),
-          _moreTile(
             Icons.receipt_long_outlined,
             'Expense Claim',
             'Submit an expense with its bill photo',
@@ -1647,7 +1709,15 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             'All Visits',
             'Browse your schedule',
             () {
-              setState(() => _selectedTab = 2);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (_) => SiteVisitsPage(
+                        onVisitsUpdated: _onSiteVisitsUpdated,
+                      ),
+                ),
+              );
             },
           ),
           _moreTile(
@@ -1763,18 +1833,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                       },
                     ),
                     ListTile(
-                      leading: Icon(Icons.history, color: BrandColors.ink),
-                      title: Text('History'),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => HistoryList(),
-                          ),
-                        );
-                      },
-                    ),
-                    ListTile(
                       leading: Icon(
                         Icons.person_add_alt_1_outlined,
                         color: BrandColors.ink,
@@ -1865,7 +1923,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                         ? SiteVisitsPage(onVisitsUpdated: _onSiteVisitsUpdated)
                         : const SizedBox.shrink(),
                     _selectedTab == 3
-                        ? const LeadCreationPage()
+                        ? const MyLeadsPage()
                         : const SizedBox.shrink(),
                     _buildMoreTab(),
                   ],

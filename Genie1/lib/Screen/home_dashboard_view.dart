@@ -30,6 +30,8 @@ class HomeDashboardView extends StatelessWidget {
     required this.onPending,
     required this.onAttendance,
     required this.onAddLead,
+    required this.onNewVisit,
+    required this.onNewTask,
     this.onClearSchedule,
   });
 
@@ -41,6 +43,7 @@ class HomeDashboardView extends StatelessWidget {
   final Future<void> Function() onRefresh;
   final VoidCallback onMenu, onNotifications, onTasks, onVisits, onLeads;
   final VoidCallback onPending, onAttendance, onAddLead;
+  final VoidCallback onNewVisit, onNewTask;
   final VoidCallback? onClearSchedule;
 
   @override
@@ -199,14 +202,14 @@ class HomeDashboardView extends StatelessWidget {
                   'Site Visit',
                   'Log a site visit',
                   const [Color(0xFFB449E8), Color(0xFF8120CD)],
-                  onVisits,
+                  onNewVisit,
                 ),
                 _quickAction(
                   Icons.add_task_rounded,
                   'New Task',
                   'Create a task',
                   const [Color(0xFFFFA035), Color(0xFFFF641F)],
-                  onTasks,
+                  onNewTask,
                 ),
               ],
             ),

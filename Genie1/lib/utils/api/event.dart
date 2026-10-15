@@ -494,68 +494,100 @@ class Event {
     }
   }
 
+  static String? _headOfficeKey;
+  static List<dynamic>? _headOfficeNames;
+  static DateTime? _headOfficeLoadedAt;
+  static Future<List<dynamic>>? _headOfficeLoading;
+
   static Future<List<dynamic>> head_office_list(BuildContext context) async {
-    final pingResult = await Check.pingpong();
-    if (pingResult == false) {
-      Warning.show(
-        context,
-        'ERP Site is not in working condition! Please try again later.',
-        'Error',
-      );
-      return [];
-    }
     final prefs = await SharedPreferences.getInstance();
-    final String? token = prefs.getString('token');
+    final token = prefs.getString('token');
+    if (token == null || token.isEmpty) {
+      throw StateError('Your session has expired. Please sign in again.');
+    }
+    final key = '$URL|$token';
+    if (_headOfficeKey != key) {
+      _headOfficeKey = key;
+      _headOfficeNames = null;
+      _headOfficeLoadedAt = null;
+      _headOfficeLoading = null;
+    }
+    if (_headOfficeNames != null &&
+        DateTime.now().difference(_headOfficeLoadedAt!) <
+            const Duration(minutes: 2)) {
+      return _headOfficeNames!;
+    }
+    if (_headOfficeLoading != null) return _headOfficeLoading!;
+    final request = _loadHeadOfficeNames(token, key);
+    _headOfficeLoading = request;
     try {
-      var response = await http.get(
-        Uri.parse('$URL.head_office_list'),
-        headers: {
-          "Authorization": token ?? "",
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      );
-      if (response.statusCode == 200) {
-        var data = json.decode(response.body);
-        return data['message'];
-      } else {
-        throw Exception("Failed to load events: ${response.statusCode}");
-      }
-    } catch (e) {
-      throw Exception("Error fetching events: $e");
+      return await request;
+    } finally {
+      if (identical(_headOfficeLoading, request)) _headOfficeLoading = null;
     }
   }
 
-  static Head_office_details(String office, BuildContext context) async {
-    final pingResult = await Check.pingpong();
-    if (pingResult == false) {
-      Warning.show(
-        context,
-        'ERP Site is not in working condition! Please try again later.',
-        'Error',
+  static Future<List<dynamic>> _loadHeadOfficeNames(
+    String token,
+    String key,
+  ) async {
+    // The list request itself checks connectivity; no preliminary ping is needed.
+    final response = await http.get(
+      Uri.parse('$URL.head_office_list'),
+      headers: {
+        'Authorization': token,
+        'Accept': 'application/json',
+        'Cache-Control': 'no-cache, no-store',
+      },
+    ).timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) {
+      throw StateError(
+        'Could not load Head Office locations (${response.statusCode}).',
       );
-      return [];
     }
+    final decoded = jsonDecode(response.body);
+    final names = decoded is Map ? decoded['message'] : null;
+    if (names is! List ||
+        names.any((name) => name is! String || name.trim().isEmpty)) {
+      throw const FormatException('ERP returned an invalid Head Office list.');
+    }
+    final result = List<dynamic>.unmodifiable(names);
+    if (_headOfficeKey == key) {
+      _headOfficeNames = result;
+      _headOfficeLoadedAt = DateTime.now();
+    }
+    return result;
+  }
+
+  static Future<Map<String, dynamic>> Head_office_details(
+    String office,
+    BuildContext context,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
-    final String? token = prefs.getString('token');
-    try {
-      var response = await http.get(
-        Uri.parse('$URL.head_office_details?head_office=$office'),
-        headers: {
-          "Authorization": token ?? "",
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      );
-      if (response.statusCode == 200) {
-        var data = json.decode(response.body);
-        return data['message'];
-      } else {
-        throw Exception("Failed to load events: ${response.statusCode}");
-      }
-    } catch (e) {
-      throw Exception("Error fetching events: $e");
+    final token = prefs.getString('token');
+    if (token == null || token.isEmpty) {
+      throw StateError('Your session has expired. Please sign in again.');
     }
+    // Fetch current geofence data directly; never cache office coordinates.
+    final response = await http.get(
+      Uri.parse('$URL.head_office_details').replace(
+        queryParameters: {'head_office': office},
+      ),
+      headers: {
+        'Authorization': token,
+        'Accept': 'application/json',
+        'Cache-Control': 'no-cache, no-store',
+      },
+    ).timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) {
+      throw StateError('Could not load Head Office details (${response.statusCode}).');
+    }
+    final body = jsonDecode(response.body);
+    final details = body is Map ? body['message'] : null;
+    if (details is! Map) {
+      throw const FormatException('ERP returned invalid Head Office details.');
+    }
+    return Map<String, dynamic>.from(details);
   }
 
   static Future<List<Map<String, dynamic>>> fetchEventListByDate(
