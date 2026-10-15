@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:io';
@@ -2261,18 +2262,11 @@ class _EventDetailsState extends State<EventDetails> {
             fontWeight: FontWeight.w800,
           ),
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: _isLoading ? null : () => _fetchData(),
-            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-          ),
-        ],
       ),
       body:
           _isLoading
               ? const Center(child: AgPathLoadingIndicator())
-              : RefreshIndicator(
+              : PullToRefresh(
                 onRefresh: () async {
                   await _checkPing();
                   await _fetchData();

@@ -82,6 +82,35 @@ void main() {
   );
 
   test(
+    'UserID login stores the verified canonical user and Employee mapping',
+    () async {
+      await http.runWithClient(
+        () async {
+          final result = await LoginApi.login('staff.user', 'password');
+          expect(result['error'], isNull);
+          expect(result['employee_id'], 'EMP-1');
+          final prefs = await SharedPreferences.getInstance();
+          expect(prefs.getString('email'), user);
+          expect(prefs.getString('session_username'), user);
+          expect(prefs.getString('session_sid'), 'mobile-sid');
+        },
+        () => MockClient((request) async {
+          if (request.url.path == '$api.login') {
+            final body = jsonDecode(request.body) as Map;
+            expect(body['usr'], 'staff.user');
+            expect(body['pwd'], 'password');
+            expect(body['device_key'], matches(RegExp(r'^[A-Za-z0-9_-]{43}$')));
+            return loggedIn();
+          }
+          expect(request.url.path, '/api/method/frappe.auth.get_logged_user');
+          expect(request.headers['Cookie'], 'sid=mobile-sid');
+          return http.Response(jsonEncode({'message': user}), 200);
+        }),
+      );
+    },
+  );
+
+  test(
     'blocked phone displays server message without logout or overwriting credentials',
     () async {
       SharedPreferences.setMockInitialValues({'token': 'existing-local-token'});

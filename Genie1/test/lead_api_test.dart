@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/utils/api/lead_api.dart';
+import 'package:homegenie/utils/lead_phone_number.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,6 +32,7 @@ http.Response created() => http.Response(
 Future<Map<String, dynamic>> submit({String token = ''}) => LeadApi.createLead(
   firstName: ' Customer & Co ',
   mobileNo: ' +91 9876543210 ',
+  whatsappNo: '+91 9876543210',
   requirement: ' Doors & windows ',
   source: ' Website ',
   productCategory: ' Doors ',
@@ -43,6 +45,55 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({'session_sid': 'lead-session'});
     dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
+  });
+
+  test('WhatsApp validation accepts formatted phone numbers', () {
+    for (final value in [
+      '9876543210',
+      '+91 (98765) 43210',
+      '1234567',
+      '+123456789012345',
+    ]) {
+      expect(LeadPhoneNumber.validateWhatsApp(value), isNull);
+    }
+    expect(LeadPhoneNumber.normalize('+91 (98765) 43210'), '+919876543210');
+  });
+
+  test('invalid WhatsApp is rejected before any request', () async {
+    var calls = 0;
+    await http.runWithClient(
+      () async {
+        for (final value in [
+          '',
+          '   ',
+          '123',
+          '987abc6543210',
+          '++919876543210',
+          '+0123456789',
+          '+1234567890123456',
+        ]) {
+          expect(LeadPhoneNumber.validateWhatsApp(value), isNotNull);
+          await expectLater(
+            LeadApi.createLead(
+              firstName: 'Customer',
+              mobileNo: '9876543210',
+              requirement: 'Doors',
+              source: 'Website',
+              productCategory: 'Doors',
+              address: 'Chennai',
+              csrfToken: 'token',
+              whatsappNo: value,
+            ),
+            throwsFormatException,
+          );
+        }
+      },
+      () => MockClient((_) async {
+        calls++;
+        return created();
+      }),
+    );
+    expect(calls, 0);
   });
 
   test('uses form token and the exact API field names and encoding', () async {
@@ -63,6 +114,7 @@ void main() {
         expect(request.bodyFields, {
           'first_name': 'Customer & Co',
           'mobile_no': '+91 9876543210',
+          'whatsapp_no': '+919876543210',
           'custom_requirement': 'Doors & windows',
           'custom_source': 'Website',
           'custom_product_enquired': 'Doors',

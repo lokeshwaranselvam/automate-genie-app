@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -242,7 +243,7 @@ class _EventsPageState extends State<EventsPage> {
       body:
           isLoading
               ? Center(child: AgPathLoadingIndicator())
-              : RefreshIndicator(
+              : PullToRefresh(
                 onRefresh: () async {
                   await _checkPing();
                   await getEventDataForDate(
@@ -251,7 +252,9 @@ class _EventsPageState extends State<EventsPage> {
                 },
                 color: BrandColors.ink,
                 child: SingleChildScrollView(
-                  physics: AlwaysScrollableScrollPhysics(),
+                  physics: AlwaysScrollableScrollPhysics(
+                    parent: ClampingScrollPhysics(),
+                  ),
                   child: Column(
                     children: [
                       Padding(

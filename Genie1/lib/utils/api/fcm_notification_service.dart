@@ -1,3 +1,5 @@
+import 'notification_inbox.dart';
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
@@ -82,6 +84,7 @@ bool _isPendingWork(RemoteMessage message) {
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
+  await NotificationInbox.capture(message);
   if (!_isPendingWork(message) || message.notification != null) return;
 
   await _initializeLocalNotifications();
@@ -124,6 +127,7 @@ class FcmNotificationService {
     await _initializeLocalNotifications();
 
     FirebaseMessaging.onMessage.listen((message) async {
+      await NotificationInbox.capture(message);
       if (_isPendingWork(message)) {
         final audioUrl = message.data['alarm_audio_url']?.toString().trim();
         await showPendingWorkNotification(message, playChannelSound: false);
@@ -131,6 +135,20 @@ class FcmNotificationService {
       }
     });
 
+    FirebaseMessaging.onMessageOpenedApp.listen((message) async {
+      await NotificationInbox.capture(message);
+    });
+    // Reading a launch notification should not delay opening the app.
+    unawaited(() async {
+      try {
+        final initial = await FirebaseMessaging.instance
+            .getInitialMessage()
+            .timeout(const Duration(seconds: 5));
+        if (initial != null) await NotificationInbox.capture(initial);
+      } catch (error) {
+        debugPrint('Could not read initial notification: ${error.runtimeType}');
+      }
+    }());
     _initialized = true;
     debugPrint('FCM pending-work notification listener initialized.');
   }

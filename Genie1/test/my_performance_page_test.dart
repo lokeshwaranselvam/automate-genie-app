@@ -124,7 +124,9 @@ void main() {
     expect(find.text('ERP unavailable'), findsOneWidget);
     expect(find.text('18'), findsNothing);
     fail = false;
-    await tester.tap(find.text('Retry'));
+    await tester
+        .widget<RefreshIndicator>(find.byType(RefreshIndicator))
+        .onRefresh();
     await tester.pumpAndSettle();
     expect(find.text('—'), findsOneWidget);
     expect(find.text('Unavailable'), findsOneWidget);

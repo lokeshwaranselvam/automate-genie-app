@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
@@ -58,6 +59,7 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
   );
 
   Future<void> _loadOptions() async {
+    if (_submitting) return;
     setState(() {
       _loading = true;
       _loadError = null;
@@ -412,33 +414,32 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
         const SizedBox(width: 6),
       ],
     ),
-    body: SafeArea(
-      top: false,
-      child:
-          _loading
-              ? const Center(child: AgPathLoadingIndicator())
-              : _loadError != null
-              ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(_loadError!, textAlign: TextAlign.center),
-                      const SizedBox(height: 12),
-                      TextButton.icon(
-                        onPressed: _loadOptions,
-                        icon: const Icon(Icons.refresh_rounded),
-                        label: const Text('Retry'),
-                      ),
-                    ],
+    body: PullToRefresh(
+      enabled: !_loading && !_submitting,
+      onRefresh: _loadOptions,
+      child: SafeArea(
+        top: false,
+        child:
+            _loading
+                ? const Center(child: AgPathLoadingIndicator())
+                : _loadError != null
+                ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(_loadError!, textAlign: TextAlign.center),
+                        const SizedBox(height: 12),
+                      ],
+                    ),
                   ),
+                )
+                : SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+                  child: _form(),
                 ),
-              )
-              : SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
-                child: _form(),
-              ),
+      ),
     ),
   );
 }

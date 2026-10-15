@@ -453,28 +453,31 @@ void main() {
     );
   });
 
-  testWidgets('load failures expose Retry without opening a broken form', (
-    tester,
-  ) async {
-    var loads = 0;
-    await withLeavePage(
-      tester,
-      (_) async {
-        expect(
-          find.text('Loading leave options timed out. Please try again.'),
-          findsOneWidget,
-        );
-        await tester.tap(find.text('Retry'));
-        await tester.pumpAndSettle();
-        expect(find.text('Submit Application'), findsOneWidget);
-        expect(loads, 2);
-      },
-      reply: (_) async {
-        if (++loads == 1) throw TimeoutException('Slow ERP');
-        return optionsResponse();
-      },
-    );
-  });
+  testWidgets(
+    'load failures support swipe refresh without opening a broken form',
+    (tester) async {
+      var loads = 0;
+      await withLeavePage(
+        tester,
+        (_) async {
+          expect(
+            find.text('Loading leave options timed out. Please try again.'),
+            findsOneWidget,
+          );
+          await tester
+              .widget<RefreshIndicator>(find.byType(RefreshIndicator))
+              .onRefresh();
+          await tester.pumpAndSettle();
+          expect(find.text('Submit Application'), findsOneWidget);
+          expect(loads, 2);
+        },
+        reply: (_) async {
+          if (++loads == 1) throw TimeoutException('Slow ERP');
+          return optionsResponse();
+        },
+      );
+    },
+  );
 
   testWidgets(
     'missing session explains sign-in without making an API request',

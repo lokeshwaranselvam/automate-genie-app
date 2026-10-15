@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
@@ -437,6 +438,36 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
               title: summary.title,
               item: displayItem,
               columns: _columns,
+              section: widget.section,
+              loadItem: () async {
+                final latest = await PendingWorkApi.getPendingSectionItems(
+                  widget.section,
+                );
+                final id =
+                    item['name'] ??
+                    item['id'] ??
+                    item['stock_entry'] ??
+                    item['job_card'] ??
+                    item['project'] ??
+                    item['opportunity'] ??
+                    item['delivery_note'];
+                final matches = latest.where(
+                  (row) =>
+                      (row['name'] ??
+                          row['stock_entry'] ??
+                          row['opportunity']) ==
+                      id,
+                );
+                if (id == null || matches.isEmpty) {
+                  throw StateError(
+                    'This item is no longer pending. Return to the list and refresh.',
+                  );
+                }
+                return {
+                  for (final entry in matches.first.entries)
+                    entry.key: _displayFieldValue(entry.key, entry.value),
+                };
+              },
             ),
       ),
     );
@@ -482,16 +513,13 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
             ],
           ],
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-          ),
-          const SizedBox(width: 6),
-        ],
+        actions: [const SizedBox(width: 6)],
       ),
-      body: _buildBody(),
+      body: PullToRefresh(
+        enabled: !_loading,
+        onRefresh: _load,
+        child: _buildBody(),
+      ),
     );
   }
 
@@ -505,23 +533,23 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
     }
 
     final list = _filtered;
+    final headerCount = _items.isEmpty ? 0 : 4;
 
-    return RefreshIndicator(
-      color: _primary,
-      backgroundColor: Colors.white,
-      onRefresh: _load,
-      child: ListView.builder(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
-        itemCount: list.isEmpty ? 5 : list.length + 4,
-        itemBuilder: (context, index) {
+    return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(
+        parent: ClampingScrollPhysics(),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
+      itemCount: headerCount + (list.isEmpty ? 1 : list.length),
+      itemBuilder: (context, index) {
+        if (headerCount > 0) {
           if (index == 0) return _buildCountCard();
           if (index == 1 || index == 3) return const SizedBox(height: 14);
           if (index == 2) return _buildSearch();
-          if (list.isEmpty) return _buildEmpty();
-          return _buildItemCard(list[index - 4]);
-        },
-      ),
+        }
+        if (list.isEmpty) return _buildEmpty();
+        return _buildItemCard(list[index - headerCount]);
+      },
     );
   }
 
@@ -654,7 +682,7 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
   }
 
   Widget _buildEmpty() {
-    final searching = _searchText.isNotEmpty;
+    final searching = _items.isNotEmpty && _searchText.isNotEmpty;
 
     return GlassCard(
       padding: const EdgeInsets.all(30),
@@ -718,14 +746,6 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
               style: const TextStyle(color: _textMuted, fontSize: 12),
             ),
             const SizedBox(height: 20),
-            FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: _primary,
-              ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
-              onPressed: _load,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Try Again'),
-            ),
           ],
         ),
       ),
@@ -737,12 +757,14 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
 // DETAILS PAGE (opens when an item in the list is tapped)
 // =============================================================================
 
-class PendingDetailPage extends StatelessWidget {
+class PendingDetailPage extends StatefulWidget {
+  final String? section;
   final String sectionTitle;
   final IconData icon;
   final String title;
   final Map<String, dynamic> item;
   final List<Map<String, dynamic>> columns;
+  final Future<Map<String, dynamic>> Function()? loadItem;
 
   const PendingDetailPage({
     super.key,
@@ -751,7 +773,38 @@ class PendingDetailPage extends StatelessWidget {
     required this.title,
     required this.item,
     required this.columns,
+    this.section,
+    this.loadItem,
   });
+
+  @override
+  State<PendingDetailPage> createState() => _PendingDetailPageState();
+}
+
+class _PendingDetailPageState extends State<PendingDetailPage> {
+  late Map<String, dynamic> item = widget.item;
+  String? get section => widget.section;
+  String get sectionTitle => widget.sectionTitle;
+  String get title => widget.title;
+  IconData get icon => widget.icon;
+  List<Map<String, dynamic>> get columns => widget.columns;
+
+  Future<void> _refresh() async {
+    final load = widget.loadItem;
+    if (load == null) return;
+    try {
+      final updated = await load();
+      if (mounted) setState(() => item = updated);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error.toString().replaceFirst('Bad state: ', '')),
+          ),
+        );
+      }
+    }
+  }
 
   /// Ordered label/value pairs: report columns first, then any extra keys.
   List<MapEntry<String, String>> _entries() {
@@ -763,6 +816,7 @@ class PendingDetailPage extends StatelessWidget {
       if (fieldname == null) continue;
 
       used.add(fieldname);
+      if (_isRepeatedStockEntry(fieldname, item[fieldname])) continue;
 
       final value = item[fieldname];
       if (value == null || value.toString().trim().isEmpty) continue;
@@ -773,6 +827,7 @@ class PendingDetailPage extends StatelessWidget {
 
     item.forEach((key, value) {
       if (used.contains(key) || key.startsWith('_')) return;
+      if (_isRepeatedStockEntry(key, value)) return;
       if (value == null || value.toString().trim().isEmpty) return;
 
       entries.add(MapEntry(_cleanLabel(key), value.toString()));
@@ -780,6 +835,12 @@ class PendingDetailPage extends StatelessWidget {
 
     return entries;
   }
+
+  bool _isRepeatedStockEntry(String field, dynamic value) =>
+      section == 'stock' &&
+      field == 'stock_entry' &&
+      (item['name']?.toString().trim().isNotEmpty ?? false) &&
+      value?.toString().trim() == item['name'].toString().trim();
 
   @override
   Widget build(BuildContext context) {
@@ -799,105 +860,110 @@ class PendingDetailPage extends StatelessWidget {
           ),
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
-        children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              gradient: BrandColors.gradient,
-              borderRadius: BorderRadius.circular(22),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Icon(icon, color: Colors.white, size: 26),
+      body: PullToRefresh(
+        onRefresh: _refresh,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 30),
+          children: [
+            // Stock Entry IDs already appear in the Name row.
+            if (section != 'stock') ...[
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  gradient: BrandColors.gradient,
+                  borderRadius: BorderRadius.circular(22),
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Text(
-                    title,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
+                child: Row(
+                  children: [
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Icon(icon, color: Colors.white, size: 26),
                     ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 14),
-
-          // Fields
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: _cardBorder),
-            ),
-            child:
-                entries.isEmpty
-                    ? const Padding(
-                      padding: EdgeInsets.all(20),
-                      child: Center(
-                        child: Text(
-                          'No details available',
-                          style: TextStyle(color: _textMuted),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
-                    )
-                    : Column(
-                      children: [
-                        for (var i = 0; i < entries.length; i++) ...[
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                SizedBox(
-                                  width: 110,
-                                  child: Text(
-                                    entries[i].key,
-                                    style: const TextStyle(
-                                      color: _textMuted,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: SelectableText(
-                                    entries[i].value,
-                                    style: const TextStyle(
-                                      color: _textDark,
-                                      fontSize: 13.5,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (i != entries.length - 1)
-                            const Divider(height: 1, color: _cardBorder),
-                        ],
-                      ],
                     ),
-          ),
-        ],
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 14),
+            ],
+
+            // Fields
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: _cardBorder),
+              ),
+              child:
+                  entries.isEmpty
+                      ? const Padding(
+                        padding: EdgeInsets.all(20),
+                        child: Center(
+                          child: Text(
+                            'No details available',
+                            style: TextStyle(color: _textMuted),
+                          ),
+                        ),
+                      )
+                      : Column(
+                        children: [
+                          for (var i = 0; i < entries.length; i++) ...[
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  SizedBox(
+                                    width: 110,
+                                    child: Text(
+                                      entries[i].key,
+                                      style: const TextStyle(
+                                        color: _textMuted,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: SelectableText(
+                                      entries[i].value,
+                                      style: const TextStyle(
+                                        color: _textDark,
+                                        fontSize: 13.5,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (i != entries.length - 1)
+                              const Divider(height: 1, color: _cardBorder),
+                          ],
+                        ],
+                      ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -61,7 +61,9 @@ class HomeDashboardView extends StatelessWidget {
         onRefresh: onRefresh,
         color: BrandColors.indigo,
         child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
+          physics: const AlwaysScrollableScrollPhysics(
+            parent: ClampingScrollPhysics(),
+          ),
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
           children: [
             _header(),

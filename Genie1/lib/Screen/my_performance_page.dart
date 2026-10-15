@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:math' as math;
@@ -334,29 +335,24 @@ class _MyPerformancePageState extends State<MyPerformancePage>
     );
   }
 
-  Widget _errorBody() => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.cloud_off_outlined, size: 42, color: _muted),
-          const SizedBox(height: 14),
-          Text(
-            _error!,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: _muted),
-          ),
-          const SizedBox(height: 16),
-          FilledButton(
-            style: const ButtonStyle(
-              backgroundBuilder: BrandColors.buttonBackground,
-              foregroundColor: WidgetStatePropertyAll(Colors.white),
+  Widget _errorBody() => PullToRefresh(
+    onRefresh: _load,
+    child: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_outlined, size: 42, color: _muted),
+            const SizedBox(height: 14),
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: _muted),
             ),
-            onPressed: _load,
-            child: const Text('Retry'),
-          ),
-        ],
+            const SizedBox(height: 16),
+          ],
+        ),
       ),
     ),
   );
@@ -385,10 +381,12 @@ class _MyPerformancePageState extends State<MyPerformancePage>
               ),
             )
             .toList();
-    return RefreshIndicator(
+    return PullToRefresh(
       onRefresh: _load,
       child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: ClampingScrollPhysics(),
+        ),
         padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
         children: [
           LayoutBuilder(

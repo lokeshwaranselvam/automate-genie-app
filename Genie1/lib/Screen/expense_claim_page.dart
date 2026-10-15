@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
@@ -74,23 +75,26 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
   }
 
   Future<void> _loadOptions() async {
+    if (_submitting || _loadingApprovers) return;
     setState(() {
       _loading = true;
       _error = null;
       _approverError = null;
     });
     try {
-      final options = await ExpenseClaimApi.loadFormOptions();
+      final options = await ExpenseClaimApi.loadFormOptions(
+        employee: _selectedEmployee?.value,
+      );
       if (!mounted) return;
       setState(() {
         _options = options;
         _selectedEmployee = _findOption(
           options.employees,
-          options.defaultEmployee,
+          _selectedEmployee?.value ?? options.defaultEmployee,
         );
         _selectedApprover = _findOption(
           options.expenseApprovers,
-          options.defaultExpenseApprover,
+          _selectedApprover?.value ?? options.defaultExpenseApprover,
         );
         _employeeController.text = _selectedEmployee?.label ?? '';
         _approverController.text = _selectedApprover?.label ?? '';
@@ -836,54 +840,53 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
           ),
         ),
       ),
-      body: SafeArea(
-        top: false,
-        child:
-            _loading
-                ? const Center(child: AgPathLoadingIndicator())
-                : _error != null
-                ? Center(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.receipt_long_outlined,
-                          color: _expenseBlue,
-                          size: 42,
-                        ),
-                        const SizedBox(height: 14),
-                        const Text(
-                          'Could not load expense options',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
+      body: PullToRefresh(
+        enabled: !_loading && !_submitting && !_loadingApprovers,
+        onRefresh: _loadOptions,
+        child: SafeArea(
+          top: false,
+          child:
+              _loading
+                  ? const Center(child: AgPathLoadingIndicator())
+                  : _error != null
+                  ? Center(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.receipt_long_outlined,
+                            color: _expenseBlue,
+                            size: 42,
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _error!,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Color(0xFF606B79),
-                            height: 1.4,
+                          const SizedBox(height: 14),
+                          const Text(
+                            'Could not load expense options',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        TextButton.icon(
-                          onPressed: _loadOptions,
-                          icon: const Icon(Icons.refresh_rounded),
-                          label: const Text('Retry'),
-                        ),
-                      ],
+                          const SizedBox(height: 8),
+                          Text(
+                            _error!,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Color(0xFF606B79),
+                              height: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+                      ),
                     ),
+                  )
+                  : SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
+                    child: _buildForm(),
                   ),
-                )
-                : SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
-                  child: _buildForm(),
-                ),
+        ),
       ),
     );
   }

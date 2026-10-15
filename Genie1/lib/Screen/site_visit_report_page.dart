@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
@@ -53,6 +54,18 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
 
   String get _eventId =>
       (_visit['name'] ?? _visit['event_id'] ?? '').toString().trim();
+
+  Future<void> _refreshReport() async {
+    if (_loading || _saving) return;
+    final observation = _observationController.text;
+    final outcome = _selectedOutcome;
+    await _loadReport();
+    if (!mounted || _isSubmitted) return;
+    setState(() {
+      _observationController.text = observation;
+      _selectedOutcome = outcome;
+    });
+  }
 
   Future<void> _loadReport() async {
     if (mounted) setState(() => _loading = true);
@@ -284,20 +297,14 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
           'Visit Report',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh report',
-            onPressed: _loading ? null : _loadReport,
-            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-          ),
-        ],
       ),
-      body:
-          _loading && _visit.isEmpty
-              ? const Center(child: AgPathLoadingIndicator())
-              : RefreshIndicator(
-                onRefresh: _loadReport,
-                child: ListView(
+      body: PullToRefresh(
+        enabled: !_loading && !_saving,
+        onRefresh: _refreshReport,
+        child:
+            _loading && _visit.isEmpty
+                ? const Center(child: AgPathLoadingIndicator())
+                : ListView(
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
                   children: [
                     _customerHeader(),
@@ -480,7 +487,7 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
                     ),
                   ],
                 ),
-              ),
+      ),
     );
   }
 

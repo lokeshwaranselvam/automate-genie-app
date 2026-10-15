@@ -4,6 +4,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 
 import 'session_auth.dart';
+import '../lead_phone_number.dart';
 
 class LeadFormOptions {
   final String leadOwner;
@@ -188,7 +189,7 @@ class LeadApi {
     final rawCategories = message['product_category_options'];
     if (rawSources is! List || rawCategories is! List) {
       throw const FormatException(
-        'The server did not return Lead Source and Product Category options.',
+        'The server did not return Lead Source and Product Enquired options.',
       );
     }
 
@@ -209,7 +210,7 @@ class LeadApi {
     }
     if (productCategoryOptions.isEmpty) {
       throw const FormatException(
-        'No Product Category options were returned. Configure Lead.custom_product_enquired in Frappe.',
+        'No Product Enquired options were returned. Configure Lead.custom_product_enquired in Frappe.',
       );
     }
 
@@ -255,6 +256,24 @@ class LeadApi {
     }).toList();
   }
 
+  static Future<Map<String, dynamic>> getLeadDetails(String name) async {
+    final sid = await _sessionId();
+    final response = await http
+        .get(
+          _endpoint().replace(
+            queryParameters: {'view': 'detail', 'lead': name},
+          ),
+          headers: {'Accept': 'application/json', 'Cookie': 'sid=$sid'},
+        )
+        .timeout(const Duration(seconds: 25));
+    await _assertSession(sid);
+    final lead = _message(response)['lead'];
+    if (lead is! Map) {
+      throw const FormatException('The server did not return Lead details.');
+    }
+    return Map<String, dynamic>.from(lead);
+  }
+
   static Future<Map<String, dynamic>> createLead({
     required String firstName,
     required String mobileNo,
@@ -263,7 +282,10 @@ class LeadApi {
     required String productCategory,
     required String address,
     required String csrfToken,
+    String whatsappNo = '',
   }) async {
+    final whatsappError = LeadPhoneNumber.validateWhatsApp(whatsappNo);
+    if (whatsappError != null) throw FormatException(whatsappError);
     final sid = await _sessionId();
     final endpoint = _endpoint();
     if (_formSession != null &&
@@ -288,6 +310,8 @@ class LeadApi {
             body: {
               'first_name': firstName.trim(),
               'mobile_no': mobileNo.trim(),
+              if (whatsappNo.trim().isNotEmpty)
+                'whatsapp_no': LeadPhoneNumber.normalize(whatsappNo),
               'custom_requirement': requirement.trim(),
               'custom_source': source.trim(),
               'custom_product_enquired': productCategory.trim(),

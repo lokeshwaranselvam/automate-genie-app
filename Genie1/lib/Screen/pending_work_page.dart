@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
@@ -91,9 +92,9 @@ class PendingWorkPageState extends State<PendingWorkPage> {
   DateTime? _startsOn(Map<String, dynamic> task) {
     for (final key in [
       'todo_date',
+      'due_date',
       'starts_on',
       'start_date',
-      'due_date',
       'date',
     ]) {
       final value = task[key]?.toString();
@@ -106,6 +107,19 @@ class PendingWorkPageState extends State<PendingWorkPage> {
   }
 
   String _priority(Map<String, dynamic> task) {
+    // Respect the priority saved by the task creator. Due-date urgency is
+    // displayed separately and must not silently replace that selection.
+    const labels = {
+      'low': 'Low',
+      'medium': 'Medium',
+      'high': 'High',
+      'urgent': 'Urgent',
+    };
+    for (final key in ['task_priority', 'priority', 'todo_priority']) {
+      final label = labels[task[key]?.toString().trim().toLowerCase()];
+      if (label != null) return label;
+    }
+    // Preserve the existing fallback for older responses without a priority.
     final date = _startsOn(task);
     if (date == null) return 'Low';
     final today = DateUtils.dateOnly(DateTime.now());
@@ -115,10 +129,13 @@ class PendingWorkPageState extends State<PendingWorkPage> {
     return 'Low';
   }
 
-  String _dateLabel(DateTime? date) {
+  String _dateLabel(DateTime? date, {required bool done}) {
     if (date == null) return 'No due date';
     final today = DateUtils.dateOnly(DateTime.now());
     final day = DateUtils.dateOnly(date);
+    if (!done && day.isBefore(today)) {
+      return 'Overdue \u2022 ${date.day} ${_month(date.month)}';
+    }
     if (day == today) {
       final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
       final minute = date.minute.toString().padLeft(2, '0');
@@ -189,9 +206,15 @@ class PendingWorkPageState extends State<PendingWorkPage> {
       rows.add(MapEntry(i, task));
     }
     rows.sort((a, b) {
+      const rank = {'Urgent': 0, 'High': 1, 'Medium': 2, 'Low': 3};
+      final priorityOrder = rank[_priority(a.value)]!.compareTo(
+        rank[_priority(b.value)]!,
+      );
+      if (priorityOrder != 0) return priorityOrder;
       final da = _startsOn(a.value) ?? DateTime(9999);
       final db = _startsOn(b.value) ?? DateTime(9999);
-      return da.compareTo(db);
+      final dateOrder = da.compareTo(db);
+      return dateOrder != 0 ? dateOrder : a.key.compareTo(b.key);
     });
     return rows;
   }
@@ -306,11 +329,6 @@ class PendingWorkPageState extends State<PendingWorkPage> {
                   : 'Submit (${_selectedTaskIds.length})',
             ),
           ),
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: _loading ? null : refresh,
-            icon: const Icon(Icons.refresh, color: Colors.white),
-          ),
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(48),
@@ -323,222 +341,200 @@ class PendingWorkPageState extends State<PendingWorkPage> {
           ),
         ),
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 13, 16, 10),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: 'Search tasks...',
-                      hintStyle: const TextStyle(color: _muted, fontSize: 14),
-                      prefixIcon: const Icon(Icons.search, color: _muted),
-                      filled: true,
-                      fillColor: Colors.white,
-                      contentPadding: EdgeInsets.zero,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
+      body: PullToRefresh(
+        enabled: !_loading && !_submitting,
+        onRefresh: refresh,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 13, 16, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search tasks...',
+                        hintStyle: const TextStyle(color: _muted, fontSize: 14),
+                        prefixIcon: const Icon(Icons.search, color: _muted),
+                        filled: true,
+                        fillColor: Colors.white,
+                        contentPadding: EdgeInsets.zero,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                IconButton.filledTonal(
-                  onPressed: () {},
-                  tooltip: 'Filter tasks',
-                  icon: const Icon(Icons.filter_list, color: _ink),
-                ),
-              ],
+                  const SizedBox(width: 10),
+                  IconButton.filledTonal(
+                    onPressed: () {},
+                    tooltip: 'Filter tasks',
+                    icon: const Icon(Icons.filter_list, color: _ink),
+                  ),
+                ],
+              ),
             ),
-          ),
-          Expanded(
-            child:
-                _loading && _tasks.isEmpty
-                    ? const Center(child: AgPathLoadingIndicator())
-                    : _error != null && _tasks.isEmpty
-                    ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(_error!, textAlign: TextAlign.center),
-                            const SizedBox(height: 12),
-                            FilledButton(
-                              style: const ButtonStyle(
-                                backgroundBuilder: BrandColors.buttonBackground,
-                                foregroundColor: WidgetStatePropertyAll(
-                                  Colors.white,
-                                ),
-                              ),
-                              onPressed: refresh,
-                              child: const Text('Try Again'),
-                            ),
-                          ],
+            Expanded(
+              child:
+                  _loading && _tasks.isEmpty
+                      ? const Center(child: AgPathLoadingIndicator())
+                      : _error != null && _tasks.isEmpty
+                      ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(_error!, textAlign: TextAlign.center),
+                              const SizedBox(height: 12),
+                            ],
+                          ),
                         ),
-                      ),
-                    )
-                    : RefreshIndicator(
-                      onRefresh: refresh,
-                      child:
-                          tasks.isEmpty
-                              ? ListView(
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                children: const [
-                                  SizedBox(height: 120),
-                                  Center(
+                      )
+                      : tasks.isEmpty
+                      ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: ClampingScrollPhysics(),
+                        ),
+                        children: const [
+                          SizedBox(height: 120),
+                          Center(
+                            child: Text(
+                              'No tasks found',
+                              style: TextStyle(color: _muted),
+                            ),
+                          ),
+                        ],
+                      )
+                      : ListView.separated(
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: ClampingScrollPhysics(),
+                        ),
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
+                        itemCount: tasks.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, row) {
+                          final index = tasks[row].key;
+                          final task = tasks[row].value;
+                          final done = _isDone(task);
+                          final selected = _selectedTaskIds.contains(
+                            _taskId(task, index),
+                          );
+                          final priority = _priority(task);
+                          final badgeColor =
+                              priority == 'Urgent'
+                                  ? const Color(0xFFB3261E)
+                                  : priority == 'High'
+                                  ? const Color(0xFFE64B55)
+                                  : priority == 'Medium'
+                                  ? const Color(0xFFD99B24)
+                                  : const Color(0xFF36A879);
+                          final date = _startsOn(task);
+                          return Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(13),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 14,
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Checkbox(
+                                    value: done || selected,
+                                    onChanged:
+                                        done || _submitting
+                                            ? null
+                                            : (_) =>
+                                                _toggleSelected(index, task),
+                                    activeColor: _blue,
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                  const SizedBox(width: 9),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _title(task),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: _ink,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w700,
+                                            decoration:
+                                                done
+                                                    ? TextDecoration.lineThrough
+                                                    : null,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 5),
+                                        Text(
+                                          _subtitle(task),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: _muted,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          _dateLabel(date, done: done),
+                                          style: TextStyle(
+                                            color:
+                                                date != null &&
+                                                        !done &&
+                                                        !DateUtils.dateOnly(
+                                                          date,
+                                                        ).isAfter(
+                                                          DateUtils.dateOnly(
+                                                            DateTime.now(),
+                                                          ),
+                                                        )
+                                                    ? const Color(0xFFD9534F)
+                                                    : _muted,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 9,
+                                      vertical: 5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: badgeColor.withValues(alpha: .12),
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
                                     child: Text(
-                                      'No tasks found',
-                                      style: TextStyle(color: _muted),
+                                      priority,
+                                      style: TextStyle(
+                                        color: badgeColor,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                      ),
                                     ),
                                   ),
                                 ],
-                              )
-                              : ListView.separated(
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  4,
-                                  16,
-                                  100,
-                                ),
-                                itemCount: tasks.length,
-                                separatorBuilder:
-                                    (_, __) => const SizedBox(height: 8),
-                                itemBuilder: (context, row) {
-                                  final index = tasks[row].key;
-                                  final task = tasks[row].value;
-                                  final done = _isDone(task);
-                                  final selected = _selectedTaskIds.contains(
-                                    _taskId(task, index),
-                                  );
-                                  final priority = _priority(task);
-                                  final badgeColor =
-                                      priority == 'High'
-                                          ? const Color(0xFFE64B55)
-                                          : priority == 'Medium'
-                                          ? const Color(0xFFD99B24)
-                                          : const Color(0xFF36A879);
-                                  final date = _startsOn(task);
-                                  return Container(
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(13),
-                                    ),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 14,
-                                      ),
-                                      child: Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Checkbox(
-                                            value: done || selected,
-                                            onChanged:
-                                                done || _submitting
-                                                    ? null
-                                                    : (_) => _toggleSelected(
-                                                      index,
-                                                      task,
-                                                    ),
-                                            activeColor: _blue,
-                                            visualDensity:
-                                                VisualDensity.compact,
-                                          ),
-                                          const SizedBox(width: 9),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  _title(task),
-                                                  maxLines: 2,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: TextStyle(
-                                                    color: _ink,
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.w700,
-                                                    decoration:
-                                                        done
-                                                            ? TextDecoration
-                                                                .lineThrough
-                                                            : null,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 5),
-                                                Text(
-                                                  _subtitle(task),
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                    color: _muted,
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  _dateLabel(date),
-                                                  style: TextStyle(
-                                                    color:
-                                                        date != null &&
-                                                                !done &&
-                                                                !DateUtils.dateOnly(
-                                                                  date,
-                                                                ).isAfter(
-                                                                  DateUtils.dateOnly(
-                                                                    DateTime.now(),
-                                                                  ),
-                                                                )
-                                                            ? const Color(
-                                                              0xFFD9534F,
-                                                            )
-                                                            : _muted,
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 9,
-                                              vertical: 5,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: badgeColor.withValues(
-                                                alpha: .12,
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(16),
-                                            ),
-                                            child: Text(
-                                              priority,
-                                              style: TextStyle(
-                                                color: badgeColor,
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                },
                               ),
-                    ),
-          ),
-        ],
+                            ),
+                          );
+                        },
+                      ),
+            ),
+          ],
+        ),
       ),
       floatingActionButton: brandFloatingActionButton(
         onPressed: _openTaskCreator,

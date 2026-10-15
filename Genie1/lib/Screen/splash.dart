@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import 'dart:async';
 import '../utils/widget/ag_path_loading_indicator.dart';
 
@@ -29,9 +30,9 @@ class _SplashState extends State<Splash> {
   // instead of being left on the splash screen with no way forward.
   bool _showRetry = false;
 
-  void _retry() {
+  Future<void> _retry() async {
     setState(() => _showRetry = false);
-    _checkPing();
+    await _checkPing();
   }
 
   Future<void> _checkPing() async {
@@ -72,18 +73,13 @@ class _SplashState extends State<Splash> {
     if (!mounted) return;
 
     if (activeUser != null && activeUser.isNotEmpty) {
+      unawaited(FcmDeviceApi.requestPermissionAndRegister());
       // A saved Frappe session skips the login screen on app restart, so
       // register/refresh its FCM token here as well as after a fresh login.
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder:
-              (context) => FaceEnrollmentGate(
-                child: const Homescreen(),
-                onReady:
-                    () =>
-                        unawaited(FcmDeviceApi.requestPermissionAndRegister()),
-              ),
+          builder: (context) => FaceEnrollmentGate(child: const Homescreen()),
         ),
       );
     } else {
@@ -98,39 +94,38 @@ class _SplashState extends State<Splash> {
   Widget build(BuildContext context) {
     double height = MediaQuery.of(context).size.height;
     return Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(height: height * 0.38),
-            Padding(
-              padding: const EdgeInsets.all(18.0),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: SizedBox(
-                  height: 150,
-                  width: 300,
-                  child:
-                      _showRetry
-                          ? Image.asset(
-                            'assets/images/logoAG.png',
-                            fit: BoxFit.contain,
-                            semanticLabel: 'automategenie.ai',
-                          )
-                          : const Center(
-                            child: AgPathLoadingIndicator(size: 150),
-                          ),
+      body: PullToRefresh(
+        enabled: _showRetry,
+        onRefresh: _retry,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(height: height * 0.38),
+              Padding(
+                padding: const EdgeInsets.all(18.0),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                    height: 150,
+                    width: 300,
+                    child:
+                        _showRetry
+                            ? Image.asset(
+                              'assets/images/logoAG.png',
+                              fit: BoxFit.contain,
+                              semanticLabel: 'automategenie.ai',
+                            )
+                            : const Center(
+                              child: AgPathLoadingIndicator(size: 150),
+                            ),
+                  ),
                 ),
               ),
-            ),
-            if (_showRetry)
-              TextButton.icon(
-                onPressed: _retry,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Retry'),
-              ),
-            SizedBox(height: height * 0.35),
-          ],
+              if (_showRetry) const Text('Swipe down to retry'),
+              SizedBox(height: height * 0.35),
+            ],
+          ),
         ),
       ),
     );

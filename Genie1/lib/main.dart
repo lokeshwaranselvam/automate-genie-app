@@ -97,6 +97,9 @@ class _MyappState extends State<Myapp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      scrollBehavior: const MaterialScrollBehavior().copyWith(
+        physics: const ClampingScrollPhysics(),
+      ),
       builder: (context, child) {
         final mediaQuery = MediaQuery.of(context);
         return MediaQuery(

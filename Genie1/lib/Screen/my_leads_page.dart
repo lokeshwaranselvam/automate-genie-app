@@ -78,21 +78,18 @@ class _MyLeadsPageState extends State<MyLeadsPage> {
       appBar: brandAppBar(
         leading: const HomeBackButton(color: Colors.white),
         title: const Text('My Leads'),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: _loading ? null : _loadLeads,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-        ],
       ),
       body: RefreshIndicator(
-        onRefresh: _loadLeads,
         color: BrandColors.ink,
+        onRefresh: () async {
+          if (!_loading) await _loadLeads();
+        },
         child:
             _loading && _leads.isEmpty
                 ? ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
+                  physics: const AlwaysScrollableScrollPhysics(
+                    parent: ClampingScrollPhysics(),
+                  ),
                   children: const [
                     SizedBox(height: 180),
                     Center(child: AgPathLoadingIndicator()),
@@ -100,7 +97,9 @@ class _MyLeadsPageState extends State<MyLeadsPage> {
                 )
                 : _error != null && _leads.isEmpty
                 ? ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
+                  physics: const AlwaysScrollableScrollPhysics(
+                    parent: ClampingScrollPhysics(),
+                  ),
                   padding: const EdgeInsets.all(24),
                   children: [
                     const SizedBox(height: 100),
@@ -112,17 +111,13 @@ class _MyLeadsPageState extends State<MyLeadsPage> {
                     const SizedBox(height: 12),
                     Text(_error!, textAlign: TextAlign.center),
                     const SizedBox(height: 12),
-                    Center(
-                      child: TextButton(
-                        onPressed: _loadLeads,
-                        child: const Text('Try again'),
-                      ),
-                    ),
                   ],
                 )
                 : _leads.isEmpty
                 ? ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
+                  physics: const AlwaysScrollableScrollPhysics(
+                    parent: ClampingScrollPhysics(),
+                  ),
                   children: const [
                     SizedBox(height: 150),
                     Icon(
@@ -140,7 +135,9 @@ class _MyLeadsPageState extends State<MyLeadsPage> {
                   ],
                 )
                 : ListView.separated(
-                  physics: const AlwaysScrollableScrollPhysics(),
+                  physics: const AlwaysScrollableScrollPhysics(
+                    parent: ClampingScrollPhysics(),
+                  ),
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
                   itemCount: _leads.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 8),

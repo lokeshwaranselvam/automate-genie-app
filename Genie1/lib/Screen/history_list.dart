@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -399,10 +400,10 @@ class _HistoryListState extends State<HistoryList> {
             ),
 
           Expanded(
-            child: RefreshIndicator(
+            child: PullToRefresh(
               onRefresh: () async {
                 await _checkPing();
-                fetchHistoryData();
+                await fetchHistoryData();
               },
               child:
                   filteredHistory.isEmpty

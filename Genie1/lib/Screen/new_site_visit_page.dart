@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
@@ -94,7 +95,35 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
     super.dispose();
   }
 
+  Future<void> _refreshOptions() async {
+    if (_loading || _saving || _mobileSearching) return;
+    final category = _eventCategory;
+    final assignedTo = _assignedTo;
+    final opportunity = _opportunity;
+    final product = _product;
+    final query = _initialOpportunityQuery;
+    final hadOptions = _productOptions.isNotEmpty;
+    await _loadOptions();
+    if (!mounted) return;
+    if (hadOptions) {
+      setState(() {
+        _eventCategory = _eventCategories.contains(category) ? category : null;
+        _assignedTo =
+            _users.any((user) => user['name'] == assignedTo)
+                ? assignedTo
+                : null;
+        _opportunity = opportunity;
+        _initialOpportunityQuery = query;
+        _product = _productOptions.contains(product) ? product : null;
+      });
+    }
+    if (_mobileSearchFailed && _mobileController.text.isNotEmpty) {
+      _onMobileChanged(_mobileController.text);
+    }
+  }
+
   Future<void> _loadOptions() async {
+    if (mounted) setState(() => _error = null);
     try {
       final result = await SiteVisitCreationApi.loadOptions();
       if (!mounted) return;
@@ -266,7 +295,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
         _mobileMatches = [];
         _mobileSearchMessage =
             error is TimeoutException
-                ? 'Phone search timed out. Tap retry to try again.'
+                ? 'Phone search timed out. Swipe down to try again.'
                 : _message(error);
       });
     }
@@ -887,15 +916,6 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                             : Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                if (_mobileSearchFailed)
-                                  IconButton(
-                                    tooltip: 'Retry mobile search',
-                                    icon: const Icon(Icons.refresh_rounded),
-                                    onPressed:
-                                        () => _onMobileChanged(
-                                          _mobileController.text,
-                                        ),
-                                  ),
                                 IconButton(
                                   tooltip: 'Clear mobile search',
                                   icon: const Icon(Icons.close_rounded),
@@ -1492,19 +1512,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
             textAlign: TextAlign.center,
             style: const TextStyle(color: _visitMuted),
           ),
-          if (canRetry) ...[
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: () {
-                setState(() {
-                  _loading = true;
-                  _error = null;
-                });
-                _loadOptions();
-              },
-              child: const Text('Try again'),
-            ),
-          ],
+          if (canRetry) const Text('Swipe down to retry'),
         ],
       ),
     ),
@@ -1533,15 +1541,20 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
           ),
         ),
       ),
-      body:
-          _loading
-              ? const Center(child: AgPathLoadingIndicator())
-              : SafeArea(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-                  child: _eventStep ? _buildEventStep() : _buildLocationStep(),
+      body: PullToRefresh(
+        enabled: !_loading && !_saving,
+        onRefresh: _refreshOptions,
+        child:
+            _loading
+                ? const Center(child: AgPathLoadingIndicator())
+                : SafeArea(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+                    child:
+                        _eventStep ? _buildEventStep() : _buildLocationStep(),
+                  ),
                 ),
-              ),
+      ),
     );
   }
 }

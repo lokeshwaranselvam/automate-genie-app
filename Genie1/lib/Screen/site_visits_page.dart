@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
@@ -346,13 +347,6 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
           'Site Visits',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh visits',
-            onPressed: _loading ? null : _refresh,
-            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-          ),
-        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(52),
           child: Row(
@@ -364,80 +358,78 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
           ),
         ),
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    onChanged: (value) => setState(() => _query = value),
-                    decoration: InputDecoration(
-                      hintText: 'Search visits...',
-                      hintStyle: const TextStyle(color: _visitMuted),
-                      prefixIcon: const Icon(Icons.search, color: _visitMuted),
-                      filled: true,
-                      fillColor: Colors.white,
-                      contentPadding: EdgeInsets.zero,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(13),
-                        borderSide: BorderSide.none,
+      body: PullToRefresh(
+        enabled: !_loading,
+        onRefresh: _refresh,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      onChanged: (value) => setState(() => _query = value),
+                      decoration: InputDecoration(
+                        hintText: 'Search visits...',
+                        hintStyle: const TextStyle(color: _visitMuted),
+                        prefixIcon: const Icon(
+                          Icons.search,
+                          color: _visitMuted,
+                        ),
+                        filled: true,
+                        fillColor: Colors.white,
+                        contentPadding: EdgeInsets.zero,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(13),
+                          borderSide: BorderSide.none,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                IconButton.filledTonal(
-                  tooltip: 'Filter visit type',
-                  onPressed: _showTypeFilter,
-                  icon: const Icon(Icons.filter_list_rounded),
-                ),
-              ],
+                  const SizedBox(width: 10),
+                  IconButton.filledTonal(
+                    tooltip: 'Filter visit type',
+                    onPressed: _showTypeFilter,
+                    icon: const Icon(Icons.filter_list_rounded),
+                  ),
+                ],
+              ),
             ),
-          ),
-          Expanded(
-            child:
-                _loading && _visits.isEmpty
-                    ? const Center(child: AgPathLoadingIndicator())
-                    : _error != null && _visits.isEmpty
-                    ? _errorView()
-                    : RefreshIndicator(
-                      onRefresh: _refresh,
-                      child:
-                          visits.isEmpty
-                              ? ListView(
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                children: [
-                                  const SizedBox(height: 150),
-                                  Center(
-                                    child: Text(
-                                      _emptyMessage,
-                                      style: const TextStyle(
-                                        color: _visitMuted,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              )
-                              : ListView.separated(
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  4,
-                                  16,
-                                  100,
-                                ),
-                                itemCount: visits.length,
-                                separatorBuilder:
-                                    (_, __) => const SizedBox(height: 9),
-                                itemBuilder:
-                                    (context, index) =>
-                                        _visitCard(visits[index]),
-                              ),
-                    ),
-          ),
-        ],
+            Expanded(
+              child:
+                  _loading && _visits.isEmpty
+                      ? const Center(child: AgPathLoadingIndicator())
+                      : _error != null && _visits.isEmpty
+                      ? _errorView()
+                      : visits.isEmpty
+                      ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: ClampingScrollPhysics(),
+                        ),
+                        children: [
+                          const SizedBox(height: 150),
+                          Center(
+                            child: Text(
+                              _emptyMessage,
+                              style: const TextStyle(color: _visitMuted),
+                            ),
+                          ),
+                        ],
+                      )
+                      : ListView.separated(
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: ClampingScrollPhysics(),
+                        ),
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
+                        itemCount: visits.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 9),
+                        itemBuilder:
+                            (context, index) => _visitCard(visits[index]),
+                      ),
+            ),
+          ],
+        ),
       ),
       floatingActionButton:
           !_canCreateVisit
@@ -467,14 +459,6 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
         children: [
           Text(_error!, textAlign: TextAlign.center),
           const SizedBox(height: 12),
-          FilledButton(
-            style: const ButtonStyle(
-              backgroundBuilder: BrandColors.buttonBackground,
-              foregroundColor: WidgetStatePropertyAll(Colors.white),
-            ),
-            onPressed: _refresh,
-            child: const Text('Try Again'),
-          ),
         ],
       ),
     ),

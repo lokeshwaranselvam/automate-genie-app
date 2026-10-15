@@ -1,3 +1,4 @@
+import 'notifications_page.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
@@ -25,7 +26,6 @@ import 'pending_work_page.dart';
 import 'pending_work_overview_page.dart';
 import 'lead_creation_page.dart';
 import 'my_leads_page.dart';
-import 'my_performance_page.dart';
 import 'expense_claim_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -549,6 +549,12 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     }
   }
 
+  void _openNotifications() {
+    Navigator.of(context).push<void>(MaterialPageRoute<void>(
+      builder: (_) => const NotificationsPage(),
+    ));
+  }
+
   Future<void> _openMyLeads() async {
     await Navigator.of(
       context,
@@ -1025,7 +1031,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     return RefreshIndicator(
       onRefresh: () => _loadSessionWebLinks(forceRefresh: true),
       child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: ClampingScrollPhysics(),
+        ),
         padding: const EdgeInsets.all(16),
         children: [
           const Text(
@@ -1408,7 +1416,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         ]);
       },
       onMenu: _openNavigationDrawer,
-      onNotifications: () => setState(() => _selectedTab = 1),
+      onNotifications: _openNotifications,
       onTasks: () => setState(() => _selectedTab = 1),
       onVisits: () => setState(() => _selectedTab = 2),
       onLeads: _openMyLeads,
@@ -1655,25 +1663,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       body: ListView(
         padding: const EdgeInsets.all(14),
         children: [
-          _moreTile(
-            Icons.bar_chart_rounded,
-            'My Performance',
-            'View your sales, activity and attendance trends',
-            () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder:
-                      (_) => MyPerformancePage(
-                        onNavigate: (index) {
-                          Navigator.pop(context);
-                          _selectBottomTab(index);
-                        },
-                      ),
-                ),
-              );
-            },
-          ),
           _moreTile(
             Icons.fact_check_outlined,
             'Attendance',
@@ -1922,7 +1911,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             _leaveApplicationOpen
                 ? LeaveApplicationPage(
                   onBack: () => setState(() => _leaveApplicationOpen = false),
-                  onNotifications: () => _selectBottomTab(1),
+                  onNotifications: _openNotifications,
                 )
                 : _attendancePageOpen
                 ? _buildAttendancePage()

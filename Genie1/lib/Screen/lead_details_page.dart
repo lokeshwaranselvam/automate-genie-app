@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import '../utils/api/lead_api.dart';
+import '../utils/widget/pull_to_refresh.dart';
 
 import '../utils/theme/brand_theme.dart';
 import '../utils/widget/home_back_button.dart';
 
 /// Read-only details from the authenticated, owner-filtered Lead list.
-class LeadDetailsPage extends StatelessWidget {
+class LeadDetailsPage extends StatefulWidget {
   LeadDetailsPage({super.key, required Map<String, dynamic> lead})
     : lead = Map<String, dynamic>.unmodifiable(lead);
 
@@ -22,7 +24,7 @@ class LeadDetailsPage extends StatelessWidget {
     'custom_requirement': 'Requirement',
     'custom_source': 'Lead Source',
     'source': 'Source',
-    'custom_product_enquired': 'Product Category',
+    'custom_product_enquired': 'Product Enquired',
     'custom_address': 'Address',
     'custom_pincode': 'Pincode',
     'company_name': 'Company',
@@ -35,8 +37,30 @@ class LeadDetailsPage extends StatelessWidget {
   };
 
   @override
+  State<LeadDetailsPage> createState() => _LeadDetailsPageState();
+}
+
+class _LeadDetailsPageState extends State<LeadDetailsPage> {
+  late Map<String, dynamic> lead = widget.lead;
+
+  Future<void> _refresh() async {
+    try {
+      final updated = await LeadApi.getLeadDetails(lead['name'].toString());
+      if (mounted) setState(() => lead = updated);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error.toString().replaceFirst('Bad state: ', '')),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final fields = _fields.entries.where(
+    final fields = LeadDetailsPage._fields.entries.where(
       (field) => (lead[field.key]?.toString().trim() ?? '').isNotEmpty,
     );
     return Scaffold(
@@ -44,28 +68,31 @@ class LeadDetailsPage extends StatelessWidget {
         leading: const HomeBackButton(color: Colors.white),
         title: const Text('Lead Details'),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          for (final field in fields)
-            Card(
-              elevation: 0,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      field.value,
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                    const SizedBox(height: 6),
-                    SelectableText(lead[field.key].toString().trim()),
-                  ],
+      body: PullToRefresh(
+        onRefresh: _refresh,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            for (final field in fields)
+              Card(
+                elevation: 0,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        field.value,
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(lead[field.key].toString().trim()),
+                    ],
+                  ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }

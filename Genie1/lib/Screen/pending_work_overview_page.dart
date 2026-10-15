@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
@@ -200,41 +201,27 @@ class _PendingWorkOverviewPageState extends State<PendingWorkOverviewPage> {
       appBar: brandAppBar(
         leading: const HomeBackButton(),
         title: const Text('Pending Work'),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: _loading ? null : _refresh,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-        ],
       ),
-      body:
-          _loading && _dashboard.isEmpty
-              ? const Center(child: AgPathLoadingIndicator())
-              : _error != null && _dashboard.isEmpty
-              ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(_error!, textAlign: TextAlign.center),
-                      const SizedBox(height: 12),
-                      FilledButton(
-                        style: const ButtonStyle(
-                          backgroundBuilder: BrandColors.buttonBackground,
-                          foregroundColor: WidgetStatePropertyAll(Colors.white),
-                        ),
-                        onPressed: _refresh,
-                        child: const Text('Try Again'),
-                      ),
-                    ],
+      body: PullToRefresh(
+        enabled: !_loading,
+        onRefresh: _refresh,
+        child:
+            _loading && _dashboard.isEmpty
+                ? const Center(child: AgPathLoadingIndicator())
+                : _error != null && _dashboard.isEmpty
+                ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(_error!, textAlign: TextAlign.center),
+                        const SizedBox(height: 12),
+                      ],
+                    ),
                   ),
-                ),
-              )
-              : RefreshIndicator(
-                onRefresh: _refresh,
-                child: ListView(
+                )
+                : ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
                     Card(
@@ -285,7 +272,7 @@ class _PendingWorkOverviewPageState extends State<PendingWorkOverviewPage> {
                     ...teamCards,
                   ],
                 ),
-              ),
+      ),
     );
   }
 }

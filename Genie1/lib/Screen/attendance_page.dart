@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -149,10 +150,13 @@ class AttendancePage extends StatelessWidget {
     ], fallback: 'Mobile App (GPS)');
 
     return SafeArea(
-      child: RefreshIndicator(
+      child: PullToRefresh(
+        enabled: !loading && !actionLoading,
         onRefresh: onRefresh,
         child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
+          physics: const AlwaysScrollableScrollPhysics(
+            parent: ClampingScrollPhysics(),
+          ),
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
           children: [
             Container(
@@ -374,11 +378,6 @@ class AttendancePage extends StatelessWidget {
               Text(
                 statusError!,
                 style: const TextStyle(color: Color(0xFFB3261E)),
-              ),
-              TextButton.icon(
-                onPressed: () async => onRefresh(),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Retry attendance status'),
               ),
             ],
             SizedBox(

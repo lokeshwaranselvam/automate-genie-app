@@ -1096,14 +1096,16 @@ void main() {
         await tester.pump(const Duration(milliseconds: 600));
         await tester.pumpAndSettle();
         expect(
-          find.text('Phone search timed out. Tap retry to try again.'),
+          find.text('Phone search timed out. Swipe down to try again.'),
           findsOneWidget,
         );
         await tester.tap(field('Opportunity *'));
         await tester.pumpAndSettle();
         expect(find.widgetWithText(ListTile, 'Lokesh'), findsNothing);
         expect(selectedValue(tester, 'Product enquired'), isNull);
-        await tester.tap(find.byTooltip('Retry mobile search'));
+        await tester
+            .widget<RefreshIndicator>(find.byType(RefreshIndicator))
+            .onRefresh();
         await tester.pump(const Duration(milliseconds: 600));
         await tester.pumpAndSettle();
         expect(

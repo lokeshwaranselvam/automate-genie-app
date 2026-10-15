@@ -1,9 +1,11 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../utils/api/lead_api.dart';
+import '../utils/lead_phone_number.dart';
 import '../utils/api/location_api.dart';
 import '../utils/widget/home_back_button.dart';
 import '../utils/widget/warning.dart';
@@ -22,6 +24,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
   final _formKey = GlobalKey<FormState>();
   final _firstNameController = TextEditingController();
   final _mobileController = TextEditingController();
+  final _whatsappController = TextEditingController();
   final _locationController = TextEditingController();
   final _requirementController = TextEditingController();
 
@@ -44,6 +47,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
   void dispose() {
     _firstNameController.dispose();
     _mobileController.dispose();
+    _whatsappController.dispose();
     _locationController.dispose();
     _requirementController.dispose();
     super.dispose();
@@ -54,15 +58,18 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
     setState(() {
       _loadingOptions = true;
       _error = null;
-      _options = null;
-      _selectedCategory = null;
-      _selectedSource = null;
     });
     try {
       final options = await LeadApi.getFormOptions();
       if (!mounted) return;
       setState(() {
         _options = options;
+        if (!options.productCategoryOptions.contains(_selectedCategory)) {
+          _selectedCategory = null;
+        }
+        if (!options.sourceOptions.contains(_selectedSource)) {
+          _selectedSource = null;
+        }
         _loadingOptions = false;
       });
     } catch (error) {
@@ -86,6 +93,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
       await LeadApi.createLead(
         firstName: _firstNameController.text,
         mobileNo: _mobileController.text,
+        whatsappNo: _whatsappController.text,
         requirement: _requirementController.text,
         source: _selectedSource ?? '',
         productCategory: _selectedCategory ?? '',
@@ -96,6 +104,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
 
       _firstNameController.clear();
       _mobileController.clear();
+      _whatsappController.clear();
       _locationController.clear();
       _requirementController.clear();
       Warning.show(context, 'Lead created successfully!', 'Success');
@@ -148,7 +157,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
     }
   }
 
-  Widget _fieldLabel(String label) => Padding(
+  Widget _fieldLabel(String label, {bool required = true}) => Padding(
     padding: const EdgeInsets.only(bottom: 6),
     child: Text.rich(
       TextSpan(
@@ -158,8 +167,12 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
           fontSize: 13,
           fontWeight: FontWeight.w600,
         ),
-        children: const [
-          TextSpan(text: ' *', style: TextStyle(color: Color(0xFFE34B56))),
+        children: [
+          if (required)
+            const TextSpan(
+              text: ' *',
+              style: TextStyle(color: Color(0xFFE34B56)),
+            ),
         ],
       ),
     ),
@@ -237,7 +250,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
             AgPathLoadingIndicator(),
             SizedBox(height: 16),
             Text(
-              'Loading Lead Source and Product Category…',
+              'Loading Lead Source and Product Enquired…',
               textAlign: TextAlign.center,
               style: TextStyle(color: _leadInk, fontSize: 14),
             ),
@@ -280,15 +293,6 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
             style: TextStyle(color: _leadInk, fontSize: 13, height: 1.4),
           ),
           const SizedBox(height: 8),
-          TextButton.icon(
-            onPressed: _loadOptions,
-            icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text('Retry'),
-            style: TextButton.styleFrom(
-              foregroundColor: _leadBlue,
-              padding: EdgeInsets.zero,
-            ),
-          ),
         ],
       ),
     );
@@ -309,19 +313,14 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
             fontWeight: FontWeight.w700,
           ),
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Reload form',
-            onPressed: _loadingOptions || _submitting ? null : _loadOptions,
-            icon: const Icon(Icons.refresh_rounded),
-            color: Colors.white,
-          ),
-        ],
       ),
-      body: RefreshIndicator(
+      body: PullToRefresh(
+        enabled: !_loadingOptions && !_submitting,
         onRefresh: _loadOptions,
         child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
+          physics: const AlwaysScrollableScrollPhysics(
+            parent: ClampingScrollPhysics(),
+          ),
           padding: const EdgeInsets.fromLTRB(20, 13, 20, 24),
           children: [
             if (_options == null)
@@ -363,8 +362,17 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
                                   : null,
                     ),
                     const SizedBox(height: 15),
+                    _fieldLabel('WhatsApp Number'),
+                    TextFormField(
+                      controller: _whatsappController,
+                      keyboardType: TextInputType.phone,
+                      autofillHints: const [AutofillHints.telephoneNumber],
+                      decoration: _fieldDecoration(hint: '+91 98765 43210'),
+                      validator: LeadPhoneNumber.validateWhatsApp,
+                    ),
+                    const SizedBox(height: 15),
                     _dropdownField(
-                      label: 'Product Category',
+                      label: 'Product Enquired',
                       value: _selectedCategory,
                       options: _options!.productCategoryOptions,
                       enabled: !_loadingOptions,
@@ -373,7 +381,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
                       validator:
                           (value) =>
                               value == null
-                                  ? 'Select a product category.'
+                                  ? 'Select a product enquired.'
                                   : null,
                     ),
                     const SizedBox(height: 15),

@@ -541,7 +541,9 @@ class _FaceCapturePageState extends State<FaceCapturePage>
                           backgroundBuilder: BrandColors.buttonBackground,
                         ),
                         icon: Icon(
-                          _needsSettings ? Icons.settings : Icons.refresh,
+                          _needsSettings
+                              ? Icons.settings
+                              : Icons.camera_alt_outlined,
                         ),
                         label: Text(
                           _needsSettings ? 'Open settings' : 'Try again',

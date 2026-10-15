@@ -174,9 +174,11 @@ void main() {
         ),
       ),
     );
-    await tester.scrollUntilVisible(find.text('Retry attendance status'), 150);
-    await tester.tap(find.text('Retry attendance status'));
+    await tester
+        .widget<RefreshIndicator>(find.byType(RefreshIndicator))
+        .onRefresh();
     expect(retries, 1);
+    await tester.scrollUntilVisible(find.text('Check Out'), 150);
     expect(
       tester
           .widget<ElevatedButton>(

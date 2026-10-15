@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
@@ -278,363 +279,349 @@ class _HistoryOverviewState extends State<HistoryOverview> {
         body:
             _isLoading
                 ? Center(child: AgPathLoadingIndicator())
-                : RefreshIndicator(
-                  onRefresh: () async {
-                    await _checkPing();
-                    _fetchData();
-                  },
-                  color: BrandColors.ink,
-                  child: Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.start,
-                          children: [
-                            brandCircleAvatar(
-                              radius: 40,
-                              child: Text(
-                                (eventData['reference_details'] != null &&
-                                        eventData['reference_details']
-                                            .isNotEmpty)
-                                    ? (eventData['reference_details'][0]['party_name']
-                                                ?.isNotEmpty ??
-                                            false
-                                        ? eventData['reference_details'][0]['party_name'][0]
-                                        : '')
-                                    : (eventData['event']?['name']
-                                                ?.isNotEmpty ??
-                                            false
-                                        ? eventData['event']['name'][0]
-                                        : ''),
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  color: Colors.white,
-                                ),
+                : Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        children: [
+                          brandCircleAvatar(
+                            radius: 40,
+                            child: Text(
+                              (eventData['reference_details'] != null &&
+                                      eventData['reference_details'].isNotEmpty)
+                                  ? (eventData['reference_details'][0]['party_name']
+                                              ?.isNotEmpty ??
+                                          false
+                                      ? eventData['reference_details'][0]['party_name'][0]
+                                      : '')
+                                  : (eventData['event']?['name']?.isNotEmpty ??
+                                          false
+                                      ? eventData['event']['name'][0]
+                                      : ''),
+                              style: TextStyle(
+                                fontSize: 18,
+                                color: Colors.white,
                               ),
                             ),
-
-                            SizedBox(width: 20),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    (eventData['reference_details'] != null &&
-                                            eventData['reference_details']
-                                                .isNotEmpty)
-                                        ? eventData['reference_details'][0]['party_name'] ??
-                                            "No Party Name"
-                                        : eventData['event']?['name'] ??
-                                            "No Event Name",
-                                    style: TextStyle(fontSize: 15),
-                                  ),
-                                  SizedBox(height: 5),
-                                  Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Icon(
-                                        Icons.location_pin,
-                                        color: BrandColors.ink,
-                                      ),
-                                      SizedBox(width: 5),
-                                      Flexible(
-                                        child:
-                                        //         Text(eventData['event']['subject']??'',
-                                        // style: TextStyle(fontSize: 14),
-                                        // maxLines: 2,
-                                        //           overflow: TextOverflow.ellipsis,
-                                        //         ),
-                                        FutureBuilder<String>(
-                                          future: _getCurrentLocationAddress(),
-                                          builder: (context, snapshot) {
-                                            if (snapshot.connectionState ==
-                                                ConnectionState.waiting) {
-                                              return Text(
-                                                "Fetching location...",
-                                                style: TextStyle(fontSize: 14),
-                                              );
-                                            } else if (snapshot.hasError) {
-                                              return Text(
-                                                "Location error",
-                                                style: TextStyle(
-                                                  fontSize: 14,
-                                                  color: Colors.red,
-                                                ),
-                                              );
-                                            } else {
-                                              return Text(
-                                                snapshot.data ??
-                                                    "Location not found",
-                                                style: TextStyle(fontSize: 14),
-                                                maxLines: 2,
-                                                overflow: TextOverflow.ellipsis,
-                                              );
-                                            }
-                                          },
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        Container(
-                          child: TabBar(
-                            tabs: [Tab(text: 'Check In'), Tab(text: 'Details')],
                           ),
+
+                          SizedBox(width: 20),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  (eventData['reference_details'] != null &&
+                                          eventData['reference_details']
+                                              .isNotEmpty)
+                                      ? eventData['reference_details'][0]['party_name'] ??
+                                          "No Party Name"
+                                      : eventData['event']?['name'] ??
+                                          "No Event Name",
+                                  style: TextStyle(fontSize: 15),
+                                ),
+                                SizedBox(height: 5),
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(
+                                      Icons.location_pin,
+                                      color: BrandColors.ink,
+                                    ),
+                                    SizedBox(width: 5),
+                                    Flexible(
+                                      child:
+                                      //         Text(eventData['event']['subject']??'',
+                                      // style: TextStyle(fontSize: 14),
+                                      // maxLines: 2,
+                                      //           overflow: TextOverflow.ellipsis,
+                                      //         ),
+                                      FutureBuilder<String>(
+                                        future: _getCurrentLocationAddress(),
+                                        builder: (context, snapshot) {
+                                          if (snapshot.connectionState ==
+                                              ConnectionState.waiting) {
+                                            return Text(
+                                              "Fetching location...",
+                                              style: TextStyle(fontSize: 14),
+                                            );
+                                          } else if (snapshot.hasError) {
+                                            return Text(
+                                              "Location error",
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                color: Colors.red,
+                                              ),
+                                            );
+                                          } else {
+                                            return Text(
+                                              snapshot.data ??
+                                                  "Location not found",
+                                              style: TextStyle(fontSize: 14),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            );
+                                          }
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      Container(
+                        child: TabBar(
+                          tabs: [Tab(text: 'Check In'), Tab(text: 'Details')],
                         ),
-                        Expanded(
-                          child: TabBarView(
-                            children: [
-                              RefreshIndicator(
-                                onRefresh: () async {
-                                  await _checkPing();
-                                  _fetchData();
-                                },
-                                child: SingleChildScrollView(
-                                  physics:
-                                      const AlwaysScrollableScrollPhysics(),
-                                  padding: const EdgeInsets.all(16),
-                                  child: Container(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.center,
-                                      children: [
-                                        Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
+                      ),
+                      Expanded(
+                        child: TabBarView(
+                          children: [
+                            PullToRefresh(
+                              onRefresh: () async {
+                                await _checkPing();
+                                _fetchData();
+                              },
+                              child: SingleChildScrollView(
+                                physics: const AlwaysScrollableScrollPhysics(
+                                  parent: ClampingScrollPhysics(),
+                                ),
+                                padding: const EdgeInsets.all(16),
+                                child: Container(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
 
-                                          children: [
-                                            SizedBox(height: 250),
+                                        children: [
+                                          SizedBox(height: 250),
 
-                                            GestureDetector(
-                                              onTap: () async {},
+                                          GestureDetector(
+                                            onTap: () async {},
 
-                                              child: Stack(
-                                                alignment: Alignment.center,
-                                                children: [
-                                                  CircleAvatar(
-                                                    radius: 80,
+                                            child: Stack(
+                                              alignment: Alignment.center,
+                                              children: [
+                                                CircleAvatar(
+                                                  radius: 80,
+                                                  backgroundColor:
+                                                      getActionColor(),
+                                                  child: CircleAvatar(
+                                                    radius: 60,
                                                     backgroundColor:
-                                                        getActionColor(),
+                                                        const Color.fromARGB(
+                                                          255,
+                                                          221,
+                                                          217,
+                                                          217,
+                                                        ),
                                                     child: CircleAvatar(
-                                                      radius: 60,
+                                                      radius: 40,
                                                       backgroundColor:
                                                           const Color.fromARGB(
-                                                            255,
-                                                            221,
-                                                            217,
-                                                            217,
+                                                            231,
+                                                            175,
+                                                            173,
+                                                            173,
                                                           ),
-                                                      child: CircleAvatar(
-                                                        radius: 40,
-                                                        backgroundColor:
-                                                            const Color.fromARGB(
-                                                              231,
-                                                              175,
-                                                              173,
-                                                              173,
-                                                            ),
-                                                        child: Icon(
-                                                          Icons.touch_app,
-                                                          color: Colors.white,
-                                                        ),
+                                                      child: Icon(
+                                                        Icons.touch_app,
+                                                        color: Colors.white,
                                                       ),
                                                     ),
                                                   ),
-                                                  if (_isActionInProgress)
-                                                    SizedBox(
-                                                      height: 40,
-                                                      width: 40,
-                                                      child:
-                                                          CircularProgressIndicator(
-                                                            color: Colors.white,
-                                                            strokeWidth: 3,
-                                                          ),
-                                                    ),
-                                                ],
-                                              ),
+                                                ),
+                                                if (_isActionInProgress)
+                                                  SizedBox(
+                                                    height: 40,
+                                                    width: 40,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                          color: Colors.white,
+                                                          strokeWidth: 3,
+                                                        ),
+                                                  ),
+                                              ],
                                             ),
-                                          ],
-                                        ),
-                                        Text(getButtonLabel()),
-                                        SizedBox(height: 20),
-                                        GlassCard(
-                                          padding: const EdgeInsets.all(20),
-                                          borderRadius: BorderRadius.circular(
-                                            12,
                                           ),
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Column(
+                                        ],
+                                      ),
+                                      Text(getButtonLabel()),
+                                      SizedBox(height: 20),
+                                      GlassCard(
+                                        padding: const EdgeInsets.all(20),
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Column(
+                                              children: [
+                                                Icon(Icons.timer),
+                                                Text(
+                                                  _formatTime(
+                                                    eventData['event']?['custom_check_in'] ??
+                                                        '',
+                                                  ),
+                                                ),
+                                                Text("Check In"),
+                                              ],
+                                            ),
+                                            Column(
+                                              children: [
+                                                Icon(Icons.timer),
+                                                Text(
+                                                  _formatTime(
+                                                    eventData['event']?['custom_check_out'] ??
+                                                        '',
+                                                  ),
+                                                ),
+                                                Text("Check Out"),
+                                              ],
+                                            ),
+                                            SizedBox(
+                                              width: 90,
+                                              child: Column(
                                                 children: [
                                                   Icon(Icons.timer),
                                                   Text(
-                                                    _formatTime(
+                                                    _calculateWorkingHours(
                                                       eventData['event']?['custom_check_in'] ??
                                                           '',
-                                                    ),
-                                                  ),
-                                                  Text("Check In"),
-                                                ],
-                                              ),
-                                              Column(
-                                                children: [
-                                                  Icon(Icons.timer),
-                                                  Text(
-                                                    _formatTime(
                                                       eventData['event']?['custom_check_out'] ??
                                                           '',
                                                     ),
                                                   ),
-                                                  Text("Check Out"),
+
+                                                  Text("Working Hrs"),
                                                 ],
                                               ),
-                                              SizedBox(
-                                                width: 90,
-                                                child: Column(
-                                                  children: [
-                                                    Icon(Icons.timer),
-                                                    Text(
-                                                      _calculateWorkingHours(
-                                                        eventData['event']?['custom_check_in'] ??
-                                                            '',
-                                                        eventData['event']?['custom_check_out'] ??
-                                                            '',
-                                                      ),
-                                                    ),
-
-                                                    Text("Working Hrs"),
-                                                  ],
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              RefreshIndicator(
-                                onRefresh: () async {
-                                  await _checkPing();
-                                  _fetchData();
-                                },
-                                child: SingleChildScrollView(
-                                  physics:
-                                      const AlwaysScrollableScrollPhysics(),
-                                  padding: const EdgeInsets.all(16),
-                                  child: Container(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        SizedBox(height: 20),
-
-                                        Text(
-                                          'Name:${eventData['event']?['name'] ?? ''}',
-                                        ),
-                                        SizedBox(height: 20),
-                                        Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Text(
-                                              (eventData['reference_details'] !=
-                                                          null &&
-                                                      eventData['reference_details']
-                                                          .isNotEmpty)
-                                                  ? 'Mobile Number: ${eventData['reference_details'][0]['contact_mobile'] ?? 'null'}'
-                                                  : 'Mobile Number: null',
                                             ),
-                                            if (eventData['reference_details'] !=
-                                                    null &&
-                                                eventData['reference_details']
-                                                    .isNotEmpty &&
-                                                eventData['reference_details'][0]['contact_mobile'] !=
-                                                    null &&
-                                                eventData['reference_details'][0]['contact_mobile']
-                                                    .toString()
-                                                    .isNotEmpty)
-                                              Row(
-                                                children: [
-                                                  IconButton(
-                                                    icon: const Icon(
-                                                      Icons.call,
-                                                    ),
-                                                    onPressed: () {
-                                                      final phone =
-                                                          eventData['reference_details'][0]['contact_mobile'];
-                                                      launchDialer(phone);
-                                                    },
-                                                  ),
-                                                  IconButton(
-                                                    icon: FaIcon(
-                                                      FontAwesomeIcons.whatsapp,
-                                                      color: Colors.green,
-                                                    ),
-
-                                                    onPressed: () {
-                                                      final phone =
-                                                          eventData['reference_details'][0]['contact_mobile'];
-                                                      openWhatsAppChat(phone);
-                                                    },
-                                                  ),
-                                                ],
-                                              ),
                                           ],
                                         ),
-                                        SizedBox(height: 20),
-
-                                        Text(
-                                          'Title:${_getParticipantsTitles()}',
-                                        ),
-                                        SizedBox(height: 20),
-                                        Text(
-                                          (eventData['reference_details'] !=
-                                                      null &&
-                                                  eventData['reference_details']
-                                                      .isNotEmpty)
-                                              ? 'Product Enquired:${eventData['reference_details'][0]['custom_product_enquired']}'
-                                              : 'Product Enquired:null',
-                                        ),
-                                        SizedBox(height: 20),
-
-                                        Text(
-                                          'Distance Travelled:${eventData['event']?['custom_distance'] ?? ''}',
-                                        ),
-                                        SizedBox(height: 20),
-
-                                        Text(
-                                          'Event Type:${eventData['event']?['event_type'] ?? ''}',
-                                        ),
-                                        SizedBox(height: 20),
-
-                                        Text(
-                                          'Subject:${eventData['event']?['subject'] ?? ''}',
-                                        ),
-                                        SizedBox(height: 20),
-
-                                        Text('Owner:$_eventOwnerDisplayName'),
-                                      ],
-                                    ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ),
-                            ],
-                          ),
+                            ),
+                            PullToRefresh(
+                              onRefresh: () async {
+                                await _checkPing();
+                                _fetchData();
+                              },
+                              child: SingleChildScrollView(
+                                physics: const AlwaysScrollableScrollPhysics(
+                                  parent: ClampingScrollPhysics(),
+                                ),
+                                padding: const EdgeInsets.all(16),
+                                child: Container(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      SizedBox(height: 20),
+
+                                      Text(
+                                        'Name:${eventData['event']?['name'] ?? ''}',
+                                      ),
+                                      SizedBox(height: 20),
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text(
+                                            (eventData['reference_details'] !=
+                                                        null &&
+                                                    eventData['reference_details']
+                                                        .isNotEmpty)
+                                                ? 'Mobile Number: ${eventData['reference_details'][0]['contact_mobile'] ?? 'null'}'
+                                                : 'Mobile Number: null',
+                                          ),
+                                          if (eventData['reference_details'] !=
+                                                  null &&
+                                              eventData['reference_details']
+                                                  .isNotEmpty &&
+                                              eventData['reference_details'][0]['contact_mobile'] !=
+                                                  null &&
+                                              eventData['reference_details'][0]['contact_mobile']
+                                                  .toString()
+                                                  .isNotEmpty)
+                                            Row(
+                                              children: [
+                                                IconButton(
+                                                  icon: const Icon(Icons.call),
+                                                  onPressed: () {
+                                                    final phone =
+                                                        eventData['reference_details'][0]['contact_mobile'];
+                                                    launchDialer(phone);
+                                                  },
+                                                ),
+                                                IconButton(
+                                                  icon: FaIcon(
+                                                    FontAwesomeIcons.whatsapp,
+                                                    color: Colors.green,
+                                                  ),
+
+                                                  onPressed: () {
+                                                    final phone =
+                                                        eventData['reference_details'][0]['contact_mobile'];
+                                                    openWhatsAppChat(phone);
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                        ],
+                                      ),
+                                      SizedBox(height: 20),
+
+                                      Text('Title:${_getParticipantsTitles()}'),
+                                      SizedBox(height: 20),
+                                      Text(
+                                        (eventData['reference_details'] !=
+                                                    null &&
+                                                eventData['reference_details']
+                                                    .isNotEmpty)
+                                            ? 'Product Enquired:${eventData['reference_details'][0]['custom_product_enquired']}'
+                                            : 'Product Enquired:null',
+                                      ),
+                                      SizedBox(height: 20),
+
+                                      Text(
+                                        'Distance Travelled:${eventData['event']?['custom_distance'] ?? ''}',
+                                      ),
+                                      SizedBox(height: 20),
+
+                                      Text(
+                                        'Event Type:${eventData['event']?['event_type'] ?? ''}',
+                                      ),
+                                      SizedBox(height: 20),
+
+                                      Text(
+                                        'Subject:${eventData['event']?['subject'] ?? ''}',
+                                      ),
+                                      SizedBox(height: 20),
+
+                                      Text('Owner:$_eventOwnerDisplayName'),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
       ),

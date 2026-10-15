@@ -111,6 +111,83 @@ class ExpenseClaimCreationResult {
 
 class ExpenseClaimApi {
   static const _method = 'create_expense_claim_from_mobile';
+  static String? _formSession;
+  static Uri? _formEndpoint;
+  static String? _csrfToken;
+
+  static Future<void> _assertSession(String sid) async {
+    if (await SessionAuthApi.getSessionId() != sid ||
+        (_formEndpoint != null &&
+            _formEndpoint != _endpoint('api/method/$_method'))) {
+      throw StateError(
+        'Your session changed. Reopen the Expense Claim form and try again.',
+      );
+    }
+  }
+
+  static Future<String> _loadCsrfToken(String sid) async {
+    var uri = _endpoint('api/method/$_method').resolve('/app');
+    final client = http.Client();
+    try {
+      for (var redirects = 0; redirects <= 3; redirects++) {
+        await _assertSession(sid);
+        final response = await (() async {
+          final streamed = await client.send(
+            http.Request('GET', uri)
+              ..headers.addAll({
+                'Accept': 'text/html',
+                'Cookie': 'sid=$sid',
+                'Cache-Control': 'no-cache, no-store',
+              })
+              ..followRedirects = false,
+          );
+          return http.Response.fromStream(streamed);
+        })().timeout(const Duration(seconds: 20));
+        await _assertSession(sid);
+        if ({301, 302, 303, 307, 308}.contains(response.statusCode)) {
+          final location = response.headers['location'];
+          if (location == null) break;
+          final next = uri.resolve(location);
+          if (next.origin != uri.origin || next.userInfo.isNotEmpty) {
+            throw StateError(
+              'ERP redirected to a different site. Check SITE_URL.',
+            );
+          }
+          uri = next;
+          continue;
+        }
+        if (response.statusCode == 200) {
+          final token =
+              RegExp(
+                r'''frappe\.csrf_token\s*=\s*["']([^"']+)["']''',
+              ).firstMatch(response.body)?.group(1)?.trim() ??
+              '';
+          if (token.isNotEmpty) return token;
+        }
+        break;
+      }
+    } finally {
+      client.close();
+    }
+    throw StateError(
+      'Could not initialize the Expense Claim session token. Sign in again and reopen the form.',
+    );
+  }
+
+  static bool _isCsrfFailure(http.Response response) {
+    if (response.statusCode == 200) return false;
+    try {
+      final decoded = jsonDecode(response.body);
+      return decoded is Map &&
+          (decoded['exc_type'] == 'CSRFTokenError' ||
+              decoded['exception']?.toString().startsWith(
+                    'frappe.exceptions.CSRFTokenError:',
+                  ) ==
+                  true);
+    } catch (_) {
+      return false;
+    }
+  }
 
   static Uri _endpoint(String path) {
     final siteUrl = dotenv.env['SITE_URL']?.trim();
@@ -149,8 +226,11 @@ class ExpenseClaimApi {
 
   static String _serverError(dynamic decoded, int statusCode) {
     if (decoded is Map) {
-      final message = decoded['message']?.toString();
-      if (message != null && message.isNotEmpty) return message;
+      final rawMessage = decoded['message'];
+      final message =
+          rawMessage is Map
+              ? rawMessage['message']?.toString()
+              : rawMessage?.toString();
       final serverMessages = decoded['_server_messages'];
       if (serverMessages is String && serverMessages.isNotEmpty) {
         try {
@@ -168,6 +248,7 @@ class ExpenseClaimApi {
           // Use Frappe's standard exception field below.
         }
       }
+      if (message != null && message.isNotEmpty) return message;
       final exception = decoded['exception']?.toString();
       if (exception != null && exception.isNotEmpty) {
         return exception
@@ -198,7 +279,15 @@ class ExpenseClaimApi {
           },
         )
         .timeout(const Duration(seconds: 25));
-    return ExpenseClaimFormOptions.fromJson(_decodeMessage(response));
+    if (await SessionAuthApi.getSessionId() != sid ||
+        uri != _endpoint('api/method/$_method')) {
+      throw StateError('Your session changed. Reopen the Expense Claim form.');
+    }
+    final options = ExpenseClaimFormOptions.fromJson(_decodeMessage(response));
+    _formSession = sid;
+    _formEndpoint = uri;
+    _csrfToken = options.csrfToken.trim();
+    return options;
   }
 
   static Future<ExpenseClaimCreationResult> submitClaim({
@@ -233,6 +322,9 @@ class ExpenseClaimApi {
     required List<String> billPaths,
     bool supportsMultipleExpenses = false,
   }) async {
+    if (employee.trim().isEmpty || expenseApprover.trim().isEmpty) {
+      throw StateError('Choose an Employee and Expense Approver.');
+    }
     if (expenses.isEmpty) {
       throw StateError('Add at least one expense.');
     }
@@ -268,45 +360,65 @@ class ExpenseClaimApi {
       }
     }
 
-    final request = http.MultipartRequest(
-      'POST',
-      _endpoint('api/method/$_method'),
-    );
-    request.headers.addAll({
-      'Accept': 'application/json',
-      'Cookie': 'sid=$sid',
-      if (csrfToken.isNotEmpty) 'X-Frappe-CSRF-Token': csrfToken,
-    });
-    request.fields.addAll({
-      'employee': employee,
-      'expense_approver': expenseApprover,
-      ...expenses.first.toJson(),
-      if (supportsMultipleExpenses)
-        'expenses': jsonEncode(expenses.map((row) => row.toJson()).toList()),
-    });
-    for (final billPath in billPaths) {
-      request.files.add(
-        await http.MultipartFile.fromPath(
-          'file',
-          billPath,
-          filename: path.basename(billPath),
-        ),
-      );
+    final endpoint = _endpoint('api/method/$_method');
+    if (_formSession != null &&
+        (_formSession != sid || _formEndpoint != endpoint)) {
+      throw StateError('Your session changed. Reopen the Expense Claim form.');
+    }
+    var token = (_csrfToken ?? csrfToken).trim();
+    if (token.isEmpty) token = await _loadCsrfToken(sid);
+
+    Future<http.Response> post(String currentToken) async {
+      await _assertSession(sid);
+      // Multipart streams are consumed once. Rebuild every file for the
+      // single retry that is safe after Frappe rejects CSRF before execution.
+      final request = http.MultipartRequest('POST', endpoint)
+        ..followRedirects = false;
+      request.headers.addAll({
+        'Accept': 'application/json',
+        'Cookie': 'sid=$sid',
+        'X-Frappe-CSRF-Token': currentToken,
+      });
+      request.fields.addAll({
+        'employee': employee.trim(),
+        'expense_approver': expenseApprover.trim(),
+        ...expenses.first.toJson(),
+        if (supportsMultipleExpenses)
+          'expenses': jsonEncode(expenses.map((row) => row.toJson()).toList()),
+        'csrf_token': currentToken,
+      });
+      for (final billPath in billPaths) {
+        request.files.add(
+          await http.MultipartFile.fromPath(
+            'file',
+            billPath,
+            filename: path.basename(billPath),
+          ),
+        );
+      }
+      await _assertSession(sid);
+      final client = http.Client();
+      try {
+        return await client
+            .send(request)
+            .then(http.Response.fromStream)
+            .timeout(const Duration(seconds: 90));
+      } finally {
+        client.close();
+      }
     }
 
-    // Submit all expenses and bill images together. The server attaches every
-    // image to the newly created claim before returning, so a delayed claim
-    // response cannot skip a separate upload request.
-    final client = http.Client();
-    final http.Response response;
-    try {
-      response = await client
-          .send(request)
-          .then(http.Response.fromStream)
-          .timeout(const Duration(seconds: 90));
-    } finally {
-      client.close();
+    var response = await post(token);
+    // Never repeat timeouts, validation errors or ambiguous server failures:
+    // the claim and bills may already have been saved.
+    if (_isCsrfFailure(response)) {
+      token = await _loadCsrfToken(sid);
+      response = await post(token);
     }
+    await _assertSession(sid);
+    _formSession = sid;
+    _formEndpoint = endpoint;
+    _csrfToken = token;
     final message = _decodeMessage(response);
     final claimName = message['name']?.toString() ?? '';
     final expenseRow = message['expense_row']?.toString() ?? '';

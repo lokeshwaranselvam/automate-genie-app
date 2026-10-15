@@ -136,7 +136,7 @@ class _LoginState extends State<Login> {
     final password = _passwordController.text;
 
     if (username.isEmpty) {
-      Warning.show(context, 'Please enter your Employee ID.', 'Warning');
+      Warning.show(context, 'Please enter your UserID or Email.', 'Warning');
       return;
     }
     if (password.trim().isEmpty) {
@@ -158,17 +158,12 @@ class _LoginState extends State<Login> {
         return;
       }
 
+      unawaited(FcmDeviceApi.requestPermissionAndRegister(rotateToken: true));
       Warning.show(context, 'Login Successful', 'Success');
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder:
-              (context) => FaceEnrollmentGate(
-                child: Homescreen(),
-                onReady:
-                    () =>
-                        unawaited(FcmDeviceApi.requestPermissionAndRegister()),
-              ),
+          builder: (context) => FaceEnrollmentGate(child: Homescreen()),
         ),
       );
     } catch (error) {
@@ -200,7 +195,7 @@ class _LoginState extends State<Login> {
                         const SizedBox(height: 8),
                         _buildBrand(),
                         const SizedBox(height: 35),
-                        _buildEmployeeField(),
+                        _buildUsernameField(),
                         const SizedBox(height: 19),
                         _buildPasswordField(),
                         const SizedBox(height: 8),
@@ -249,19 +244,22 @@ class _LoginState extends State<Login> {
     );
   }
 
-  Widget _buildEmployeeField() {
+  Widget _buildUsernameField() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _FieldLabel('Employee ID'),
+        const _FieldLabel('UserID or Email'),
         const SizedBox(height: 7),
         TextField(
           controller: _emailController,
           focusNode: _emailFocusNode,
           textInputAction: TextInputAction.next,
+          autocorrect: false,
+          enableSuggestions: false,
+          textCapitalization: TextCapitalization.none,
           autofillHints: const [AutofillHints.username],
           style: const TextStyle(fontSize: 15, color: _ink),
-          decoration: _inputDecoration(hintText: 'Enter your Employee ID'),
+          decoration: _inputDecoration(hintText: 'Enter your UserID or Email'),
         ),
       ],
     );
@@ -372,8 +370,6 @@ class _LoginState extends State<Login> {
       ),
     );
   }
-
-
 }
 
 class _FieldLabel extends StatelessWidget {

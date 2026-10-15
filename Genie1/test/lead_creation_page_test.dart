@@ -28,8 +28,14 @@ void main() {
           final fields = find.byType(TextFormField);
           await tester.enterText(fields.at(0), 'Customer One');
           await tester.enterText(fields.at(1), '9876543210');
-          await tester.enterText(fields.at(2), 'Chennai');
-          await tester.enterText(fields.at(3), 'New doors');
+          await tester.enterText(fields.at(2), '+91 98765 43210');
+          await tester.enterText(fields.at(3), 'Chennai');
+          await tester.enterText(fields.at(4), 'New doors');
+          expect(
+            find.text('Product Enquired *', findRichText: true),
+            findsOneWidget,
+          );
+          expect(find.text('Product Category'), findsNothing);
           final dropdowns = find.byType(DropdownButtonFormField<String>);
           await tester.tap(dropdowns.at(0));
           await tester.pumpAndSettle();
@@ -39,6 +45,24 @@ void main() {
           await tester.pumpAndSettle();
           await tester.tap(find.text('Website').last);
           await tester.pumpAndSettle();
+
+          await tester
+              .widget<RefreshIndicator>(find.byType(RefreshIndicator))
+              .onRefresh();
+          await tester.pumpAndSettle();
+          expect(find.text('Customer One'), findsOneWidget);
+          expect(
+            tester
+                .widget<DropdownButtonFormField<String>>(dropdowns.at(0))
+                .initialValue,
+            'Doors',
+          );
+          expect(
+            tester
+                .widget<DropdownButtonFormField<String>>(dropdowns.at(1))
+                .initialValue,
+            'Website',
+          );
 
           final button = tester.widget<FilledButton>(find.byType(FilledButton));
           button.onPressed!();
@@ -52,7 +76,8 @@ void main() {
           expect(submittedFields?['first_name'], 'Customer One');
           expect(submittedFields?['custom_product_enquired'], 'Doors');
           expect(submittedFields?['custom_source'], 'Website');
-          expect(gets, 1);
+          expect(submittedFields?['whatsapp_no'], '+919876543210');
+          expect(gets, 2);
           pending.complete(
             http.Response(
               jsonEncode({
@@ -64,6 +89,10 @@ void main() {
           await tester.pumpAndSettle();
           expect(find.text('Lead created successfully!'), findsOneWidget);
           expect(find.text('Customer One'), findsNothing);
+          expect(
+            tester.widget<TextFormField>(fields.at(2)).controller!.text,
+            isEmpty,
+          );
           expect(tester.takeException(), isNull);
           await tester.tap(find.text('OK'));
           await tester.pumpAndSettle();

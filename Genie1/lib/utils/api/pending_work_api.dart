@@ -9,7 +9,80 @@ import 'session_auth.dart';
 /// evaluates frappe.session.user on the server.
 class PendingWorkApi {
   static String? _csrfToken;
+  static String? _taskSession;
+  static Uri? _taskEndpoint;
   static const _taskApiMethod = 'my_assigned_tasks';
+
+  static Future<void> _assertTaskSession(String sid, Uri endpoint) async {
+    if (await SessionAuthApi.getSessionId() != sid ||
+        _endpoint(_taskApiMethod) != endpoint) {
+      throw StateError('Your session changed. Refresh My Tasks and try again.');
+    }
+  }
+
+  static Future<String> _loadTaskCsrf(String sid, Uri endpoint) async {
+    var uri = endpoint.resolve('/app');
+    final client = http.Client();
+    try {
+      for (var redirects = 0; redirects <= 3; redirects++) {
+        await _assertTaskSession(sid, endpoint);
+        final response = await (() async {
+          final stream = await client.send(
+            http.Request('GET', uri)
+              ..headers.addAll({
+                'Accept': 'text/html',
+                'Cookie': 'sid=$sid',
+                'Cache-Control': 'no-cache, no-store',
+              })
+              ..followRedirects = false,
+          );
+          return http.Response.fromStream(stream);
+        })().timeout(const Duration(seconds: 25));
+        await _assertTaskSession(sid, endpoint);
+        if ({301, 302, 303, 307, 308}.contains(response.statusCode)) {
+          final location = response.headers['location'];
+          if (location == null) break;
+          final next = uri.resolve(location);
+          if (next.origin != uri.origin || next.userInfo.isNotEmpty) {
+            throw StateError(
+              'ERP redirected to a different site. Check SITE_URL.',
+            );
+          }
+          uri = next;
+          continue;
+        }
+        if (response.statusCode == 200) {
+          final token =
+              RegExp(
+                r'''frappe\.csrf_token\s*=\s*["']([^"']+)["']''',
+              ).firstMatch(response.body)?.group(1)?.trim() ??
+              '';
+          if (token.isNotEmpty) return token;
+        }
+        break;
+      }
+    } finally {
+      client.close();
+    }
+    throw StateError(
+      'ERP could not initialize the task session token. Sign in again and retry.',
+    );
+  }
+
+  static bool _isCsrfFailure(http.Response response) {
+    if (response.statusCode == 200) return false;
+    try {
+      final body = jsonDecode(response.body);
+      return body is Map &&
+          (body['exc_type'] == 'CSRFTokenError' ||
+              body['exception']?.toString().startsWith(
+                    'frappe.exceptions.CSRFTokenError:',
+                  ) ==
+                  true);
+    } catch (_) {
+      return false;
+    }
+  }
 
   static Uri _endpoint(String method, {Map<String, String>? query}) {
     final siteUrl = dotenv.env['SITE_URL']?.trim();
@@ -110,7 +183,8 @@ class PendingWorkApi {
     }
 
     // This dedicated endpoint always scopes results to frappe.session.user.
-    final uri = _endpoint(_taskApiMethod, query: {'action': 'get'});
+    final endpoint = _endpoint(_taskApiMethod);
+    final uri = endpoint.replace(queryParameters: {'action': 'get'});
     final response = await http
         .get(
           uri,
@@ -137,8 +211,6 @@ class PendingWorkApi {
         'The task service returned an invalid response.',
       );
     }
-    _csrfToken = message is Map ? message['csrf_token']?.toString() : null;
-
     final tasks =
         rawTasks.whereType<Map>().map((row) {
           return Map<String, dynamic>.from(row);
@@ -155,6 +227,12 @@ class PendingWorkApi {
         'The task API response does not match the signed-in user or is not restricted to assigned tasks.',
       );
     }
+    await _assertTaskSession(sid, endpoint);
+    final token = message['csrf_token']?.toString().trim() ?? '';
+    if (_taskSession != sid || _taskEndpoint != endpoint) _csrfToken = null;
+    _taskSession = sid;
+    _taskEndpoint = endpoint;
+    if (token.isNotEmpty) _csrfToken = token;
     return tasks;
   }
 
@@ -174,21 +252,42 @@ class PendingWorkApi {
       throw const FormatException('The task is missing its ERP ID.');
     }
 
-    final response = await http
-        .post(
-          _endpoint(
-            _taskApiMethod,
-            query: {'action': 'complete', 'task_id': taskId},
-          ),
-          headers: {
-            'Accept': 'application/json',
-            'Cookie': 'sid=$sid',
-            'Cache-Control': 'no-cache, no-store',
-            if (_csrfToken != null && _csrfToken!.isNotEmpty)
-              'X-Frappe-CSRF-Token': _csrfToken!,
-          },
-        )
-        .timeout(const Duration(seconds: 40));
+    final endpoint = _endpoint(_taskApiMethod);
+    if (_taskSession != null &&
+        (_taskSession != sid || _taskEndpoint != endpoint)) {
+      throw StateError('Your session changed. Refresh My Tasks and try again.');
+    }
+    var token = _csrfToken ?? '';
+    if (token.isEmpty) token = await _loadTaskCsrf(sid, endpoint);
+    Future<http.Response> post(String currentToken) async {
+      await _assertTaskSession(sid, endpoint);
+      return http
+          .post(
+            endpoint.replace(
+              queryParameters: {'action': 'complete', 'task_id': taskId},
+            ),
+            headers: {
+              'Accept': 'application/json',
+              'Cookie': 'sid=$sid',
+              'Cache-Control': 'no-cache, no-store',
+              'X-Frappe-CSRF-Token': currentToken,
+            },
+            body: {'csrf_token': currentToken},
+          )
+          .timeout(const Duration(seconds: 40));
+    }
+
+    var response = await post(token);
+    // CSRF is rejected before the task API executes. Never automatically
+    // retry timeouts, permission failures, or ordinary validation errors.
+    if (_isCsrfFailure(response)) {
+      token = await _loadTaskCsrf(sid, endpoint);
+      response = await post(token);
+    }
+    await _assertTaskSession(sid, endpoint);
+    _taskSession = sid;
+    _taskEndpoint = endpoint;
+    _csrfToken = token;
 
     if (response.statusCode != 200) {
       throw StateError(
