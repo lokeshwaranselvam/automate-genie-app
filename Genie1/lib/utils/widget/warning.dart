@@ -2,6 +2,8 @@ import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:collection';
 
 import 'package:flutter/material.dart';
+import '../../Screen/session_webview.dart';
+import '../short_visit_checkout_notice.dart';
 
 class Warning extends StatelessWidget {
   final String message;
@@ -46,6 +48,10 @@ class Warning extends StatelessWidget {
     }
 
     _showingPopup = true;
+    final shortVisitNotice =
+        request.type == 'Success'
+            ? null
+            : ShortVisitCheckoutNotice.fromMessage(request.message);
     final color = switch (request.type) {
       'Warning' => Colors.orange.shade700,
       'Error' => Colors.red.shade700,
@@ -105,7 +111,7 @@ class Warning extends StatelessWidget {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    title,
+                    shortVisitNotice == null ? title : 'Checkout restricted',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 20,
@@ -117,12 +123,37 @@ class Warning extends StatelessWidget {
                     fit: FlexFit.loose,
                     child: SingleChildScrollView(
                       child: Text(
-                        request.message,
-                        textAlign: TextAlign.center,
+                        shortVisitNotice?.message ?? request.message,
+                        textAlign:
+                            shortVisitNotice == null
+                                ? TextAlign.center
+                                : TextAlign.start,
                         style: const TextStyle(fontSize: 15, height: 1.4),
                       ),
                     ),
                   ),
+                  if (shortVisitNotice != null) ...[
+                    const SizedBox(height: 14),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.of(dialogContext).pop();
+                        if (!request.context.mounted) return;
+                        Navigator.of(request.context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder:
+                                (_) => const SessionWebView(
+                                  url: ShortVisitCheckoutNotice.url,
+                                  title: 'SVR',
+                                ),
+                          ),
+                        );
+                      },
+                      child: const Text(
+                        ShortVisitCheckoutNotice.actionLabel,
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 24),
                   FilledButton(
                     onPressed:

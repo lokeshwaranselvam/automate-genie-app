@@ -1,14 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 /// Registers this installation's FCM token against the logged-in Frappe user.
@@ -65,16 +63,27 @@ class FcmDeviceApi {
       }
 
       await _assertSession(sid);
+      String? previousToken;
       if (rotateToken) {
         // Firebase owns token generation; invalidate the previous registration
         // only after successful password authentication, never on app restore.
-        await FirebaseMessaging.instance.deleteToken();
-        await _assertSession(sid);
+        previousToken = await FirebaseMessaging.instance.getToken();
       }
-      final token = await FirebaseMessaging.instance.getToken();
+      String? token;
+      for (var attempt = 0; attempt < (rotateToken ? 2 : 1); attempt++) {
+        if (rotateToken) {
+          await FirebaseMessaging.instance.deleteToken();
+          await _assertSession(sid);
+        }
+        token = await FirebaseMessaging.instance.getToken();
+        if (token == null || token.isEmpty || token != previousToken) break;
+      }
       if (token == null || token.isEmpty) {
         debugPrint('FCM did not return a device token.');
         return;
+      }
+      if (rotateToken && token == previousToken) {
+        throw StateError('Firebase did not rotate the FCM token after login.');
       }
       await registerToken(token, expectedSessionId: sid);
     } catch (error) {
@@ -83,32 +92,7 @@ class FcmDeviceApi {
     }
   }
 
-  // A separate public installation ID: never disclose the bearer credential
-  // used by MobileLoginDevice to release a single-phone login binding.
-  static const _storage = FlutterSecureStorage();
-  static Future<String>? _deviceIdRequest;
   static Future<void>? _permissionRequest;
-
-  static Future<String> _deviceId() async {
-    final request =
-        _deviceIdRequest ??=
-            (() async {
-              const key = 'genie_fcm_device_id';
-              final saved = await _storage.read(key: key);
-              if (saved != null && saved.isNotEmpty) return saved;
-              final random = Random.secure();
-              final id = base64UrlEncode(
-                List.generate(24, (_) => random.nextInt(256)),
-              ).replaceAll('=', '');
-              await _storage.write(key: key, value: id);
-              return id;
-            })();
-    try {
-      return await request;
-    } finally {
-      if (identical(_deviceIdRequest, request)) _deviceIdRequest = null;
-    }
-  }
 
   static Future<void> _assertSession(String sid) async {
     if ((await SharedPreferences.getInstance()).getString('session_sid') !=
@@ -207,7 +191,7 @@ class FcmDeviceApi {
       final metadata = {
         'fcm_token': fcmToken,
         'platform': Platform.isAndroid ? 'android' : 'ios',
-        'device_id': await _deviceId(),
+        'device_id': fcmToken.split(':').first,
         'app_version': package.version,
         'build_version': package.buildNumber,
       };

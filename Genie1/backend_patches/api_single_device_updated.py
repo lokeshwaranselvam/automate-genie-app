@@ -576,7 +576,7 @@ def event_checkin(user, event_id, lat=None, lng=None, address= None):
 
 
 @frappe.whitelist(allow_guest = False)
-def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hrs = None,distance = None,last_lat_lng = None,location_logs=None):
+def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hrs = None,distance = None,last_lat_lng = None,location_logs=None, custom_otp=None):
     try:
 
 
@@ -587,6 +587,13 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
 
         if doc.custom_check_out:
             return {"status": "error", "message": "Already Checked Out"}
+
+        otp = custom_otp if custom_otp is not None else doc.get("custom_otp")
+        if not isinstance(otp, str) or not otp.strip():
+            return {"status": "error", "message": "OTP is required before checking out."}
+        if len(otp.strip()) != 4 or otp.strip().strip("0123456789"):
+            return {"status": "error", "message": "OTP must contain exactly 4 digits."}
+        doc.custom_otp = otp.strip()
 
         current_time = now_datetime().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -729,7 +736,7 @@ def generate_keys(user: str):
 def send_otp(event_id):
     try:
         event = frappe.get_doc("Event", event_id)
-        otp = random.randint(100000, 999999)
+        otp = random.randint(1000, 9999)
         event.custom_otp = otp
         event.save(ignore_permissions = True)
         # frappe.db.set_value("Event",event_id,'custom_otp',otp)
@@ -747,6 +754,9 @@ def send_otp(event_id):
 def verify_otp(otp,event_id):
     if not otp or not event_id:
         return {"status": "error", "message": "Missing OTP or Event ID"}
+
+    if len(str(otp).strip()) != 4 or str(otp).strip().strip("0123456789"):
+        return {"status": "error", "message": "OTP must contain exactly 4 digits."}
 
     try:
         event = frappe.get_doc("Event", event_id)

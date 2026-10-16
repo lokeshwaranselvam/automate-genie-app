@@ -444,6 +444,10 @@ elif action == "create_event":
         frappe.throw("Event is missing its ends_on field.")
     if product_enquired and "custom_product_enquired" not in event_fields:
         frappe.throw("Event is missing its custom_product_enquired field.")
+    if "location" not in event_fields and "custom_location_type" not in event_fields:
+        frappe.throw("Event needs a location field to save the selected Home/Site/Others type.")
+    if "custom_location" not in event_fields and "custom_validate" not in event_fields:
+        frappe.throw("Event needs a map location field to save the selected customer coordinates.")
 
     category_config = get_event_category_config()
     if category not in category_config["options"]:
@@ -455,8 +459,10 @@ elif action == "create_event":
     event_doc.starts_on = starts_on
     event_doc.ends_on = ends_on
     event_doc.set(category_field, category)
+    # Keep the human-readable type separate from the map URL. The app's
+    # existing updateEventLocationType also uses Event.location for this type.
     if "location" in event_fields:
-        event_doc.location = saved_location.location
+        event_doc.location = saved_location.location_type
     if "custom_location" in event_fields:
         event_doc.custom_location = saved_location.location
     if "custom_location_type" in event_fields:
@@ -530,6 +536,7 @@ elif action == "create_event":
         "event": event_doc.name,
         "opportunity": opportunity.name,
         "location_row": saved_location.name,
+        "location_type": saved_location.location_type,
         "csrf_token": frappe.session.data.csrf_token,
     }
 

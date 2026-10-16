@@ -6,7 +6,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/test.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/utils/api/fcm_device_api.dart';
 import 'package:http/http.dart' as http;
@@ -30,9 +29,6 @@ void main() {
   });
   setUp(() {
     SharedPreferences.setMockInitialValues({'session_sid': 'login-sid'});
-    FlutterSecureStorage.setMockInitialValues({
-      'genie_mobile_installation_key': 'private-login-key',
-    });
     PackageInfo.setMockInitialValues(
       appName: 'Genie',
       packageName: 'test.genie',
@@ -50,17 +46,16 @@ void main() {
     200,
   );
   test(
-    'every registration sends all metadata with a stable independent device ID',
+    'every registration sends the FCM token prefix as the device ID',
     () async {
       final records = <Map>[];
       await http.runWithClient(
         () async {
-          await FcmDeviceApi.registerToken('token-one');
-          // Device identity survives ordinary preference cleanup at logout.
+          await FcmDeviceApi.registerToken('token-one:token-data-one');
           SharedPreferences.setMockInitialValues({
             'session_sid': 'second-login-sid',
           });
-          await FcmDeviceApi.registerToken('token-two');
+          await FcmDeviceApi.registerToken('token-two:token-data-two');
         },
         () => MockClient((request) async {
           if (request.url.path == '/app') {
@@ -78,9 +73,8 @@ void main() {
         }),
       );
       expect(records, hasLength(2));
-      expect(records[0]['device_id'], matches(RegExp(r'^[A-Za-z0-9_-]{32}$')));
-      expect(records[0]['device_id'], records[1]['device_id']);
-      expect(records[0]['device_id'], isNot('private-login-key'));
+      expect(records[0]['device_id'], 'token-one');
+      expect(records[1]['device_id'], 'token-two');
       for (final record in records) {
         expect(record['app_version'], '1.2.3');
         expect(record['build_version'], '42');
@@ -97,8 +91,8 @@ void main() {
         ); // Server clock owns time.
       }
       expect(records.map((record) => record['fcm_token']), [
-        'token-one',
-        'token-two',
+        'token-one:token-data-one',
+        'token-two:token-data-two',
       ]);
     },
   );
@@ -137,8 +131,9 @@ void main() {
                   token = 'fresh-token-${calls.length}';
                   return <String, dynamic>{};
                 }
-                if (call.method == 'Messaging#getToken')
+                if (call.method == 'Messaging#getToken') {
                   return {'token': token};
+                }
                 return null;
               },
             );
@@ -167,19 +162,21 @@ void main() {
         if (scenario == 'login') {
           expect(calls, [
             'Messaging#requestPermission',
+            'Messaging#getToken',
             'Messaging#deleteToken',
             'Messaging#getToken',
             'Messaging#requestPermission',
+            'Messaging#getToken',
             'Messaging#deleteToken',
             'Messaging#getToken',
           ]);
-          expect(tokens, ['fresh-token-2', 'fresh-token-5']);
+          expect(tokens, ['fresh-token-3', 'fresh-token-7']);
         } else if (scenario == 'restore') {
           expect(calls, ['Messaging#requestPermission', 'Messaging#getToken']);
           expect(tokens, ['existing-token']);
         } else {
           expect(tokens, isEmpty);
-          expect(calls.contains('Messaging#getToken'), isFalse);
+          expect(calls.contains('Messaging#getToken'), scenario == 'failure');
           if (scenario != 'failure') {
             expect(calls.contains('Messaging#deleteToken'), isFalse);
           }
@@ -187,6 +184,46 @@ void main() {
       },
     );
   }
+
+  test(
+    'login retries when Firebase returns the old token after deletion',
+    () async {
+      var token = 'existing-token';
+      var deletions = 0;
+      final uploads = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('plugins.flutter.io/firebase_messaging'),
+            (call) async {
+              if (call.method == 'Messaging#requestPermission') {
+                return {'authorizationStatus': 1};
+              }
+              if (call.method == 'Messaging#deleteToken') {
+                deletions++;
+                if (deletions == 2) token = 'rotated-token';
+                return <String, dynamic>{};
+              }
+              if (call.method == 'Messaging#getToken') return {'token': token};
+              return null;
+            },
+          );
+      await http.runWithClient(
+        () async {
+          await FcmDeviceApi.requestPermissionAndRegister(rotateToken: true);
+          await FcmDeviceApi.requestPermissionAndRegister(rotateToken: true);
+        },
+        () => MockClient((request) async {
+          if (request.url.path == '/app') {
+            return http.Response("frappe.csrf_token = 'csrf';", 200);
+          }
+          uploads.add((jsonDecode(request.body) as Map)['fcm_token'] as String);
+          return success();
+        }),
+      );
+      expect(deletions, 4);
+      expect(uploads, ['rotated-token']);
+    },
+  );
 
   for (final failure in ['csrf', 'validation', 'timeout']) {
     test(

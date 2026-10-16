@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../utils/api/pending_work_api.dart';
 import 'pending_section_page.dart';
+import 'session_webview.dart';
 import '../utils/widget/home_back_button.dart';
 
 const _pendingSections = <_PendingSectionInfo>[
@@ -190,6 +191,36 @@ class _PendingWorkOverviewPageState extends State<PendingWorkOverviewPage> {
                 ],
               ),
               onTap: () => _openSection(section),
+            ),
+          ),
+        );
+      }
+      if (team == 'Sales Team') {
+        teamCards.add(
+          Card(
+            color: Colors.white,
+            child: ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFFEAF3FF),
+                child: Icon(Icons.web_outlined, color: BrandColors.ink),
+              ),
+              title: const Text(
+                'SVR',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () async {
+                await Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder:
+                        (_) => const SessionWebView(
+                          url: 'https://16.itgenie.online/SVR',
+                          title: 'SVR',
+                        ),
+                  ),
+                );
+                if (mounted) _refresh();
+              },
             ),
           ),
         );

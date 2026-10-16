@@ -9,7 +9,7 @@ class LeadCreationApiTest(unittest.TestCase):
     script = (Path(__file__).resolve().parents[1] /
               'frappe_server_scripts/create_lead_from_mobile.py').read_text(encoding='utf-8')
 
-    def run_api(self, whatsapp=None, method='POST', view='', user='sales@example.test', has_field=True):
+    def run_api(self, whatsapp=None, method='POST', view='', user='sales@example.test', has_field=True, has_source=True):
         self.saved = []
         self.queries = []
         values = {
@@ -22,6 +22,8 @@ class LeadCreationApiTest(unittest.TestCase):
             values['whatsapp_no'] = whatsapp
 
         def field(name):
+            if name == 'source' and not has_source:
+                return None
             if name == 'whatsapp_no' and not has_field:
                 return None
             if name in ['custom_source', 'custom_product_enquired']:
@@ -42,7 +44,15 @@ class LeadCreationApiTest(unittest.TestCase):
 
         def new_doc(doctype):
             doc = SimpleNamespace(name='LEAD-1', flags=SimpleNamespace())
-            doc.insert = lambda **kwargs: self.saved.append(doc)
+            if has_source:
+                doc.source = 'Existing standard source default'
+            def insert(**kwargs):
+                # A legacy controller/hook reads the removed attribute during
+                # insertion. The API must initialize it without copying the
+                # custom Select value into an unrelated standard Link field.
+                self.legacy_source = doc.source
+                self.saved.append(doc)
+            doc.insert = insert
             return doc
 
         class Session(dict):
@@ -66,6 +76,18 @@ class LeadCreationApiTest(unittest.TestCase):
         self.assertEqual(response['whatsapp_no'], '+919876543210')
         self.assertEqual(self.saved[0].custom_product_enquired, 'Doors')
         self.assertEqual(self.saved[0].lead_owner, 'sales@example.test')
+
+    def test_removed_standard_source_is_compatible_with_legacy_insert_hook(self):
+        response = self.run_api('9876543210', has_source=False)
+        self.assertIsNone(self.legacy_source)
+        self.assertEqual(self.saved[0].custom_source, 'Website')
+        self.assertEqual(response['custom_source'], 'Website')
+        self.assertEqual(response['status'], 'success')
+
+    def test_existing_standard_source_is_not_overwritten_by_custom_selection(self):
+        self.run_api('9876543210', has_source=True)
+        self.assertEqual(self.legacy_source, 'Existing standard source default')
+        self.assertEqual(self.saved[0].custom_source, 'Website')
 
     def test_whatsapp_is_required(self):
         for number in [None, '', '   ']:

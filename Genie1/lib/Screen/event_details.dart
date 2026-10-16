@@ -9,6 +9,8 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:homegenie/Screen/login.dart';
 
 import '../utils/api/event.dart';
+import '../utils/event_location_selection.dart';
+import '../utils/event_otp.dart';
 import '../utils/api/image_upload_api.dart';
 import '../utils/api/session_auth.dart';
 import '../utils/widget/camera_service.dart';
@@ -37,7 +39,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:homegenie/utils/widget/audio_recording_service.dart';
 import 'package:homegenie/utils/widget/live_location_service.dart';
-import 'package:homegenie/utils/widget/battery_optimization_helper.dart';
 import '../utils/widget/home_back_button.dart';
 
 class EventDetails extends StatefulWidget {
@@ -60,6 +61,7 @@ class _EventDetailsState extends State<EventDetails> {
   List<LatLng> _customerRoutePoints = [];
   File? capturedImage;
   String? selectedLocationType;
+  final TextEditingController _otpController = TextEditingController();
 
   bool _isLoading = false;
   bool _isActionInProgress = false;
@@ -236,6 +238,7 @@ class _EventDetailsState extends State<EventDetails> {
 
   @override
   void dispose() {
+    _otpController.dispose();
     _audioPlayer.dispose();
     GeofenceManager.instance.stopMonitoring();
     super.dispose();
@@ -399,115 +402,21 @@ class _EventDetailsState extends State<EventDetails> {
     }
   }
 
-  void showLocationDialog(VoidCallback onSuccess) {
-    String? tempSelectedLocationType = selectedLocationType;
-    final locationOptions = _getAvailableLocationTypes();
-
-    if (_requiresLocationBeforeCheckIn() && locationOptions.isEmpty) {
+  bool _useSavedEventLocation() {
+    final event = eventData['event'];
+    if (!eventHasCheckInLocation(
+      event is Map ? event : const {},
+      _savedOpportunityLocations,
+    )) {
       Warning.show(
         context,
-        'No saved customer location has valid coordinates. Add a customer location before checking in.',
+        'This event needs a saved location type (Home, Site or Others) and valid coordinates. Update its location before checking in.',
         'Location Required',
       );
-      return;
+      return false;
     }
-
-    if (locationOptions.length == 1) {
-      setState(() {
-        selectedLocationType = locationOptions.single;
-      });
-      onSuccess();
-      return;
-    }
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return PopScope(
-          canPop: false,
-          child: StatefulBuilder(
-            builder: (statefulContext, dialogSetState) {
-              return AlertDialog(
-                title: const Text("Select Location Type"),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DropdownButton<String>(
-                      value: tempSelectedLocationType,
-                      hint: const Text("Select Location"),
-                      isExpanded: true,
-                      items:
-                          locationOptions
-                              .map(
-                                (e) =>
-                                    DropdownMenuItem(value: e, child: Text(e)),
-                              )
-                              .toList(),
-                      onChanged: (value) {
-                        dialogSetState(() {
-                          tempSelectedLocationType = value;
-                        });
-                      },
-                    ),
-                  ],
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(dialogContext);
-                    },
-                    child: const Text("Cancel"),
-                  ),
-                  TextButton(
-                    onPressed: () async {
-                      if (tempSelectedLocationType == null) return;
-
-                      setState(() {
-                        selectedLocationType = tempSelectedLocationType;
-                      });
-
-                      final savedLocation = _getSavedLocationRow(
-                        tempSelectedLocationType,
-                      );
-                      final locationType =
-                          savedLocation?['location_type']?.toString().trim() ??
-                          '';
-                      final shouldUpdateEventLocation =
-                          _requiresLocationBeforeCheckout() &&
-                          locationType.isNotEmpty;
-
-                      if (shouldUpdateEventLocation) {
-                        final isUpdated = await Event.updateEventLocationType(
-                          eventId: widget.eventid,
-                          locationType: locationType,
-                          context: context,
-                        );
-
-                        if (!isUpdated) {
-                          if (mounted) {
-                            Warning.show(
-                              context,
-                              'Unable to update Event location.',
-                              'Error',
-                            );
-                          }
-                          return;
-                        }
-                      }
-
-                      Navigator.pop(dialogContext);
-                      onSuccess();
-                    },
-                    child: const Text("OK"),
-                  ),
-                ],
-              );
-            },
-          ),
-        );
-      },
-    );
+    selectedLocationType = _getLocationOptionLabels().single;
+    return true;
   }
 
   bool _isSiteVisitEvent() {
@@ -533,34 +442,7 @@ class _EventDetailsState extends State<EventDetails> {
     return null;
   }
 
-  String _getParticipantReferenceDocname() {
-    final participant = _getPrimaryParticipant();
-    if (participant == null) return '';
-
-    final directMatch =
-        participant['opportunity_from']?.toString() ??
-        participant['mention']?.toString() ??
-        participant['reference_docname']?.toString();
-
-    if (directMatch != null &&
-        RegExp(r'^CRM-OPP-', caseSensitive: false).hasMatch(directMatch)) {
-      return directMatch;
-    }
-
-    for (final entry in participant.entries) {
-      final value = entry.value?.toString();
-      if (value != null &&
-          RegExp(r'^CRM-OPP-', caseSensitive: false).hasMatch(value)) {
-        debugPrint(
-          '[EventDetails] Opportunity id inferred from participant field '
-          '${entry.key}: $value',
-        );
-        return value;
-      }
-    }
-
-    return directMatch ?? '';
-  }
+  String _getParticipantReferenceDocname() => eventOpportunityName(eventData);
 
   String _getParticipantVisitType() {
     if (_participantVisitType != null && _participantVisitType!.isNotEmpty) {
@@ -607,6 +489,14 @@ class _EventDetailsState extends State<EventDetails> {
   }
 
   List<String> _getLocationOptionLabels() {
+    if (_savedOpportunityLocations.length == 1) {
+      return [
+        eventLocationLabel(
+          eventData['event'] is Map ? eventData['event'] : {},
+          _savedOpportunityLocations,
+        ),
+      ];
+    }
     final baseLabels =
         _savedOpportunityLocations.asMap().entries.map((entry) {
           final row = entry.value;
@@ -648,21 +538,7 @@ class _EventDetailsState extends State<EventDetails> {
 
   LatLng? _getLocationCoordinates(String? locationType) {
     final savedRow = _getSavedLocationRow(locationType);
-    final savedLat = double.tryParse(savedRow?['latitude']?.toString() ?? '');
-    final savedLng = double.tryParse(savedRow?['longitude']?.toString() ?? '');
-
-    if (savedLat != null &&
-        savedLng != null &&
-        savedLat.isFinite &&
-        savedLng.isFinite &&
-        savedLat >= -90 &&
-        savedLat <= 90 &&
-        savedLng >= -180 &&
-        savedLng <= 180) {
-      return LatLng(savedLat, savedLng);
-    }
-
-    return null;
+    return savedRow == null ? null : eventLocationCoordinates(savedRow);
   }
 
   Widget _buildCustomerLocationMap() {
@@ -678,7 +554,7 @@ class _EventDetailsState extends State<EventDetails> {
               Expanded(
                 child: Text(
                   _savedOpportunityLocations.isEmpty
-                      ? 'No saved customer location is available for this event.'
+                      ? 'The location selected for this event could not be found.'
                       : 'The saved customer location has no valid coordinates.',
                   style: const TextStyle(color: Colors.black54),
                 ),
@@ -736,37 +612,17 @@ class _EventDetailsState extends State<EventDetails> {
                 ),
               ],
             ),
-            if (locationTypes.length > 1) ...[
-              const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                value: locationType,
-                decoration: const InputDecoration(
-                  labelText: 'Saved location',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                items:
-                    locationTypes
-                        .map(
-                          (type) => DropdownMenuItem<String>(
-                            value: type,
-                            child: Text(type, overflow: TextOverflow.ellipsis),
-                          ),
-                        )
-                        .toList(),
-                onChanged: (value) {
-                  if (value != null) {
-                    setState(() {
-                      _mapLocationType = value;
-                      _customerRoutePoints = [];
-                    });
-                  }
-                },
-              ),
-            ] else ...[
-              const SizedBox(height: 6),
-              Text(locationType, style: const TextStyle(color: Colors.black54)),
-            ],
+            const SizedBox(height: 6),
+            Text(
+              eventSavedLocationType(_visitEvent, _savedOpportunityLocations) ??
+                  'Location type not saved',
+              style: const TextStyle(color: Colors.black54),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Coordinates: ${point.latitude.toStringAsFixed(6)}, ${point.longitude.toStringAsFixed(6)}',
+              style: const TextStyle(color: Colors.black54),
+            ),
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
@@ -968,58 +824,32 @@ class _EventDetailsState extends State<EventDetails> {
 
   Future<void> _loadOpportunityLocations() async {
     final referenceDocname = _getParticipantReferenceDocname();
-    if (referenceDocname.isEmpty) {
-      if (mounted) {
-        setState(() {
-          _savedOpportunityLocations = [];
-          _mapLocationType = null;
-        });
-      }
-      return;
-    }
+    final rows =
+        referenceDocname.isEmpty
+            ? <Map<String, dynamic>>[]
+            : await Event.getOpportunityLocations(
+              referenceDocname: referenceDocname,
+              context: context,
+            );
 
-    final rows = await Event.getOpportunityLocations(
-      referenceDocname: referenceDocname,
-      context: context,
+    if (mounted) _applyEventLocations(rows);
+  }
+
+  void _applyEventLocations(List<Map<String, dynamic>> rows) {
+    final event = eventData['event'];
+    final selected = eventSelectedLocations(
+      event is Map ? event : const {},
+      rows,
     );
-
-    if (mounted) {
+    setState(() {
+      _savedOpportunityLocations = selected;
+      final valid = _getAvailableLocationTypes();
+      _mapLocationType = valid.isEmpty ? null : valid.single;
       debugPrint(
-        '[EventDetails] opportunity locations loaded for $referenceDocname: $rows',
+        '[EventDetails] location-v2: opportunityFound=${_getParticipantReferenceDocname().isNotEmpty}, '
+        'rows=${rows.length}, selected=${selected.length}, coordinates=${valid.length}',
       );
-      setState(() {
-        _savedOpportunityLocations = rows;
-        final validLocationTypes = _getAvailableLocationTypes();
-        final event = eventData['event'];
-        final selectedLink =
-            event is Map
-                ? (event['custom_location'] ?? event['location'])
-                    ?.toString()
-                    .trim()
-                : null;
-        String? linkedLocationType;
-        if (selectedLink != null && selectedLink.isNotEmpty) {
-          final labels = _getLocationOptionLabels();
-          for (var index = 0; index < rows.length; index++) {
-            final row = rows[index];
-            if (row['name']?.toString() == selectedLink ||
-                row['location']?.toString() == selectedLink ||
-                row['location_type']?.toString() == selectedLink) {
-              if (index < labels.length) linkedLocationType = labels[index];
-              break;
-            }
-          }
-        }
-        _mapLocationType =
-            validLocationTypes.contains(linkedLocationType)
-                ? linkedLocationType
-                : validLocationTypes.contains(_mapLocationType)
-                ? _mapLocationType
-                : validLocationTypes.isEmpty
-                ? null
-                : validLocationTypes.first;
-      });
-    }
+    });
   }
 
   Future<void> performCheckIn({
@@ -1030,6 +860,7 @@ class _EventDetailsState extends State<EventDetails> {
     required String address,
   }) async {
     if (_requiresLocationBeforeCheckIn()) {
+      if (!_useSavedEventLocation()) return;
       if (selectedLocationType == null) {
         Warning.show(
           context,
@@ -1117,13 +948,6 @@ class _EventDetailsState extends State<EventDetails> {
     } catch (error) {
       debugPrint('Unable to start event geofence after check-in: $error');
     }
-
-    if (!mounted) return;
-    try {
-      await BatteryOptimizationHelper.showBatteryOptimizationDialog(context);
-    } catch (error) {
-      debugPrint('Unable to show battery optimization prompt: $error');
-    }
   }
 
   void _applyLocalVisitStatus({String? checkIn, String? checkOut}) {
@@ -1178,6 +1002,10 @@ class _EventDetailsState extends State<EventDetails> {
     required String workingHrs,
     required Position position,
   }) async {
+    if (!EventOtp.isValid(_otpController.text)) {
+      Warning.show(context, EventOtp.validationMessage, 'OTP required');
+      return;
+    }
     bool isOtpRequired = await Event.checkIfOtpRequired(
       widget.eventid,
       context,
@@ -1246,6 +1074,7 @@ class _EventDetailsState extends State<EventDetails> {
       lastLatLng,
       jsonEncode(locationLogs),
       context,
+      customOtp: _otpController.text.trim(),
     );
     if (response['message'] != null) {
       if (response['message']['status'] == 'success') {
@@ -1537,9 +1366,12 @@ class _EventDetailsState extends State<EventDetails> {
       setState(() {
         eventData = response;
       });
+      // Show the Event's saved coordinate URL immediately. An ancillary user
+      // or visit-type lookup must not prevent the map from being initialized.
+      _applyEventLocations([]);
+      await _loadOpportunityLocations();
       await _loadUserFullNames(response is Map ? response : {});
       await _loadParticipantVisitType();
-      await _loadOpportunityLocations();
     }
   }
 
@@ -1781,6 +1613,10 @@ class _EventDetailsState extends State<EventDetails> {
                   TextField(
                     controller: otpController,
                     keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(4),
+                    ],
                     decoration: const InputDecoration(labelText: 'OTP'),
                   ),
                   const SizedBox(height: 10),
@@ -1819,11 +1655,20 @@ class _EventDetailsState extends State<EventDetails> {
                     foregroundColor: WidgetStatePropertyAll(Colors.white),
                   ),
                   onPressed: () async {
+                    if (!EventOtp.isValid(otpController.text)) {
+                      Warning.show(
+                        context,
+                        EventOtp.validationMessage,
+                        'OTP required',
+                      );
+                      return;
+                    }
                     final isValid = await Event.verifyOtp(
                       otpController.text,
                       widget.eventid,
                     );
                     if (isValid) {
+                      _otpController.text = otpController.text.trim();
                       resendTimer?.cancel();
                       Navigator.of(dialogContext).pop(true);
 
@@ -1840,14 +1685,6 @@ class _EventDetailsState extends State<EventDetails> {
         );
       },
     ).then((value) => value ?? false);
-  }
-
-  void _resumeVisitActionAfterLocationSelection() {
-    // A single saved location invokes its callback synchronously from the
-    // dialog helper. Defer the retry so the current action can clear its lock.
-    scheduleMicrotask(() {
-      if (mounted) unawaited(_handleVisitCheckInOut());
-    });
   }
 
   Future<Position> _getCurrentVisitPosition() async {
@@ -1890,6 +1727,10 @@ class _EventDetailsState extends State<EventDetails> {
       final checkOut = event['custom_check_out']?.toString().trim() ?? '';
       final startingVisit = checkIn.isEmpty && checkOut.isEmpty;
       final endingVisit = checkIn.isNotEmpty && checkOut.isEmpty;
+      if (endingVisit && !EventOtp.isValid(_otpController.text)) {
+        Warning.show(context, EventOtp.validationMessage, 'OTP required');
+        return;
+      }
       if (!startingVisit && !endingVisit) {
         Warning.show(
           context,
@@ -1915,12 +1756,10 @@ class _EventDetailsState extends State<EventDetails> {
         timeoutStage = 'GPS location lookup';
       }
 
-      // Ask for the customer location before waiting for GPS. This also avoids
-      // the old retry path obtaining GPS and geocoding the address twice.
+      // Use only the location saved when creating the Event; no chooser.
       if (startingVisit &&
           _requiresLocationBeforeCheckIn() &&
-          selectedLocationType == null) {
-        showLocationDialog(_resumeVisitActionAfterLocationSelection);
+          !_useSavedEventLocation()) {
         return;
       }
       if (endingVisit &&
@@ -1931,8 +1770,7 @@ class _EventDetailsState extends State<EventDetails> {
       }
       if (endingVisit &&
           _requiresLocationBeforeCheckout() &&
-          selectedLocationType == null) {
-        showLocationDialog(_resumeVisitActionAfterLocationSelection);
+          !_useSavedEventLocation()) {
         return;
       }
 
@@ -2498,6 +2336,26 @@ class _EventDetailsState extends State<EventDetails> {
                     ],
                     if (checkedIn && !checkedOut) ...[
                       const SizedBox(height: 14),
+                      TextField(
+                        controller: _otpController,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(4),
+                        ],
+                        enabled: !_isActionInProgress,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        textInputAction: TextInputAction.done,
+                        decoration: const InputDecoration(
+                          labelText: 'OTP',
+                          hintText: 'Enter 4-digit OTP',
+                          helperText:
+                              'Exactly 4 digits required before checking out',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
                       Row(
                         children: [
                           Expanded(
@@ -2577,10 +2435,11 @@ class _EventDetailsState extends State<EventDetails> {
                           ),
                           _detailInfo(
                             'Location',
-                            _visitField(
-                              'custom_location',
-                              fallback: _visitField('location'),
-                            ),
+                            eventSavedLocationType(
+                                  _visitEvent,
+                                  _savedOpportunityLocations,
+                                ) ??
+                                'Not specified',
                           ),
                           _detailInfo(
                             'Event Owner',

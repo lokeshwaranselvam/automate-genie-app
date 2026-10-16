@@ -122,10 +122,6 @@ class BatteryOptimizationHelper {
               ],
             ),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text("Later"),
-              ),
               ElevatedButton(
                 onPressed: () async {
                   Navigator.of(context).pop();

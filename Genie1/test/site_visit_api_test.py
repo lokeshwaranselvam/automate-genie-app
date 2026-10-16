@@ -63,7 +63,7 @@ class SiteVisitApiTest(unittest.TestCase):
             "Event": meta("Event", [
                 field("starts_on"), field("ends_on"), field("custom_product_enquired"),
                 field("event_category", "Select", "Installation\nMeeting\nCall"),
-                field("custom_validate"), field("assigned_to"),
+                field("custom_validate"), field("location"), field("assigned_to"),
                 field("event_participants", "Table", "Event Participants"),
             ]),
             "Event Participants": meta("Event Participants", [
@@ -128,6 +128,28 @@ class SiteVisitApiTest(unittest.TestCase):
         self.frappe.form_dict = dict(self.params, **overrides)
         exec(compile(self.script, "mobile_site_visit_api.py", "exec"), {"frappe": self.frappe})
         return self.frappe.response["message"]
+
+    def test_selected_home_type_is_saved_without_optional_custom_type_field(self):
+        self.location.location_type = "Home"
+        result = self.run_api()
+        self.assertEqual(self.event.location, "Home")
+        self.assertEqual(self.event.custom_validate, self.location.location)
+        self.assertEqual(result["location_type"], "Home")
+        self.assertEqual(result["location_row"], "LOC-1")
+
+    def test_map_url_and_type_are_saved_in_separate_fields(self):
+        self.metas["Event"].fields.extend([field("custom_location"), field("custom_location_type")])
+        self.run_api()
+        self.assertEqual(self.event.location, "Site")
+        self.assertEqual(self.event.custom_location_type, "Site")
+        self.assertEqual(self.event.custom_location, self.location.location)
+        self.assertEqual(self.event.custom_validate, self.location.location)
+
+    def test_missing_type_storage_is_rejected_instead_of_silently_losing_selection(self):
+        self.metas["Event"].fields[:] = [f for f in self.metas["Event"].fields if f.fieldname != "location"]
+        with self.assertRaisesRegex(ValueError, "selected Home/Site/Others"):
+            self.run_api()
+        self.frappe.new_doc.assert_not_called()
 
     def test_options_and_mobile_search_return_title_party_and_custom_product(self):
         result = self.run_api(action="get")

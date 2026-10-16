@@ -1,4 +1,6 @@
 import 'dart:convert';
+import '../event_location_selection.dart';
+import '../event_otp.dart';
 import 'package:flutter/src/widgets/framework.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:homegenie/utils/api/check_in_out.dart';
@@ -324,12 +326,49 @@ class Event {
     return _visitReportResponse(response);
   }
 
+  /// Persists OTP independently of the observation/outcome submission.
+  static Future<void> saveVisitOtp({
+    required String eventId,
+    required String customOtp,
+  }) async {
+    final otp = customOtp.trim();
+    if (!EventOtp.isValid(otp)) {
+      throw ArgumentError(EventOtp.validationMessage);
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    if (token == null || token.isEmpty) {
+      throw StateError('Sign in to save this visit OTP.');
+    }
+    final response = await http
+        .post(
+          _visitReportUri(const {}),
+          headers: {'Authorization': token, 'Accept': 'application/json'},
+          body: {'action': 'save_otp', 'event_id': eventId, 'custom_otp': otp},
+        )
+        .timeout(const Duration(seconds: 25));
+    final result = _visitReportResponse(response);
+    if (result['status'] != 'success' ||
+        result['action'] != 'save_otp' ||
+        result['event_id'] != eventId ||
+        result['otp_saved'] != true ||
+        result['custom_otp']?.toString().trim() != otp) {
+      throw StateError(
+        'OTP was not confirmed as saved. Checkout was not submitted.',
+      );
+    }
+  }
+
   /// Saves report fields through the authenticated Event visit-report API.
   static Future<Map<String, dynamic>> saveVisitReport({
     required String eventId,
     required String observation,
     required String outcome,
+    String? customOtp,
   }) async {
+    if (customOtp != null && !EventOtp.isValid(customOtp)) {
+      throw ArgumentError(EventOtp.validationMessage);
+    }
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     if (token == null || token.isEmpty) {
@@ -348,6 +387,7 @@ class Event {
         'event_id': eventId,
         'observation': observation,
         'outcome': outcome,
+        if (customOtp != null) 'custom_otp': customOtp.trim(),
       },
     );
     return _visitReportResponse(response);
@@ -532,14 +572,16 @@ class Event {
     String key,
   ) async {
     // The list request itself checks connectivity; no preliminary ping is needed.
-    final response = await http.get(
-      Uri.parse('$URL.head_office_list'),
-      headers: {
-        'Authorization': token,
-        'Accept': 'application/json',
-        'Cache-Control': 'no-cache, no-store',
-      },
-    ).timeout(const Duration(seconds: 20));
+    final response = await http
+        .get(
+          Uri.parse('$URL.head_office_list'),
+          headers: {
+            'Authorization': token,
+            'Accept': 'application/json',
+            'Cache-Control': 'no-cache, no-store',
+          },
+        )
+        .timeout(const Duration(seconds: 20));
     if (response.statusCode != 200) {
       throw StateError(
         'Could not load Head Office locations (${response.statusCode}).',
@@ -569,18 +611,22 @@ class Event {
       throw StateError('Your session has expired. Please sign in again.');
     }
     // Fetch current geofence data directly; never cache office coordinates.
-    final response = await http.get(
-      Uri.parse('$URL.head_office_details').replace(
-        queryParameters: {'head_office': office},
-      ),
-      headers: {
-        'Authorization': token,
-        'Accept': 'application/json',
-        'Cache-Control': 'no-cache, no-store',
-      },
-    ).timeout(const Duration(seconds: 20));
+    final response = await http
+        .get(
+          Uri.parse(
+            '$URL.head_office_details',
+          ).replace(queryParameters: {'head_office': office}),
+          headers: {
+            'Authorization': token,
+            'Accept': 'application/json',
+            'Cache-Control': 'no-cache, no-store',
+          },
+        )
+        .timeout(const Duration(seconds: 20));
     if (response.statusCode != 200) {
-      throw StateError('Could not load Head Office details (${response.statusCode}).');
+      throw StateError(
+        'Could not load Head Office details (${response.statusCode}).',
+      );
     }
     final body = jsonDecode(response.body);
     final details = body is Map ? body['message'] : null;
@@ -672,11 +718,20 @@ class Event {
     String distance,
     String lastLatLng,
     String locationLogs,
-    BuildContext context,
-  ) async {
+    BuildContext context, {
+    required String customOtp,
+  }) async {
+    final otp = customOtp.trim();
+    if (!EventOtp.isValid(otp)) {
+      throw ArgumentError(EventOtp.validationMessage);
+    }
     final prefs = await SharedPreferences.getInstance();
 
     final String? token = prefs.getString('token');
+
+    // The deployed checkout method may ignore unknown arguments. Persist and
+    // confirm the exact Event field through the assigned-user API first.
+    await saveVisitOtp(eventId: eventId, customOtp: otp);
 
     final response = await http
         .post(
@@ -691,6 +746,7 @@ class Event {
             'distance': distance,
             'last_lat_lng': lastLatLng,
             "location_logs": locationLogs,
+            'custom_otp': otp,
           },
           headers: {'Authorization': token ?? ''},
         )
@@ -941,15 +997,7 @@ class Event {
         return [];
       }
 
-      final rows = opportunity['custom_location'];
-      if (rows is! List) {
-        return [];
-      }
-
-      return rows
-          .whereType<Map>()
-          .map((row) => Map<String, dynamic>.from(row))
-          .toList();
+      return opportunityLocationRows(opportunity);
     } catch (e) {
       debugPrint('[EventApi] getOpportunityLocations exception: $e');
       return [];
@@ -981,6 +1029,7 @@ class Event {
   }
 
   static Future<bool> verifyOtp(String otp, String eventId) async {
+    if (!EventOtp.isValid(otp)) return false;
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
 

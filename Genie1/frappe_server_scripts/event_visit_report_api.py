@@ -6,7 +6,9 @@
 #
 # GET  /api/method/event_visit_report?action=get&event_id=EVENT-ID
 # POST /api/method/event_visit_report
-#      form fields: action=save, event_id, observation, outcome
+#      form fields: action=save, event_id, observation, outcome, custom_otp (optional)
+# POST action=save_otp, event_id, custom_otp saves OTP before event checkout.
+# Report saves preserve an existing OTP when custom_otp is omitted.
 
 action = (frappe.form_dict.get("action") or "get").strip().lower()
 event_id = (frappe.form_dict.get("event_id") or "").strip()
@@ -77,9 +79,32 @@ if action == "get":
         "event_id": event_id,
         "observation": observation,
         "outcome": outcome,
+        "custom_otp": event.get("custom_otp") or "",
         "is_submitted": is_submitted,
         "description": description,
         "outcomes": allowed_outcomes,
+    }
+
+elif action == "save_otp":
+    custom_otp = frappe.form_dict.get("custom_otp")
+    if not isinstance(custom_otp, str) or not custom_otp.strip():
+        frappe.throw("OTP is required before checking out.")
+
+    custom_otp = custom_otp.strip()
+    if len(custom_otp) != 4 or custom_otp.strip("0123456789"):
+        frappe.throw("OTP must contain exactly 4 digits.")
+    event.custom_otp = custom_otp
+    event.save(ignore_permissions=True)
+    stored_otp = frappe.db.get_value("Event", event.name, "custom_otp")
+    if str(stored_otp or "").strip() != custom_otp:
+        frappe.throw("OTP could not be saved. Contact your administrator before checking out.")
+
+    frappe.response["message"] = {
+        "status": "success",
+        "action": "save_otp",
+        "event_id": event.name,
+        "custom_otp": stored_otp,
+        "otp_saved": True,
     }
 
 elif action == "save":
@@ -94,6 +119,14 @@ elif action == "save":
     if outcome not in allowed_outcomes:
         frappe.throw("Choose a valid visit outcome.")
 
+    custom_otp = frappe.form_dict.get("custom_otp")
+    if custom_otp is not None:
+        if not isinstance(custom_otp, str) or not custom_otp.strip():
+            frappe.throw("OTP cannot be empty.")
+        if len(custom_otp.strip()) != 4 or custom_otp.strip().strip("0123456789"):
+            frappe.throw("OTP must contain exactly 4 digits.")
+        event.custom_otp = custom_otp.strip()
+
     report_description = "observation : " + observation + "\nOutcome: " + outcome
     event.description = report_description
     event.save(ignore_permissions=True)
@@ -104,9 +137,10 @@ elif action == "save":
         "event_id": event.name,
         "observation": observation,
         "outcome": outcome,
+        "custom_otp": event.get("custom_otp") or "",
         "is_submitted": True,
         "description": report_description,
     }
 
 else:
-    frappe.throw("Invalid action. Use 'get' or 'save'.")
+    frappe.throw("Invalid action. Use 'get', 'save', or 'save_otp'.")

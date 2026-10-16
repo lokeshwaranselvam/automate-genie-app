@@ -222,6 +222,11 @@ elif request_method == "POST":
         frappe.throw("Choose a Product Enquired from the configured options.")
 
     lead = frappe.new_doc("Lead")
+    # Older Lead controllers/hooks may still read doc.source after the standard
+    # field was removed from the site's schema. Keep that legacy attribute
+    # empty; the selected source belongs to custom_source, not a Lead Source Link.
+    if not lead_meta.get_field("source"):
+        lead.source = None
     lead.first_name = first_name
     lead.lead_owner = current_user
     lead.mobile_no = mobile_no
