@@ -286,9 +286,9 @@ class Action_Bottom {
                           await _stopEmployeeLiveLocationTracking();
                           await prefs.setBool('is_employee_checked_in', false);
                         } else {
+                          await prefs.setBool('is_employee_checked_in', true);
                           trackingError =
                               await _startEmployeeLiveLocationTracking();
-                          await prefs.setBool('is_employee_checked_in', true);
                           if (trackingError == null) {
                             await const FacePerformanceTrace().measure(
                               'battery guidance (includes user wait)',
@@ -533,9 +533,9 @@ class Action_Bottom {
                               false,
                             );
                           } else {
+                            await prefs.setBool('is_employee_checked_in', true);
                             trackingError =
                                 await _startEmployeeLiveLocationTracking();
-                            await prefs.setBool('is_employee_checked_in', true);
                             if (trackingError == null) {
                               await const FacePerformanceTrace().measure(
                                 'battery guidance (includes user wait)',

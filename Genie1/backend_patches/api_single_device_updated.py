@@ -593,6 +593,11 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
             return {"status": "error", "message": "OTP is required before checking out."}
         if len(otp.strip()) != 4 or otp.strip().strip("0123456789"):
             return {"status": "error", "message": "OTP must contain exactly 4 digits."}
+        expected_otp = str(doc.get("custom_whats_app") or "").strip()
+        if not expected_otp:
+            return {"status": "error", "message": "OTP is not configured for this Event. Contact your administrator."}
+        if otp.strip() != expected_otp:
+            return {"status": "error", "message": "Wrong OTP"}
         doc.custom_otp = otp.strip()
 
         current_time = now_datetime().strftime("%Y-%m-%d %H:%M:%S")

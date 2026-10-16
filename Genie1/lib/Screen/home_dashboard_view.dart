@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../utils/theme/brand_theme.dart';
+import '../utils/widget/notification_bell.dart';
 
 const _homeInk = Color(0xFF07143E);
 const _homeMuted = Color(0xFF8290A9);
@@ -248,32 +249,7 @@ class HomeDashboardView extends StatelessWidget {
             icon: const Icon(Icons.menu_rounded, color: _homeInk, size: 27),
           ),
           const Expanded(child: _HomeLogo()),
-          IconButton(
-            tooltip: 'Notifications',
-            onPressed: onNotifications,
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Icon(
-                  Icons.notifications_none_rounded,
-                  color: _homeInk,
-                  size: 27,
-                ),
-                Positioned(
-                  right: -2,
-                  top: -1,
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFFF4167),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          NotificationBell(onPressed: onNotifications),
         ],
       ),
     ),

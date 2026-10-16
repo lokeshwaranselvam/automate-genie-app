@@ -110,6 +110,7 @@ class LeadCreationApiTest(unittest.TestCase):
         self.assertEqual(self.run_api(method='GET', view='list')['leads'][0]['whatsapp_no'], '+919876543210')
         self.assertEqual(self.queries[0][1]['filters'], {'lead_owner': 'sales@example.test'})
         self.assertIn('whatsapp_no', self.queries[0][1]['fields'])
+        self.assertTrue({'owner', 'creation', 'modified', 'modified_by', 'docstatus', 'naming_series'}.issubset(self.queries[0][1]['fields']))
         self.assertEqual(self.run_api(method='GET', view='detail')['lead']['whatsapp_no'], '+919876543210')
 
     def test_dropdown_response_keys_are_backwards_compatible(self):

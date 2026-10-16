@@ -26,6 +26,8 @@ import 'pending_work_page.dart';
 import 'pending_work_overview_page.dart';
 import 'lead_creation_page.dart';
 import 'my_leads_page.dart';
+import 'my_opportunities_page.dart';
+import 'my_performance_page.dart';
 import 'expense_claim_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -444,6 +446,12 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   void _openSessionWebLink(Map<String, String> link) {
+    if ((link['title'] ?? '').trim().toLowerCase() == 'my performance') {
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(builder: (_) => const MyPerformancePage()),
+      );
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -622,7 +630,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         throw StateError('Attendance records could not be verified.');
       }
       final completedToday = response['completed_today'] == true;
-      final checkedIn = response['checked_in'] == true;
+      final checkedIn =
+          response['checked_in'] == true &&
+          response['previous_checkout_pending'] != true;
       await _saveAttendanceCompletion(completedToday);
       await prefs.setBool('is_employee_checked_in', checkedIn);
       if (!isCurrent()) return;
@@ -652,6 +662,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             }
           }),
         );
+      } else {
+        // Previous Day Checkout is not an active shift for today. Stop the
+        // native service as well as updating the UI and cached attendance.
+        unawaited(LiveLocationService().stopTracking());
       }
     } catch (_) {
       if (!isCurrent()) return;
@@ -1664,6 +1678,16 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         padding: const EdgeInsets.all(14),
         children: [
           _moreTile(
+            Icons.bar_chart_rounded,
+            'My Performance',
+            'View your sales performance and attendance',
+            () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => const MyPerformancePage(),
+              ),
+            ),
+          ),
+          _moreTile(
             Icons.fact_check_outlined,
             'Attendance',
             'View attendance and check-in records',
@@ -1720,6 +1744,16 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                 ),
               );
             },
+          ),
+          _moreTile(
+            Icons.handshake_outlined,
+            'Opportunities',
+            'View opportunities created by you',
+            () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => const MyOpportunitiesPage(),
+              ),
+            ),
           ),
           _moreTile(
             Icons.logout_rounded,

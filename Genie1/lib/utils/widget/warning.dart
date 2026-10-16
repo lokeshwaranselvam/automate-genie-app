@@ -4,6 +4,7 @@ import 'dart:collection';
 import 'package:flutter/material.dart';
 import '../../Screen/session_webview.dart';
 import '../short_visit_checkout_notice.dart';
+import '../connection_notice.dart';
 
 class Warning extends StatelessWidget {
   final String message;
@@ -48,6 +49,10 @@ class Warning extends StatelessWidget {
     }
 
     _showingPopup = true;
+    final connectionNotice =
+        request.type == 'Success'
+            ? null
+            : ConnectionNotice.fromError(request.message);
     final shortVisitNotice =
         request.type == 'Success'
             ? null
@@ -107,11 +112,22 @@ class Warning extends StatelessWidget {
                   CircleAvatar(
                     radius: 30,
                     backgroundColor: color.withValues(alpha: 0.12),
-                    child: Icon(icon, color: color, size: 34),
+                    child: Icon(
+                      connectionNotice == null
+                          ? icon
+                          : connectionNotice.timedOut
+                          ? Icons.hourglass_empty_rounded
+                          : Icons.wifi_off_rounded,
+                      color: color,
+                      size: 34,
+                    ),
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    shortVisitNotice == null ? title : 'Checkout restricted',
+                    connectionNotice?.title ??
+                        (shortVisitNotice == null
+                            ? title
+                            : 'Checkout restricted'),
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 20,
@@ -123,7 +139,9 @@ class Warning extends StatelessWidget {
                     fit: FlexFit.loose,
                     child: SingleChildScrollView(
                       child: Text(
-                        shortVisitNotice?.message ?? request.message,
+                        connectionNotice?.message ??
+                            shortVisitNotice?.message ??
+                            request.message,
                         textAlign:
                             shortVisitNotice == null
                                 ? TextAlign.center

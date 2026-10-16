@@ -24,7 +24,10 @@ class LiveLocationService {
   /// the native service has stopped while the Dart session stayed open.
   Future<void> ensureTracking() => _serialize(() async {
     final saved = await SharedPreferences.getInstance();
-    if (saved.getBool('is_employee_checked_in') != true) return;
+    if (saved.getBool('is_employee_checked_in') != true) {
+      await _stopTracking();
+      return;
+    }
     final active = await platform.invokeMethod<bool>('isLocationTracking');
     if (active == true) {
       _isTracking = true;
@@ -37,6 +40,12 @@ class LiveLocationService {
     // Reconcile with native state even when Dart thinks tracking is active.
     // Android may have stopped the service since the last check-in.
     prefs = await SharedPreferences.getInstance();
+    // Event screens may request a restart, but only today's employee
+    // attendance can authorize the shared live-tracking service.
+    if (prefs.getBool('is_employee_checked_in') != true) {
+      await _stopTracking();
+      return;
+    }
     final userEmail = prefs.getString('email')?.trim();
     final sid = prefs.getString('session_sid')?.trim();
     final token = prefs.getString('token')?.trim();

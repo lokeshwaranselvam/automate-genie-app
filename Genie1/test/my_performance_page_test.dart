@@ -7,11 +7,14 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/Screen/my_performance_page.dart';
+import 'package:homegenie/Screen/session_webview.dart';
 import 'package:homegenie/utils/api/performance_api.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'performance_api_test.dart' show performancePayload;
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   setUpAll(() async {
     final fontPath = Platform.environment['PERFORMANCE_PREVIEW_FONT'];
     if (fontPath != null) {
@@ -54,14 +57,18 @@ void main() {
     expect(find.text('18'), findsOneWidget);
     expect(find.text('20%'), findsOneWidget);
     expect(find.text('Leads vs Conversions'), findsOneWidget);
-    await tester.tap(find.text('Activity'));
-    await tester.pumpAndSettle();
-    expect(find.text('Completed Visits'), findsOneWidget);
-    expect(find.text('09'), findsOneWidget);
+    expect(find.text('Activity'), findsNothing);
+    expect(find.byType(SessionWebView), findsNothing);
     await tester.tap(find.text('Attendance'));
     await tester.pumpAndSettle();
-    expect(find.text('Check-in Days'), findsOneWidget);
-    expect(find.text('22'), findsOneWidget);
+    final attendance = tester.widget<SessionWebView>(
+      find.byType(SessionWebView),
+    );
+    expect(attendance.url, 'https://16.itgenie.online/GOAD');
+    expect(attendance.embedded, isTrue);
+    expect(find.text('Leads vs Conversions'), findsNothing);
+    await tester.tap(find.text('Sales'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('Show monthly trend'),
       200,
@@ -104,6 +111,78 @@ void main() {
     expect(find.text('07'), findsOneWidget);
     expect(find.text('18'), findsNothing);
   });
+
+  testWidgets('offline popup offers a successful user-triggered retry', (
+    tester,
+  ) async {
+    var attempts = 0;
+    await tester.pumpWidget(
+      page(
+        load: (_) async {
+          if (attempts++ == 0) {
+            throw StateError(
+              'SocketException: Failed host lookup: erp.private',
+            );
+          }
+          return PerformanceData.fromJson(performancePayload());
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('No internet connection'), findsOneWidget);
+    expect(find.textContaining('erp.private'), findsNothing);
+    expect(attempts, 1);
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+    expect(attempts, 2);
+    expect(find.text('18'), findsOneWidget);
+    expect(find.byType(Dialog), findsNothing);
+  });
+
+  for (final systemBack in [false, true]) {
+    testWidgets('Back returns after visiting Attendance, system=$systemBack', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder:
+                (context) => Scaffold(
+                  body: TextButton(
+                    onPressed:
+                        () => Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder:
+                                (_) => MyPerformancePage(
+                                  load:
+                                      (_) async =>
+                                          throw StateError('ERP unavailable'),
+                                ),
+                          ),
+                        ),
+                    child: const Text('Open performance'),
+                  ),
+                ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open performance'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Attendance'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sales'));
+      await tester.pumpAndSettle();
+      if (systemBack) {
+        await tester.binding.handlePopRoute();
+      } else {
+        await tester.tap(find.byTooltip('Back'));
+      }
+      await tester.pumpAndSettle();
+      expect(find.text('Open performance'), findsOneWidget);
+      expect(find.byType(MyPerformancePage), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('failed request shows retry; unavailable data is a dash', (
     tester,

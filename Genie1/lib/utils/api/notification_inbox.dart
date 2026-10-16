@@ -78,17 +78,87 @@ class InboxNotification {
 class NotificationInbox {
   static final _changes = StreamController<void>.broadcast();
   static Stream<void> get changes => _changes.stream;
-  static Future<void> _writes = Future.value();
+  static Future<void>? _writes;
+
+  static Future<void> _queueWrite(Future<void> Function() operation) {
+    final previous = _writes;
+    final write =
+        previous == null
+            ? Future<void>.sync(operation)
+            : previous.then((_) => operation());
+    late Future<void> settled;
+    settled = write.then<void>(
+      (_) {
+        if (identical(_writes, settled)) _writes = null;
+      },
+      onError: (Object error, StackTrace stack) {
+        if (identical(_writes, settled)) _writes = null;
+      },
+    );
+    _writes = settled;
+    return write;
+  }
+
+  static String? _scope(SharedPreferences prefs) {
+    final user = prefs.getString('session_username');
+    final sid = prefs.getString('session_sid');
+    return user == null || sid == null ? null : '${_key(user)}|$sid';
+  }
+
+  static Future<String?> sessionScope() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    return _scope(prefs);
+  }
+
+  static Set<String> _dismissed(SharedPreferences prefs, String key) =>
+      (prefs.getStringList('${key}_viewed') ?? []).toSet();
+
+  /// Removes only notifications rendered during this visit, never later arrivals.
+  static Future<void> dismissViewed(
+    Set<String> ids, {
+    required String scope,
+  }) async {
+    if (ids.isEmpty) return;
+    final write = _queueWrite(() async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      if (_scope(prefs) != scope) return;
+      final key = _key(prefs.getString('session_username')!);
+      final dismissed = _dismissed(prefs, key)..addAll(ids);
+      // The ERP fetch is limited to the latest 100 rows; retain a much larger
+      // recent ID window to suppress refetches and duplicate push delivery.
+      await prefs.setStringList(
+        '${key}_viewed',
+        dismissed.toList().reversed.take(2000).toList().reversed.toList(),
+      );
+      final rows = _read(prefs, key).where((row) => !ids.contains(row.id));
+      await prefs.setString(
+        key,
+        jsonEncode(rows.map((row) => row.toJson()).toList()),
+      );
+      _changes.add(null);
+    });
+    await write.catchError((Object error) {
+      debugPrint('Could not clear viewed notifications: ${error.runtimeType}');
+    });
+  }
 
   static String _key(String user) =>
       'notification_inbox_${base64UrlEncode(utf8.encode('${dotenv.env['SITE_URL']?.trim() ?? ''}|${user.toLowerCase()}'))}';
 
   static Future<List<InboxNotification>> cached() async {
+    await _writes;
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
     final user = prefs.getString('session_username');
     if (user == null || prefs.getString('session_sid') == null) return [];
-    return _read(prefs, _key(user));
+    final key = _key(user);
+    final dismissed = _dismissed(prefs, key);
+    return _read(
+      prefs,
+      key,
+    ).where((row) => !row.read && !dismissed.contains(row.id)).toList();
   }
 
   static List<InboxNotification> _read(SharedPreferences prefs, String key) {
@@ -157,13 +227,15 @@ class NotificationInbox {
       category: InboxNotification.categoryFor(type),
       reference: reference,
     );
-    final write = _writes.then((_) async {
+    final write = _queueWrite(() async {
       await prefs.reload();
       if (prefs.getString('session_username') != user ||
-          prefs.getString('session_sid') != sid) {
+          prefs.getString('session_sid') != sid ||
+          _key(user) != key) {
         return;
       }
       final rows = _read(prefs, key);
+      if (_dismissed(prefs, key).contains(item.id)) return;
       if (rows.any((row) => row.id == item.id)) return;
       rows.insert(0, item);
       await prefs.setString(
@@ -172,10 +244,7 @@ class NotificationInbox {
       );
       _changes.add(null);
     });
-    _writes = write.catchError((Object error) {
-      debugPrint('Could not retain notification: ${error.runtimeType}');
-    });
-    await _writes;
+    await write;
   }
 
   static Future<List<InboxNotification>> load() async {
@@ -240,16 +309,14 @@ class NotificationInbox {
     if (decoded is! Map || decoded['data'] is! List) {
       throw const FormatException('Invalid ERP notification response.');
     }
-    final merged = <String, InboxNotification>{
-      for (final row in await cached()) row.id: row,
-    };
+    final incoming = <String, InboxNotification>{};
     for (final row in (decoded['data'] as List).whereType<Map>()) {
       if (row['for_user']?.toString().toLowerCase() != user.toLowerCase()) {
         continue;
       }
       final id = row['name']?.toString() ?? '';
       if (id.isEmpty) continue;
-      merged[id] = InboxNotification(
+      incoming[id] = InboxNotification(
         id: id,
         title: notificationText(row['subject']),
         body: notificationText(row['email_content']),
@@ -261,17 +328,40 @@ class NotificationInbox {
         read: row['read'] == 1 || row['read'] == true,
       );
     }
-    final rows =
-        merged.values.toList()..sort(
-          (a, b) => (DateTime.tryParse(b.created)?.millisecondsSinceEpoch ?? 0)
-              .compareTo(
-                DateTime.tryParse(a.created)?.millisecondsSinceEpoch ?? 0,
-              ),
-        );
-    if (await SessionAuthApi.getSessionId() != sid ||
-        await SessionAuthApi.getSavedSessionUser() != user) {
-      throw StateError('Your account changed. Reopen Notifications.');
-    }
-    return rows.take(200).toList();
+    final key = _key(user);
+    late List<InboxNotification> result;
+    final write = _queueWrite(() async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      if (prefs.getString('session_sid') != sid ||
+          prefs.getString('session_username') != user ||
+          _key(user) != key) {
+        throw StateError('Your account changed. Reopen Notifications.');
+      }
+      final dismissed = _dismissed(prefs, key);
+      final merged = <String, InboxNotification>{
+        for (final row in _read(prefs, key)) row.id: row,
+        ...incoming,
+      };
+      final rows =
+          merged.values
+              .where((row) => !row.read && !dismissed.contains(row.id))
+              .toList()
+            ..sort(
+              (a, b) => (DateTime.tryParse(b.created)?.millisecondsSinceEpoch ??
+                      0)
+                  .compareTo(
+                    DateTime.tryParse(a.created)?.millisecondsSinceEpoch ?? 0,
+                  ),
+            );
+      result = rows.take(200).toList();
+      final encoded = jsonEncode(result.map((row) => row.toJson()).toList());
+      if (prefs.getString(key) != encoded) {
+        await prefs.setString(key, encoded);
+        _changes.add(null);
+      }
+    });
+    await write;
+    return result;
   }
 }

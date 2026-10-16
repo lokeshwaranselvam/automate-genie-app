@@ -6,11 +6,20 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/Screen/notifications_page.dart';
 import 'package:homegenie/utils/api/notification_inbox.dart';
+import 'package:homegenie/utils/widget/notification_bell.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const user = 'staff@example.test';
+Future<void> settleInbox(WidgetTester tester) async {
+  await tester.pump();
+  await tester.runAsync(
+    () => Future<void>.delayed(const Duration(milliseconds: 20)),
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() {
@@ -19,6 +28,10 @@ void main() {
       'session_username': user,
     });
     dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
+  });
+  tearDown(() async {
+    // Finish disposal writes before resetting preferences for the next test.
+    await NotificationInbox.cached();
   });
   RemoteMessage push(String id, String type, {String? recipient}) =>
       RemoteMessage(
@@ -165,12 +178,209 @@ void main() {
     );
   });
 
+  test(
+    'viewed notifications do not return from ERP or duplicate push delivery',
+    () async {
+      await http.runWithClient(() async {
+        final rows = await NotificationInbox.load();
+        final scope = (await NotificationInbox.sessionScope())!;
+        await NotificationInbox.dismissViewed(
+          rows.map((row) => row.id).toSet(),
+          scope: scope,
+        );
+        expect(await NotificationInbox.cached(), isEmpty);
+        expect(await NotificationInbox.load(), isEmpty);
+        await NotificationInbox.capture(
+          const RemoteMessage(
+            data: {'notification_log': 'LOG-Task', 'title': 'Task assigned'},
+          ),
+        );
+        expect(await NotificationInbox.cached(), isEmpty);
+      }, () => client());
+    },
+  );
+
+  test(
+    'clearing viewed IDs preserves a notification arriving after the snapshot',
+    () async {
+      await NotificationInbox.capture(push('seen', 'TASK_ASSIGNED'));
+      final rows = await NotificationInbox.cached();
+      final scope = (await NotificationInbox.sessionScope())!;
+      await NotificationInbox.capture(push('new', 'VISIT_ASSIGNED'));
+      await NotificationInbox.dismissViewed(
+        rows.map((row) => row.id).toSet(),
+        scope: scope,
+      );
+      expect((await NotificationInbox.cached()).single.id, 'push:new');
+    },
+  );
+
+  test(
+    'an in-flight ERP response cannot restore dismissed items or lose new pushes',
+    () async {
+      await http.runWithClient(() async {
+        await NotificationInbox.load();
+        final scope = (await NotificationInbox.sessionScope())!;
+        final rows = await NotificationInbox.cached();
+        await http.runWithClient(
+          () async {
+            final items = await NotificationInbox.load();
+            expect(items.map((row) => row.id), ['push:new']);
+          },
+          () => client(
+            duringLoad: () async {
+              await NotificationInbox.dismissViewed(
+                rows.map((row) => row.id).toSet(),
+                scope: scope,
+              );
+              await NotificationInbox.capture(push('new', 'VISIT_ASSIGNED'));
+            },
+          ),
+        );
+      }, () => client());
+    },
+  );
+
+  test('old screen cleanup cannot clear another account or site', () async {
+    await NotificationInbox.capture(push('same-id', 'TASK_ASSIGNED'));
+    final scope = (await NotificationInbox.sessionScope())!;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('session_username', 'other@example.test');
+    await NotificationInbox.capture(push('same-id', 'TASK_ASSIGNED'));
+    await NotificationInbox.dismissViewed({'push:same-id'}, scope: scope);
+    expect(await NotificationInbox.cached(), hasLength(1));
+    await prefs.setString('session_username', user);
+    dotenv.testLoad(fileInput: 'SITE_URL=https://other.example.test');
+    await NotificationInbox.capture(push('same-id', 'TASK_ASSIGNED'));
+    await NotificationInbox.dismissViewed({'push:same-id'}, scope: scope);
+    expect(await NotificationInbox.cached(), hasLength(1));
+  });
+
+  test('ERP notifications already read are excluded', () async {
+    await http.runWithClient(
+      () async {
+        final rows = await NotificationInbox.load();
+        expect(rows.any((row) => row.id == 'LOG-Task'), isFalse);
+      },
+      () => client(
+        rows:
+            logs()
+                .map(
+                  (row) => {...row, if (row['name'] == 'LOG-Task') 'read': 1},
+                )
+                .toList(),
+      ),
+    );
+  });
+
+  testWidgets(
+    'leaving notifications clears the viewed inbox and the bell dot; a new push restores it',
+    (tester) async {
+      await http.runWithClient(() async {
+        await tester.runAsync(() => NotificationInbox.load());
+        expect(
+          await tester.runAsync(() => NotificationInbox.cached()),
+          hasLength(4),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder:
+                  (context) => Scaffold(
+                    body: NotificationBell(
+                      onPressed:
+                          () => Navigator.of(context).push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const NotificationsPage(),
+                            ),
+                          ),
+                    ),
+                  ),
+            ),
+          ),
+        );
+        await settleInbox(tester);
+        expect(
+          find.byKey(const ValueKey('notification-unread-dot')),
+          findsOneWidget,
+        );
+        await tester.tap(find.byTooltip('Notifications'));
+        await settleInbox(tester);
+        expect(find.text('Task assigned'), findsOneWidget);
+        await tester.binding.handlePopRoute();
+        await settleInbox(tester);
+        expect(
+          await tester.runAsync(() => NotificationInbox.cached()),
+          isEmpty,
+        );
+        expect(
+          find.byKey(const ValueKey('notification-unread-dot')),
+          findsNothing,
+        );
+        final capture = NotificationInbox.capture(
+          push('fresh', 'TASK_ASSIGNED'),
+        );
+        await settleInbox(tester);
+        await capture;
+        await settleInbox(tester);
+        expect(
+          find.byKey(const ValueKey('notification-unread-dot')),
+          findsOneWidget,
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+      }, () => client());
+    },
+  );
+
+  testWidgets('empty inbox has no bell dot', (tester) async {
+    await http.runWithClient(() async {
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: NotificationBell(onPressed: () {}))),
+      );
+      await settleInbox(tester);
+      expect(
+        find.byKey(const ValueKey('notification-unread-dot')),
+        findsNothing,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    }, () => client(rows: []));
+  });
+
+  testWidgets(
+    'a push displayed on the open screen is cleared on exit without refetching ERP',
+    (tester) async {
+      var historyRequests = 0;
+      final server = client(rows: []);
+      await http.runWithClient(
+        () async {
+          await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
+          await settleInbox(tester);
+          final capture = NotificationInbox.capture(
+            push('on-screen', 'VISIT_ASSIGNED'),
+          );
+          await settleInbox(tester);
+          await capture;
+          await settleInbox(tester);
+          expect(find.text('VISIT_ASSIGNED assigned'), findsOneWidget);
+          expect(historyRequests, 1);
+          await tester.pumpWidget(const SizedBox.shrink());
+          await settleInbox(tester);
+          expect(await NotificationInbox.cached(), isEmpty);
+        },
+        () => MockClient((request) async {
+          if (request.url.path.contains('Notification')) historyRequests++;
+          return server.get(request.url, headers: request.headers);
+        }),
+      );
+    },
+  );
+
   testWidgets(
     'notification page shows all items without filters, expands details, and refreshes',
     (tester) async {
       await http.runWithClient(() async {
         await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
-        await tester.pumpAndSettle();
+        await settleInbox(tester);
         expect(find.text('Notifications'), findsOneWidget);
         expect(find.text('Task assigned'), findsOneWidget);
         expect(find.text('Lead assigned'), findsOneWidget);
@@ -178,12 +388,12 @@ void main() {
         expect(find.text('Event assigned'), findsOneWidget);
         expect(find.text('Stock Entry assigned'), findsOneWidget);
         await tester.tap(find.text('Task assigned'));
-        await tester.pumpAndSettle();
+        await settleInbox(tester);
         expect(find.text('New Task details'), findsOneWidget);
         await tester
             .widget<RefreshIndicator>(find.byType(RefreshIndicator))
             .onRefresh();
-        await tester.pumpAndSettle();
+        await settleInbox(tester);
         expect(find.text('Task assigned'), findsOneWidget);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
@@ -196,7 +406,7 @@ void main() {
     (tester) async {
       await http.runWithClient(() async {
         await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
-        await tester.pumpAndSettle();
+        await settleInbox(tester);
         expect(find.text('Could not load notifications'), findsOneWidget);
         expect(find.byType(RefreshIndicator), findsOneWidget);
         await tester.pumpWidget(const SizedBox.shrink());

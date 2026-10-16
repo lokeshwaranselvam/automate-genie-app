@@ -16,10 +16,10 @@ class Row(dict):
 
 
 class EventCheckoutOtpTest(unittest.TestCase):
-    def run_checkout(self, filename, otp=None, saved_otp=None, checked_in=True, checked_out=False):
+    def run_checkout(self, filename, otp=None, saved_otp=None, checked_in=True, checked_out=False, expected_otp='0123'):
         doc = Row(custom_check_in='2026-10-16 09:00:00' if checked_in else None,
                   custom_check_out='2026-10-16 10:00:00' if checked_out else None,
-                  custom_otp=saved_otp)
+                  custom_otp=saved_otp, custom_whats_app=expected_otp)
         doc.save = Mock()
         frappe = SimpleNamespace(
             get_doc=Mock(return_value=doc),
@@ -89,10 +89,22 @@ class EventCheckoutOtpTest(unittest.TestCase):
             self.assertEqual(result['message'], message)
             doc.save.assert_not_called()
 
+    def test_direct_checkout_cannot_bypass_expected_otp_comparison(self):
+        for filename in ['api.py', 'api_single_device_updated.py']:
+            for expected, message in [('9999', 'Wrong OTP'), ('', 'not configured'), (None, 'not configured')]:
+                with self.subTest(filename=filename, expected=expected):
+                    result, doc, frappe = self.run_checkout(filename, '0123', expected_otp=expected)
+                    self.assertEqual(result['status'], 'error')
+                    self.assertIn(message, result['message'])
+                    self.assertIsNone(doc.custom_check_out)
+                    doc.save.assert_not_called()
+                    frappe.db.exists.assert_not_called()
+
 
 class EventVisitReportOtpTest(unittest.TestCase):
-    def report(self, params=None, owner='sales@example.test', description='', otp='0123', clear_on_save=False):
-        event = Row(name='EVENT-1', owner=owner, description=description, custom_otp=otp)
+    def report(self, params=None, owner='sales@example.test', description='', otp='0123', clear_on_save=False, expected_otp='0123'):
+        event = Row(name='EVENT-1', owner=owner, description=description, custom_otp=otp, custom_whats_app=expected_otp)
+        self.last_event = event
         event.save = Mock()
         if clear_on_save:
             event.save.side_effect = lambda **kwargs: event.update(custom_otp='')
@@ -155,9 +167,33 @@ class EventVisitReportOtpTest(unittest.TestCase):
 
     def test_optional_otp_is_saved_as_text(self):
         result, event = self.report(dict(action='save', observation='Visited',
-                                         outcome='Interested', custom_otp=' 0012 '))
+                                         outcome='Interested', custom_otp=' 0012 '), expected_otp='0012')
         self.assertEqual(result['custom_otp'], '0012')
         self.assertEqual(event.custom_otp, '0012')
+
+    def test_mismatched_otp_rejects_both_actions_without_modifying_event(self):
+        for action in ['save_otp', 'save']:
+            with self.subTest(action=action), self.assertRaisesRegex(ValueError, '^Wrong OTP$'):
+                self.report(dict(action=action, custom_otp='9999',
+                                 observation='New report', outcome='Interested'),
+                            otp='1111', description='Original notes')
+            self.assertEqual(self.last_event.custom_otp, '1111')
+            self.assertEqual(self.last_event.description, 'Original notes')
+            self.last_event.save.assert_not_called()
+
+    def test_missing_expected_otp_cannot_be_saved(self):
+        for expected in [None, '', ' ']:
+            with self.subTest(expected=expected), self.assertRaisesRegex(ValueError, 'not configured'):
+                self.report(dict(action='save_otp', custom_otp='0123'), expected_otp=expected)
+            self.last_event.save.assert_not_called()
+
+    def test_expected_otp_is_trimmed_but_never_returned(self):
+        result, event = self.report(dict(action='save_otp', custom_otp=' 0123 '), expected_otp=' 0123 ')
+        self.assertTrue(result['otp_saved'])
+        self.assertEqual(event.custom_whats_app, ' 0123 ')
+        self.assertNotIn('custom_whats_app', result)
+        result, _ = self.report()
+        self.assertNotIn('custom_whats_app', result)
 
     def test_empty_explicit_otp_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'OTP cannot be empty'):

@@ -13,13 +13,14 @@ lead_view = (frappe.form_dict.get("view") or "").strip()
 request_method = (frappe.request.method or "").upper()
 lead_meta = frappe.get_meta("Lead")
 lead_fields = ["name"]
-lead_fields.extend(["creation", "modified"])
+lead_fields.extend(["owner", "creation", "modified", "modified_by", "docstatus"])
 for fieldname in [
     "lead_name", "first_name", "mobile_no", "phone", "email_id", "status",
     "lead_owner", "company_name", "territory", "source", "custom_source",
     "custom_requirement", "custom_product_enquired", "custom_address",
     "custom_pincode", "custom_sales_person", "custom_customer_category",
     "whatsapp_no",
+    "naming_series",
 ]:
     if lead_meta.get_field(fieldname):
         lead_fields.append(fieldname)

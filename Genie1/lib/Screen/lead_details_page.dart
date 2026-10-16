@@ -4,6 +4,7 @@ import '../utils/widget/pull_to_refresh.dart';
 
 import '../utils/theme/brand_theme.dart';
 import '../utils/widget/home_back_button.dart';
+import '../utils/widget/crm_document_details.dart';
 
 /// Read-only details from the authenticated, owner-filtered Lead list.
 class LeadDetailsPage extends StatefulWidget {
@@ -42,8 +43,11 @@ class LeadDetailsPage extends StatefulWidget {
 
 class _LeadDetailsPageState extends State<LeadDetailsPage> {
   late Map<String, dynamic> lead = widget.lead;
+  bool _refreshing = false;
 
   Future<void> _refresh() async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
     try {
       final updated = await LeadApi.getLeadDetails(lead['name'].toString());
       if (mounted) setState(() => lead = updated);
@@ -55,45 +59,45 @@ class _LeadDetailsPageState extends State<LeadDetailsPage> {
           ),
         );
       }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
     }
   }
 
   @override
-  Widget build(BuildContext context) {
-    final fields = LeadDetailsPage._fields.entries.where(
-      (field) => (lead[field.key]?.toString().trim() ?? '').isNotEmpty,
-    );
-    return Scaffold(
-      appBar: brandAppBar(
-        leading: const HomeBackButton(color: Colors.white),
-        title: const Text('Lead Details'),
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: CrmDocumentDetails.background,
+    appBar: brandAppBar(
+      leading: const HomeBackButton(color: Colors.white),
+      title: const Text(
+        'Lead Details',
+        style: TextStyle(fontWeight: FontWeight.w800),
       ),
-      body: PullToRefresh(
-        onRefresh: _refresh,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            for (final field in fields)
-              Card(
-                elevation: 0,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        field.value,
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                      const SizedBox(height: 6),
-                      SelectableText(lead[field.key].toString().trim()),
-                    ],
-                  ),
+      actions: [
+        PopupMenuButton<String>(
+          icon: const Icon(Icons.more_vert, color: Colors.white),
+          tooltip: 'More options',
+          onSelected: (_) => _refresh(),
+          itemBuilder:
+              (_) => [
+                PopupMenuItem(
+                  value: 'refresh',
+                  enabled: !_refreshing,
+                  child: const Text('Refresh'),
                 ),
-              ),
-          ],
+              ],
         ),
+      ],
+    ),
+    body: PullToRefresh(
+      onRefresh: _refresh,
+      enabled: !_refreshing,
+      child: CrmDocumentDetails(
+        document: lead,
+        documentType: 'Lead',
+        fieldLabels: LeadDetailsPage._fields,
+        refreshing: _refreshing,
       ),
-    );
-  }
+    ),
+  );
 }

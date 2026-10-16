@@ -15,23 +15,62 @@ class NotificationsPage extends StatefulWidget {
   State<NotificationsPage> createState() => _NotificationsPageState();
 }
 
-class _NotificationsPageState extends State<NotificationsPage> {
+class _NotificationsPageState extends State<NotificationsPage>
+    with WidgetsBindingObserver {
   List<InboxNotification> _items = [];
   bool _loading = false;
   String? _error;
   StreamSubscription<void>? _subscription;
+  final Set<String> _viewedIds = {};
+  String? _scope;
 
   @override
   void initState() {
     super.initState();
-    _subscription = NotificationInbox.changes.listen((_) => _load());
+    WidgetsBinding.instance.addObserver(this);
+    _subscription = NotificationInbox.changes.listen((_) => _reloadCached());
     _load();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _subscription?.cancel();
+    if (_scope != null) {
+      unawaited(
+        NotificationInbox.dismissViewed(Set.of(_viewedIds), scope: _scope!),
+      );
+    }
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_reloadCached());
+  }
+
+  void _recordRenderedItems() {
+    final ids = _items.map((item) => item.id).toSet();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      if (lifecycle == null || lifecycle == AppLifecycleState.resumed) {
+        _viewedIds.addAll(ids);
+      }
+    });
+  }
+
+  Future<void> _reloadCached() async {
+    final scope = await NotificationInbox.sessionScope();
+    final items = await NotificationInbox.cached();
+    if (!mounted ||
+        scope != _scope ||
+        await NotificationInbox.sessionScope() != scope) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _items = items);
+    _recordRenderedItems();
   }
 
   Future<void> _load() async {
@@ -41,11 +80,21 @@ class _NotificationsPageState extends State<NotificationsPage> {
       _error = null;
     });
     try {
+      final scope = await NotificationInbox.sessionScope();
+      if (!mounted) return;
+      if (_scope != null && scope != _scope) return;
+      _scope = scope;
       final cached = await NotificationInbox.cached();
+      if (await NotificationInbox.sessionScope() != scope) return;
       if (!mounted) return;
       setState(() => _items = cached);
+      _recordRenderedItems();
       final items = await NotificationInbox.load();
-      if (mounted) setState(() => _items = items);
+      if (await NotificationInbox.sessionScope() != scope) return;
+      if (mounted) {
+        setState(() => _items = items);
+        _recordRenderedItems();
+      }
     } catch (error) {
       if (mounted) {
         setState(

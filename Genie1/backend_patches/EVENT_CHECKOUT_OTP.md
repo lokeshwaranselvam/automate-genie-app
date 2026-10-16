@@ -1,5 +1,17 @@
 # Required Event checkout OTP
 
+The entered code must equal the same Event's `custom_whats_app` value after
+trimming surrounding whitespace. The comparison runs on the server in the
+existing `save_otp` request, before writing anything. A mismatch returns
+`Wrong OTP` and the app does not submit checkout. An empty expected value
+blocks saving with a configuration message. The expected field is never
+included in the report API response or fetched by the app to compare locally.
+Optional OTP writes through report `save` use the same validation; ordinary
+report submissions that omit OTP remain unchanged. The custom-app
+`event_checkout()` artifacts also check the expected value to protect direct
+checkout calls. Install that function update as well as the Server Script for
+server-side enforcement on both endpoints; restart bench after Python changes.
+
 OTP must contain exactly four ASCII digits (`0000` through `9999`), with
 leading zeroes preserved as text. The screen limits input to four digits,
 and API validation rejects shorter, longer, or nonnumeric values before writes.
@@ -17,7 +29,8 @@ This adds one bounded POST request at checkout, with no polling or retries.
 It also works when the deployed checkout method ignores the OTP argument.
 
 The existing conditional Send OTP / Verify OTP dialog remains in place. When
-that flow is enabled, the successfully verified code is used for checkout.
+that flow is enabled, it must still succeed; it does not overwrite the code
+entered in the Event form, which is compared against `custom_whats_app`.
 The new field itself requires an entry; it does not introduce OTP delivery or
 verification for events that did not already require verification.
 

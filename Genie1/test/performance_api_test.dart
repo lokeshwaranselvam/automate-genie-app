@@ -159,4 +159,105 @@ void main() {
       expect(PerformanceData.count(0), 0);
     },
   );
+
+  test(
+    '417 uses real scoped records, conversions and previous month totals',
+    () async {
+      final result = await api(
+        MockClient((request) async {
+          expect(request.headers['Cookie'], 'sid=test-sid');
+          expect(request.followRedirects, isFalse);
+          if (request.url.path.endsWith('mobile_employee_performance')) {
+            return http.Response('{}', 417);
+          }
+          final doctype = request.url.pathSegments.last;
+          final filters =
+              jsonDecode(request.url.queryParameters['filters']!) as List;
+          expect(
+            filters,
+            contains(
+              equals([
+                doctype == 'Lead'
+                    ? 'lead_owner'
+                    : doctype == 'Employee'
+                    ? 'user_id'
+                    : doctype == 'Visit'
+                    ? 'employee'
+                    : 'owner',
+                '=',
+                doctype == 'Visit' ? 'EMP-1' : 'staff@example.test',
+              ]),
+            ),
+          );
+          final data = switch (doctype) {
+            'Lead' => [
+              {'creation': '2026-10-01 10:00:00', 'status': 'Converted'},
+              {'creation': '2026-10-31 12:00:00', 'status': 'Open'},
+              {'creation': '2026-09-01 10:00:00', 'status': 'Open'},
+            ],
+            'Employee' => [
+              {'name': 'EMP-1'},
+            ],
+            'Visit' => [
+              {'custom_check_in_time': '2026-10-08 10:00:00'},
+            ],
+            'Quotation' => [
+              {'transaction_date': '2026-10-15'},
+            ],
+            'Sales Order' => <Map<String, dynamic>>[],
+            _ => throw StateError('Unexpected request'),
+          };
+          return http.Response(jsonEncode({'data': data}), 200);
+        }),
+      ).load(DateTime(2026, 10));
+      expect(result.sales, {
+        'leads': 2,
+        'site_visits': 1,
+        'quotations': 1,
+        'orders': 0,
+      });
+      expect(result.previous['leads'], 1);
+      expect(result.weekly[0]['conversions'], 1);
+      expect(result.weekly[1]['site_visits'], 1);
+      expect(result.weekly[3]['leads'], 1);
+      expect(result.trend.length, 6);
+    },
+  );
+
+  test(
+    'fallback paginates and preserves unavailable as distinct from zero',
+    () async {
+      var leadPages = 0;
+      final result = await api(
+        MockClient((request) async {
+          if (request.url.path.endsWith('mobile_employee_performance')) {
+            return http.Response('{}', 417);
+          }
+          switch (request.url.pathSegments.last) {
+            case 'Lead':
+              leadPages++;
+              final start = request.url.queryParameters['limit_start'];
+              return http.Response(
+                jsonEncode({
+                  'data': List.generate(
+                    start == '0' ? 500 : 1,
+                    (_) => {'creation': '2026-10-02', 'status': 'Open'},
+                  ),
+                }),
+                200,
+              );
+            case 'Employee':
+              return http.Response(jsonEncode({'data': []}), 200);
+            default:
+              return http.Response('{}', 403);
+          }
+        }),
+      ).load(DateTime(2026, 10));
+      expect(leadPages, 2);
+      expect(result.sales['leads'], 501);
+      expect(result.sales['site_visits'], isNull);
+      expect(result.sales['quotations'], isNull);
+      expect(result.weekly[0]['leads'], 501);
+    },
+  );
 }

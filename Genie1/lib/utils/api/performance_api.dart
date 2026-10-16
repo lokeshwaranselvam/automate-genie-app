@@ -112,6 +112,12 @@ class PerformanceApi {
       if (response.statusCode == 401 || response.statusCode == 403) {
         throw StateError('Your ERP session expired. Please sign in again.');
       }
+      if (response.statusCode == 404 || response.statusCode == 417) {
+        // Older sites may not have the aggregation script installed, or may
+        // reject its restricted execution. Read real, permission-filtered ERP
+        // records instead; never substitute preview/sample data.
+        return _loadResources(base, month, user, sid);
+      }
       throw StateError(
         'Could not load My Performance (${response.statusCode}). '
         'Confirm the mobile_employee_performance API is installed, then retry.',
@@ -131,5 +137,205 @@ class PerformanceApi {
       throw StateError('Your account or month changed. Reload My Performance.');
     }
     return result;
+  }
+
+  Future<void> _assertSession(String user, String sid) async {
+    if (await _savedUser() != user || await _sessionId() != sid) {
+      throw StateError('Your account changed. Reopen My Performance.');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>?> _records(
+    Uri base,
+    String user,
+    String sid,
+    String doctype,
+    List<String> fields,
+    List<List<dynamic>> filters,
+  ) async {
+    final rows = <Map<String, dynamic>>[];
+    // Limit each stream and never report a partial stream as a complete total.
+    for (var page = 0; page < 20; page++) {
+      await _assertSession(user, sid);
+      final request = http.Request(
+        'GET',
+        base
+            .resolve('api/resource/${Uri.encodeComponent(doctype)}')
+            .replace(
+              queryParameters: {
+                'fields': jsonEncode(fields),
+                'filters': jsonEncode(filters),
+                'order_by': 'name asc',
+                'limit_page_length': '500',
+                'limit_start': '${page * 500}',
+              },
+            ),
+      )..followRedirects = false;
+      request.headers.addAll({
+        'Accept': 'application/json',
+        'Cookie': 'sid=$sid',
+        'Cache-Control': 'no-cache, no-store',
+      });
+      final response = await (() async {
+        return http.Response.fromStream(await _client.send(request));
+      })().timeout(const Duration(seconds: 20));
+      await _assertSession(user, sid);
+      if (response.statusCode == 401) {
+        throw StateError('Your ERP session expired. Please sign in again.');
+      }
+      // No permission/schema means unavailable, not zero. Other streams can
+      // still supply their own genuine totals.
+      if ({403, 404, 417}.contains(response.statusCode)) return null;
+      if (response.statusCode != 200) {
+        throw StateError('Could not load performance records. Please retry.');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map || decoded['data'] is! List) {
+        throw const FormatException(
+          'ERP returned invalid performance records.',
+        );
+      }
+      final batch = decoded['data'] as List;
+      if (batch.any((row) => row is! Map)) {
+        throw const FormatException(
+          'ERP returned invalid performance records.',
+        );
+      }
+      rows.addAll(batch.map((row) => Map<String, dynamic>.from(row as Map)));
+      if (batch.length < 500) return rows;
+    }
+    return null;
+  }
+
+  Future<PerformanceData> _loadResources(
+    Uri base,
+    DateTime month,
+    String user,
+    String sid,
+  ) async {
+    String key(DateTime date) =>
+        '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}';
+    final start = '${key(DateTime(month.year, month.month - 5))}-01';
+    final end = '${key(DateTime(month.year, month.month + 1))}-01';
+    List<List<dynamic>> filters(String owner, String date, int docstatus) => [
+      [owner, '=', user],
+      [date, '>=', start],
+      [date, '<', end],
+      ['docstatus', docstatus == 2 ? '!=' : '=', docstatus],
+    ];
+    final streams = await Future.wait([
+      _records(base, user, sid, 'Lead', [
+        'creation',
+        'status',
+      ], filters('lead_owner', 'creation', 2)),
+      _records(base, user, sid, 'Quotation', [
+        'transaction_date',
+      ], filters('owner', 'transaction_date', 1)),
+      _records(base, user, sid, 'Sales Order', [
+        'transaction_date',
+      ], filters('owner', 'transaction_date', 1)),
+      _records(
+        base,
+        user,
+        sid,
+        'Employee',
+        ['name'],
+        [
+          ['user_id', '=', user],
+          ['status', '=', 'Active'],
+        ],
+      ),
+    ]);
+    final employees = streams[3];
+    final employee =
+        employees != null && employees.length == 1
+            ? employees.first['name']
+            : null;
+    final visits =
+        employee is String && employee.isNotEmpty
+            ? await _records(
+              base,
+              user,
+              sid,
+              'Visit',
+              ['custom_check_in_time'],
+              [
+                ['employee', '=', employee],
+                [
+                  'event_id',
+                  'not in',
+                  ['', 'Employee Checked In', 'Employee Checked Out'],
+                ],
+                ['custom_check_in_time', '>=', start],
+                ['custom_check_in_time', '<', end],
+                ['docstatus', '!=', 2],
+              ],
+            )
+            : null;
+    final sources = [streams[0], visits, streams[1], streams[2]];
+    if (sources.every((rows) => rows == null)) {
+      throw StateError(
+        'Performance data is unavailable for this account. Ask your administrator to update mobile_employee_performance or allow access to your sales records.',
+      );
+    }
+    const metrics = ['leads', 'site_visits', 'quotations', 'orders'];
+    final trend = List.generate(
+      6,
+      (i) => <String, dynamic>{
+        'month': key(DateTime(month.year, month.month - 5 + i)),
+        for (var j = 0; j < metrics.length; j++)
+          metrics[j]: sources[j] == null ? null : 0,
+        'conversions': sources[0] == null ? null : 0,
+      },
+    );
+    final weekly = List.generate(
+      4,
+      (i) => <String, dynamic>{
+        'label': 'W${i + 1}',
+        for (var j = 0; j < metrics.length; j++)
+          metrics[j]: sources[j] == null ? null : 0,
+        'conversions': sources[0] == null ? null : 0,
+      },
+    );
+    for (var i = 0; i < metrics.length; i++) {
+      for (final row in sources[i] ?? <Map<String, dynamic>>[]) {
+        final raw =
+            row[i == 0
+                ? 'creation'
+                : i == 1
+                ? 'custom_check_in_time'
+                : 'transaction_date'];
+        final date = DateTime.tryParse(raw?.toString() ?? '');
+        if (date == null) {
+          throw const FormatException(
+            'ERP returned an invalid performance date.',
+          );
+        }
+        final buckets = trend.where((bucket) => bucket['month'] == key(date));
+        if (buckets.isEmpty) continue;
+        final bucket = buckets.first;
+        bucket[metrics[i]] = (bucket[metrics[i]] as int) + 1;
+        final converted = i == 0 && row['status'] == 'Converted';
+        if (converted) {
+          bucket['conversions'] = (bucket['conversions'] as int) + 1;
+        }
+        if (key(date) == key(month)) {
+          final week = weekly[((date.day - 1) ~/ 7).clamp(0, 3)];
+          week[metrics[i]] = (week[metrics[i]] as int) + 1;
+          if (converted) week['conversions'] = (week['conversions'] as int) + 1;
+        }
+      }
+    }
+    await _assertSession(user, sid);
+    return PerformanceData(
+      month: key(month),
+      user: user,
+      sales: {for (final metric in metrics) metric: trend.last[metric]},
+      activity: const {},
+      attendance: const {},
+      previous: trend[4],
+      weekly: weekly,
+      trend: trend,
+    );
   }
 }

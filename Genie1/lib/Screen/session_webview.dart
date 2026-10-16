@@ -5,17 +5,21 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../utils/api/session_auth.dart';
+import '../utils/connection_notice.dart';
+import '../utils/widget/warning.dart';
 
 class SessionWebView extends StatefulWidget {
   final String url;
   final String title;
   final bool embedded;
+  final bool blockSystemBack;
 
   const SessionWebView({
     super.key,
     required this.url,
     required this.title,
     this.embedded = false,
+    this.blockSystemBack = true,
   });
 
   @override
@@ -78,12 +82,10 @@ class _SessionWebViewState extends State<SessionWebView> {
                 },
                 onWebResourceError: (error) {
                   if (error.isForMainFrame == true && mounted) {
-                    setState(() {
-                      _isLoading = false;
-                      _error =
-                          'This page could not be loaded (${error.errorCode}: '
-                          '${error.description}).';
-                    });
+                    _showError(
+                      'This page could not be loaded (${error.errorCode}: '
+                      '${error.description}).',
+                    );
                   }
                 },
               ),
@@ -109,10 +111,13 @@ class _SessionWebViewState extends State<SessionWebView> {
 
   void _showError(String message) {
     if (!mounted) return;
+    final connection = ConnectionNotice.fromError(message);
+    final showPopup = connection != null && _error != connection.message;
     setState(() {
-      _error = message;
+      _error = connection?.message ?? message;
       _isLoading = false;
     });
+    if (showPopup) Warning.show(context, message, 'Error');
   }
 
   @override
@@ -133,7 +138,9 @@ class _SessionWebViewState extends State<SessionWebView> {
               ],
             );
 
-    if (widget.embedded) return PopScope(canPop: false, child: body);
+    if (widget.embedded) {
+      return PopScope(canPop: !widget.blockSystemBack, child: body);
+    }
 
     return PopScope(
       canPop: false,

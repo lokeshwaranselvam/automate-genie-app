@@ -230,14 +230,14 @@ class _AgPainter extends CustomPainter {
     final pulse = .9 + .1 * math.sin(progress.value * math.pi * 4);
     canvas.drawCircle(
       point,
-      13 * pulse,
+      17 * pulse,
       Paint()
         ..color = const Color(0xFFFF22DF).withValues(alpha: .38 * opacity)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
     );
     canvas.drawCircle(
       point,
-      9,
+      12,
       Paint()
         ..shader = RadialGradient(
           center: const Alignment(-.25, -.3),
@@ -248,7 +248,7 @@ class _AgPainter extends CustomPainter {
             const Color(0xFFFF1ADF).withValues(alpha: opacity),
           ],
           stops: const [0, .25, .55, 1],
-        ).createShader(Rect.fromCircle(center: point, radius: 9)),
+        ).createShader(Rect.fromCircle(center: point, radius: 12)),
     );
   }
 

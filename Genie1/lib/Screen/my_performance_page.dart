@@ -7,12 +7,15 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' show DateFormat;
 
 import '../utils/api/performance_api.dart';
+import 'session_webview.dart';
+import '../utils/connection_notice.dart';
+import '../utils/widget/warning.dart';
 
 const _blue = BrandColors.ink;
 const _ink = Color(0xFF202936);
 const _muted = Color(0xFF738093);
 const _leadColor = BrandColors.ink;
-const _conversionColor = Color(0xFF55CBE5);
+const _conversionColor = Color(0xFF25BA9A);
 
 class MyPerformancePage extends StatefulWidget {
   const MyPerformancePage({
@@ -37,6 +40,7 @@ class _MyPerformancePageState extends State<MyPerformancePage>
   PerformanceData? _data;
   bool _loading = true;
   bool _monthly = false;
+  bool _attendanceOpened = false;
   String? _error;
   int _request = 0;
 
@@ -45,12 +49,16 @@ class _MyPerformancePageState extends State<MyPerformancePage>
     super.initState();
     final now = widget.initialMonth ?? DateTime.now();
     _month = DateTime(now.year, now.month);
-    _tabs = TabController(length: 3, vsync: this)..addListener(_tabChanged);
+    _tabs = TabController(length: 2, vsync: this)..addListener(_tabChanged);
     _load();
   }
 
   void _tabChanged() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {
+        if (_tabs.index == 1) _attendanceOpened = true;
+      });
+    }
   }
 
   @override
@@ -73,13 +81,25 @@ class _MyPerformancePageState extends State<MyPerformancePage>
       setState(() => _data = data);
     } catch (error) {
       if (!mounted || request != _request) return;
+      final connection = ConnectionNotice.fromError(error);
       setState(
         () =>
-            _error = error.toString().replaceFirst(
-              RegExp(r'^(Bad state: |FormatException: )'),
-              '',
-            ),
+            _error =
+                connection?.message ??
+                error.toString().replaceFirst(
+                  RegExp(r'^(Bad state: |FormatException: )'),
+                  '',
+                ),
       );
+      if (connection != null) {
+        Warning.show(
+          context,
+          error.toString(),
+          'Error',
+          actionLabel: 'Try again',
+          onAction: _load,
+        );
+      }
     } finally {
       if (mounted && request == _request) setState(() => _loading = false);
     }
@@ -114,53 +134,21 @@ class _MyPerformancePageState extends State<MyPerformancePage>
     List<(String, String)> metrics,
     String definition,
   })
-  get _section => switch (_tabs.index) {
-    1 => (
-      title: 'Visits vs Completed',
-      first: 'site_visits',
-      second: 'completed_visits',
-      firstLabel: 'Visits',
-      secondLabel: 'Completed',
-      metrics: const [
-        ('Site Visits', 'site_visits'),
-        ('Completed Visits', 'completed_visits'),
-        ('Ongoing Visits', 'ongoing_visits'),
-        ('Visit Days', 'visit_days'),
-      ],
-      definition:
-          'Actual event Visit records linked to your Employee, grouped by check-in date. Completed means the visit has a check-out time. Employee attendance visits are excluded.',
-    ),
-    2 => (
-      title: 'Check-ins vs Check-outs',
-      first: 'checkins',
-      second: 'checkouts',
-      firstLabel: 'Check-ins',
-      secondLabel: 'Check-outs',
-      metrics: const [
-        ('Check-in Days', 'checkin_days'),
-        ('Check-ins', 'checkins'),
-        ('Check-outs', 'checkouts'),
-        ('Present Days', 'present_days'),
-      ],
-      definition:
-          'Check-in Days counts distinct dates with an IN record. Check-ins and Check-outs count actual Employee Checkin logs. Present Days counts distinct submitted Attendance dates marked Present or Work From Home; it is not inferred from check-ins.',
-    ),
-    _ => (
-      title: 'Leads vs Conversions',
-      first: 'leads',
-      second: 'conversions',
-      firstLabel: 'Leads',
-      secondLabel: 'Conversions',
-      metrics: const [
-        ('Leads Created', 'leads'),
-        ('Site Visits', 'site_visits'),
-        ('Quotations', 'quotations'),
-        ('Orders', 'orders'),
-      ],
-      definition:
-          'Leads Created counts records whose Lead Owner is your user, matching My Leads, grouped by creation date. Conversions counts those same leads currently marked Converted, grouped by lead creation date. Site Visits counts actual event visits for your Employee. Quotations and Orders count your submitted documents by transaction date; drafts and cancellations are excluded.',
-    ),
-  };
+  get _section => (
+    title: 'Leads vs Conversions',
+    first: 'leads',
+    second: 'conversions',
+    firstLabel: 'Leads',
+    secondLabel: 'Conversions',
+    metrics: const [
+      ('Leads Created', 'leads'),
+      ('Site Visits', 'site_visits'),
+      ('Quotations', 'quotations'),
+      ('Orders', 'orders'),
+    ],
+    definition:
+        'Leads Created counts records whose Lead Owner is your user, matching My Leads, grouped by creation date. Conversions counts those same leads currently marked Converted, grouped by lead creation date. Site Visits counts actual event visits for your Employee. Quotations and Orders count your submitted documents by transaction date; drafts and cancellations are excluded.',
+  );
 
   void _showDefinitions() {
     showModalBottomSheet<void>(
@@ -198,13 +186,13 @@ class _MyPerformancePageState extends State<MyPerformancePage>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF3F7FC),
       appBar: brandAppBar(
         elevation: 0,
         leading: IconButton(
           tooltip: 'Back',
           icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => Navigator.maybePop(context),
+          onPressed: () => Navigator.of(context).pop(),
         ),
         titleSpacing: 0,
         title: const Text(
@@ -220,83 +208,68 @@ class _MyPerformancePageState extends State<MyPerformancePage>
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(46),
-          child: DecoratedBox(
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Color(0xFFE8EDF3))),
-            ),
-            child: TabBar(
-              controller: _tabs,
-              indicatorColor: _blue,
-              indicatorSize: TabBarIndicatorSize.tab,
-              indicatorWeight: 3,
-              dividerColor: Colors.transparent,
-              labelColor: _blue,
-              unselectedLabelColor: _muted,
-              labelStyle: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 13,
+          child: Container(
+            decoration: const BoxDecoration(gradient: BrandColors.gradient),
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(14),
               ),
-              tabs: const [
-                Tab(text: 'Sales'),
-                Tab(text: 'Activity'),
-                Tab(text: 'Attendance'),
-              ],
+              child: TabBar(
+                controller: _tabs,
+                indicatorSize: TabBarIndicatorSize.tab,
+                indicator: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                dividerColor: Colors.transparent,
+                labelColor: _blue,
+                unselectedLabelColor: Colors.white,
+                labelStyle: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+                tabs: const [
+                  Tab(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.bar_chart_rounded, size: 20),
+                        SizedBox(width: 8),
+                        Flexible(child: Text('Sales')),
+                      ],
+                    ),
+                  ),
+                  Tab(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.calendar_month_outlined, size: 18),
+                        SizedBox(width: 8),
+                        Flexible(child: Text('Attendance')),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
       ),
-      body: Column(
+      body: IndexedStack(
+        index: _tabs.index,
         children: [
-          Container(
-            margin: const EdgeInsets.fromLTRB(18, 12, 18, 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF7F9FC),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: 'Previous month',
-                  onPressed: () => _moveMonth(-1),
-                  icon: const Icon(
-                    Icons.chevron_left_rounded,
-                    size: 22,
-                    color: _muted,
-                  ),
-                ),
-                Expanded(
-                  child: TextButton(
-                    onPressed: _chooseMonth,
-                    child: Text(
-                      DateFormat('MMM yyyy').format(_month),
-                      style: const TextStyle(
-                        color: Color(0xFF465367),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Next month',
-                  onPressed: () => _moveMonth(1),
-                  icon: const Icon(
-                    Icons.chevron_right_rounded,
-                    size: 22,
-                    color: _muted,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child:
-                _loading
-                    ? const Center(child: AgPathLoadingIndicator())
-                    : _error != null
-                    ? _errorBody()
-                    : _dashboard(),
-          ),
+          _salesBody(),
+          if (_attendanceOpened)
+            const SessionWebView(
+              url: 'https://16.itgenie.online/GOAD',
+              title: 'Attendance',
+              embedded: true,
+              blockSystemBack: false,
+            )
+          else
+            const SizedBox.shrink(),
         ],
       ),
       bottomNavigationBar:
@@ -335,6 +308,61 @@ class _MyPerformancePageState extends State<MyPerformancePage>
     );
   }
 
+  Widget _salesBody() => Column(
+    children: [
+      Container(
+        margin: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7F9FC),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: 'Previous month',
+              onPressed: () => _moveMonth(-1),
+              icon: const Icon(
+                Icons.chevron_left_rounded,
+                size: 22,
+                color: _muted,
+              ),
+            ),
+            Expanded(
+              child: TextButton(
+                onPressed: _chooseMonth,
+                child: Text(
+                  DateFormat('MMM yyyy').format(_month),
+                  style: const TextStyle(
+                    color: Color(0xFF465367),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Next month',
+              onPressed: () => _moveMonth(1),
+              icon: const Icon(
+                Icons.chevron_right_rounded,
+                size: 22,
+                color: _muted,
+              ),
+            ),
+          ],
+        ),
+      ),
+      Expanded(
+        child:
+            _loading
+                ? const Center(child: AgPathLoadingIndicator())
+                : _error != null
+                ? _errorBody()
+                : _dashboard(),
+      ),
+    ],
+  );
+
   Widget _errorBody() => PullToRefresh(
     onRefresh: _load,
     child: Center(
@@ -351,6 +379,11 @@ class _MyPerformancePageState extends State<MyPerformancePage>
               style: const TextStyle(color: _muted),
             ),
             const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Retry'),
+            ),
           ],
         ),
       ),
@@ -360,11 +393,7 @@ class _MyPerformancePageState extends State<MyPerformancePage>
   Widget _dashboard() {
     final data = _data!;
     final section = _section;
-    final values = switch (_tabs.index) {
-      1 => data.activity,
-      2 => data.attendance,
-      _ => data.sales,
-    };
+    final values = data.sales;
     final rows = _monthly ? data.trend : data.weekly;
     final points =
         rows
@@ -387,20 +416,32 @@ class _MyPerformancePageState extends State<MyPerformancePage>
         physics: const AlwaysScrollableScrollPhysics(
           parent: ClampingScrollPhysics(),
         ),
-        padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
         children: [
           LayoutBuilder(
             builder: (context, constraints) {
-              final width = (constraints.maxWidth - 12) / 2;
+              final width =
+                  constraints.maxWidth < 330 &&
+                          MediaQuery.textScalerOf(context).scale(12) > 15
+                      ? constraints.maxWidth
+                      : (constraints.maxWidth - 10) / 2;
               return Wrap(
-                spacing: 12,
-                runSpacing: 12,
+                spacing: 10,
+                runSpacing: 10,
                 children: [
                   for (final metric in section.metrics)
                     SizedBox(
                       width: width,
                       child: _MetricCard(
                         label: metric.$1,
+                        index: section.metrics.indexOf(metric),
+                        series:
+                            data.weekly
+                                .map(
+                                  (row) =>
+                                      PerformanceData.count(row[metric.$2]),
+                                )
+                                .toList(),
                         value: PerformanceData.count(values[metric.$2]),
                         previous: PerformanceData.count(
                           data.previous[metric.$2],
@@ -414,66 +455,79 @@ class _MyPerformancePageState extends State<MyPerformancePage>
               );
             },
           ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  section.title,
-                  style: const TextStyle(
-                    color: _ink,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              IconButton(
-                tooltip: 'How these numbers are counted',
-                onPressed: _showDefinitions,
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(
-                  Icons.info_outline_rounded,
-                  size: 18,
-                  color: _muted,
-                ),
-              ),
-            ],
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              _legend(section.firstLabel, _leadColor),
-              const SizedBox(width: 16),
-              _legend(section.secondLabel, _conversionColor),
-            ],
-          ),
-          const SizedBox(height: 16),
-          PerformanceBarChart(
-            points: points,
-            firstLabel: section.firstLabel,
-            secondLabel: section.secondLabel,
-          ),
-          if (points.every((point) => point.first == 0 && point.second == 0))
-            const Padding(
-              padding: EdgeInsets.only(top: 12),
-              child: Text(
-                'No records for this period.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: _muted, fontSize: 12),
-              ),
-            ),
-          if (points.any(
-            (point) => point.first == null || point.second == null,
-          ))
-            const Padding(
-              padding: EdgeInsets.only(top: 12),
-              child: Text(
-                'Some ERP data is unavailable. Tap ⓘ for details.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: _muted, fontSize: 12),
-              ),
-            ),
           const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        section.title,
+                        style: const TextStyle(
+                          color: _ink,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'How these numbers are counted',
+                      onPressed: _showDefinitions,
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(
+                        Icons.info_outline_rounded,
+                        size: 18,
+                        color: _muted,
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    _legend(section.firstLabel, _leadColor),
+                    const SizedBox(width: 16),
+                    _legend(section.secondLabel, _conversionColor),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                PerformanceBarChart(
+                  points: points,
+                  firstLabel: section.firstLabel,
+                  secondLabel: section.secondLabel,
+                ),
+                if (points.every(
+                  (point) => point.first == 0 && point.second == 0,
+                ))
+                  const Padding(
+                    padding: EdgeInsets.only(top: 12),
+                    child: Text(
+                      'No records for this period.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: _muted, fontSize: 12),
+                    ),
+                  ),
+                if (points.any(
+                  (point) => point.first == null || point.second == null,
+                ))
+                  const Padding(
+                    padding: EdgeInsets.only(top: 12),
+                    child: Text(
+                      'Some ERP data is unavailable. Tap ⓘ for details.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: _muted, fontSize: 12),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
           Align(
             alignment: Alignment.centerRight,
             child: TextButton.icon(
@@ -510,10 +564,14 @@ class _MyPerformancePageState extends State<MyPerformancePage>
 class _MetricCard extends StatelessWidget {
   const _MetricCard({
     required this.label,
+    required this.index,
+    required this.series,
     required this.value,
     required this.previous,
     required this.comparisonMonth,
   });
+  final int index;
+  final List<int?> series;
   final String label, comparisonMonth;
   final int? value, previous;
 
@@ -529,78 +587,173 @@ class _MetricCard extends StatelessWidget {
             : previous == 0
             ? (value == 0 ? '0%' : 'New')
             : '${(delta.abs() * 100 / previous!).round()}%';
+    final accent =
+        [
+          BrandColors.electricBlue,
+          const Color(0xFF18B37A),
+          const Color(0xFFF29A25),
+          BrandColors.purple,
+        ][index];
+    final icon =
+        [
+          Icons.people_alt_rounded,
+          Icons.location_on_rounded,
+          Icons.description_rounded,
+          Icons.shopping_cart_rounded,
+        ][index];
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF3F6F9),
-        borderRadius: BorderRadius.circular(12),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            accent.withValues(alpha: 0.10),
+            accent.withValues(alpha: 0.035),
+          ],
+        ),
+        border: Border.all(color: Colors.white, width: 1.5),
+        borderRadius: BorderRadius.circular(16),
       ),
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: Color(0xFF687587),
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
             ),
+            child: Icon(icon, color: accent, size: 20),
           ),
-          const SizedBox(height: 7),
-          Text(
-            value?.toString().padLeft(2, '0') ?? '—',
-            style: const TextStyle(
-              color: _ink,
-              fontSize: 30,
-              height: 1.15,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 7),
-          Tooltip(
-            message:
-                percent == null
-                    ? 'ERP data unavailable'
-                    : 'Compared with $comparisonMonth ($previous)',
-            child: Semantics(
-              label:
-                  '$label change ${negative
-                      ? "down"
-                      : positive
-                      ? "up"
-                      : "unchanged"} ${percent ?? "unavailable"} compared with $comparisonMonth',
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (percent != null)
-                    Icon(
-                      negative
-                          ? Icons.arrow_downward_rounded
-                          : positive
-                          ? Icons.arrow_upward_rounded
-                          : Icons.remove_rounded,
-                      size: 12,
-                      color: color,
-                    ),
-                  if (percent != null) const SizedBox(width: 4),
-                  Flexible(
-                    child: Text(
-                      percent ?? 'Unavailable',
-                      style: TextStyle(
-                        color: percent == null ? _muted : color,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: _ink,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        value?.toString().padLeft(2, '0') ?? '\u2014',
+                        style: const TextStyle(
+                          color: _ink,
+                          fontSize: 29,
+                          height: 1.15,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                     ),
+                    const SizedBox(width: 5),
+                    Expanded(
+                      child: SizedBox(
+                        height: 27,
+                        child: CustomPaint(
+                          painter: _SparkPainter(series, accent),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Tooltip(
+                  message:
+                      percent == null
+                          ? 'ERP data unavailable'
+                          : 'Compared with $comparisonMonth ($previous)',
+                  child: Semantics(
+                    label:
+                        '$label change ${negative
+                            ? "down"
+                            : positive
+                            ? "up"
+                            : "unchanged"} ${percent ?? "unavailable"} compared with $comparisonMonth',
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (percent != null)
+                          Icon(
+                            negative
+                                ? Icons.arrow_downward_rounded
+                                : positive
+                                ? Icons.arrow_upward_rounded
+                                : Icons.remove_rounded,
+                            size: 12,
+                            color: color,
+                          ),
+                        if (percent != null) const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            percent ?? 'Unavailable',
+                            style: TextStyle(
+                              color: percent == null ? _muted : color,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
   }
+}
+
+// Sparklines use the selected month's actual weekly totals, with gaps for
+// unavailable values. They never invent a rising trend.
+class _SparkPainter extends CustomPainter {
+  _SparkPainter(this.values, this.color);
+  final List<int?> values;
+  final Color color;
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.length < 2) return;
+    final maximum = values.fold<int>(1, (m, v) => math.max(m, v ?? 0));
+    final path = Path();
+    var started = false;
+    for (var i = 0; i < values.length; i++) {
+      final value = values[i];
+      if (value == null) {
+        started = false;
+        continue;
+      }
+      final x = size.width * i / (values.length - 1);
+      final y = size.height - 3 - (size.height - 6) * value / maximum;
+      if (started) {
+        path.lineTo(x, y);
+      } else {
+        path.moveTo(x, y);
+        started = true;
+      }
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color.withValues(alpha: 0.65)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..strokeJoin = StrokeJoin.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SparkPainter oldDelegate) =>
+      oldDelegate.values != values || oldDelegate.color != color;
 }
 
 class PerformanceChartPoint {
@@ -632,7 +785,7 @@ class PerformanceBarChart extends StatelessWidget {
         )
         .join('. '),
     child: SizedBox(
-      height: 210,
+      height: 190,
       width: double.infinity,
       child: CustomPaint(painter: _BarPainter(points)),
     ),

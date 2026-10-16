@@ -103,7 +103,9 @@ if employee and frappe.db.exists("DocType", "Attendance"):
     rows = frappe.get_all("Attendance", filters=[["employee", "=", employee], ["attendance_date", ">=", str(range_start)], ["attendance_date", "<", str(selected_end)], ["docstatus", "=", 1], ["status", "in", ["Present", "Work From Home"]]], fields=["attendance_date"], limit_page_length=0)
     for row in rows:
         present_days[str(frappe.utils.getdate(row.get("attendance_date")))] = True
-for day_set, metric in [[visit_days, "visit_days"], [checkin_days, "checkin_days"], [present_days, "present_days"]]:
+for day_group in [{"days": visit_days, "metric": "visit_days"}, {"days": checkin_days, "metric": "checkin_days"}, {"days": present_days, "metric": "present_days"}]:
+    day_set = day_group["days"]
+    metric = day_group["metric"]
     for day_text in day_set:
         key = day_text[:7]
         if key in months:

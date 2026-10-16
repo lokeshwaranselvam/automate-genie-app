@@ -9,6 +9,7 @@
 #      form fields: action=save, event_id, observation, outcome, custom_otp (optional)
 # POST action=save_otp, event_id, custom_otp saves OTP before event checkout.
 # Report saves preserve an existing OTP when custom_otp is omitted.
+# Supplied OTP must match Event.custom_whats_app before any OTP write.
 
 action = (frappe.form_dict.get("action") or "get").strip().lower()
 event_id = (frappe.form_dict.get("event_id") or "").strip()
@@ -93,6 +94,11 @@ elif action == "save_otp":
     custom_otp = custom_otp.strip()
     if len(custom_otp) != 4 or custom_otp.strip("0123456789"):
         frappe.throw("OTP must contain exactly 4 digits.")
+    expected_otp = str(event.get("custom_whats_app") or "").strip()
+    if not expected_otp:
+        frappe.throw("OTP is not configured for this Event. Contact your administrator.")
+    if custom_otp != expected_otp:
+        frappe.throw("Wrong OTP")
     event.custom_otp = custom_otp
     event.save(ignore_permissions=True)
     stored_otp = frappe.db.get_value("Event", event.name, "custom_otp")
@@ -125,6 +131,11 @@ elif action == "save":
             frappe.throw("OTP cannot be empty.")
         if len(custom_otp.strip()) != 4 or custom_otp.strip().strip("0123456789"):
             frappe.throw("OTP must contain exactly 4 digits.")
+        expected_otp = str(event.get("custom_whats_app") or "").strip()
+        if not expected_otp:
+            frappe.throw("OTP is not configured for this Event. Contact your administrator.")
+        if custom_otp.strip() != expected_otp:
+            frappe.throw("Wrong OTP")
         event.custom_otp = custom_otp.strip()
 
     report_description = "observation : " + observation + "\nOutcome: " + outcome

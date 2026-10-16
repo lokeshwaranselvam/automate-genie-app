@@ -10,7 +10,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class _UnusedContext extends Fake implements BuildContext {}
 
-Future<Map<String, dynamic>> checkout(String otp) => Event.eventCheckout(
+Future<Map<String, dynamic>> checkout(
+  String otp, {
+  Future<bool> Function()? beforeCheckout,
+}) => Event.eventCheckout(
   'sales@example.test',
   'EVENT-1',
   13,
@@ -22,6 +25,7 @@ Future<Map<String, dynamic>> checkout(String otp) => Event.eventCheckout(
   '[]',
   _UnusedContext(),
   customOtp: otp,
+  beforeCheckout: beforeCheckout,
 );
 
 void main() {
@@ -152,5 +156,97 @@ void main() {
       );
       expect(calls, 1);
     });
+  }
+
+  test(
+    'Frappe Wrong OTP validation is shown and checkout is never sent',
+    () async {
+      var calls = 0;
+      var uploads = 0;
+      await http.runWithClient(
+        () async {
+          await expectLater(
+            checkout(
+              '9999',
+              beforeCheckout: () async {
+                uploads++;
+                return true;
+              },
+            ),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'message',
+                'Wrong OTP',
+              ),
+            ),
+          );
+        },
+        () => MockClient((request) async {
+          calls++;
+          expect(request.url.path, endsWith('/event_visit_report'));
+          return http.Response(
+            jsonEncode({
+              'exc_type': 'ValidationError',
+              '_server_messages': jsonEncode([
+                jsonEncode({'message': 'Wrong OTP', 'raise_exception': 1}),
+              ]),
+            }),
+            417,
+          );
+        }),
+      );
+      expect(calls, 1);
+      expect(uploads, 0);
+    },
+  );
+
+  for (final uploadSucceeded in [true, false]) {
+    test(
+      'OTP is validated before upload; upload success=$uploadSucceeded controls checkout',
+      () async {
+        final stages = <String>[];
+        await http.runWithClient(
+          () async {
+            final result = await checkout(
+              '0123',
+              beforeCheckout: () async {
+                stages.add('upload');
+                return uploadSucceeded;
+              },
+            );
+            if (!uploadSucceeded) expect(result['cancelled'], isTrue);
+          },
+          () => MockClient((request) async {
+            if (request.url.path.endsWith('/event_visit_report')) {
+              stages.add('otp');
+              return http.Response(
+                jsonEncode({
+                  'message': {
+                    'status': 'success',
+                    'action': 'save_otp',
+                    'event_id': 'EVENT-1',
+                    'otp_saved': true,
+                    'custom_otp': '0123',
+                  },
+                }),
+                200,
+              );
+            }
+            stages.add('checkout');
+            return http.Response(
+              jsonEncode({
+                'message': {'status': 'success'},
+              }),
+              200,
+            );
+          }),
+        );
+        expect(
+          stages,
+          uploadSucceeded ? ['otp', 'upload', 'checkout'] : ['otp', 'upload'],
+        );
+      },
+    );
   }
 }

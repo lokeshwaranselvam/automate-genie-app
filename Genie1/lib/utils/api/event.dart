@@ -299,10 +299,25 @@ class Event {
     final message = decoded is Map ? decoded['message'] : null;
     if (response.statusCode != 200 ||
         (decoded is Map && decoded['exc'] != null)) {
+      String? validationMessage;
+      try {
+        final raw = decoded is Map ? decoded['_server_messages'] : null;
+        final messages = raw is String ? jsonDecode(raw) : raw;
+        if (messages is List && messages.isNotEmpty) {
+          final first = messages.first;
+          final entry = first is String ? jsonDecode(first) : first;
+          if (entry is Map && entry['message'] is String) {
+            validationMessage = entry['message'] as String;
+          }
+        }
+      } catch (_) {
+        // Preserve the existing fallback for malformed server messages.
+      }
       final detail =
-          message?.toString().trim().isNotEmpty == true
+          validationMessage ??
+          (message?.toString().trim().isNotEmpty == true
               ? message.toString()
-              : 'Visit report request failed (${response.statusCode}).';
+              : 'Visit report request failed (${response.statusCode}).');
       throw StateError(detail);
     }
     if (message is! Map) {
@@ -720,6 +735,7 @@ class Event {
     String locationLogs,
     BuildContext context, {
     required String customOtp,
+    Future<bool> Function()? beforeCheckout,
   }) async {
     final otp = customOtp.trim();
     if (!EventOtp.isValid(otp)) {
@@ -732,6 +748,10 @@ class Event {
     // The deployed checkout method may ignore unknown arguments. Persist and
     // confirm the exact Event field through the assigned-user API first.
     await saveVisitOtp(eventId: eventId, customOtp: otp);
+    // Photo preparation runs only after the server accepts the OTP.
+    if (beforeCheckout != null && !await beforeCheckout()) {
+      return {'cancelled': true};
+    }
 
     final response = await http
         .post(

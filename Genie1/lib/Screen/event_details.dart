@@ -1050,19 +1050,6 @@ class _EventDetailsState extends State<EventDetails> {
 
     final lastLatLng = prefs.getString('last_lat_lng') ?? '';
 
-    // The checkout photo must reach the Event before checking out.
-    final photosUploaded = await _uploadCheckoutPhotosBeforeCheckout(
-      lat: lat,
-      lng: lng,
-      address: address,
-    );
-    if (!photosUploaded) {
-      if (mounted && _uploadedCheckoutPhotos == 0 && _capturedPhotos.isEmpty) {
-        Warning.show(context, 'Capture image before checkout', 'Warning');
-      }
-      return;
-    }
-
     final response = await Event.eventCheckout(
       userEmail,
       eventId,
@@ -1075,7 +1062,23 @@ class _EventDetailsState extends State<EventDetails> {
       jsonEncode(locationLogs),
       context,
       customOtp: _otpController.text.trim(),
+      beforeCheckout: () async {
+        if (!mounted) return false;
+        final photosUploaded = await _uploadCheckoutPhotosBeforeCheckout(
+          lat: lat,
+          lng: lng,
+          address: address,
+        );
+        if (!photosUploaded &&
+            mounted &&
+            _uploadedCheckoutPhotos == 0 &&
+            _capturedPhotos.isEmpty) {
+          Warning.show(context, 'Capture image before checkout', 'Warning');
+        }
+        return photosUploaded && mounted;
+      },
     );
+    if (response['cancelled'] == true) return;
     if (response['message'] != null) {
       if (response['message']['status'] == 'success') {
         await prefs.setBool('with_event', false);
@@ -1668,7 +1671,6 @@ class _EventDetailsState extends State<EventDetails> {
                       widget.eventid,
                     );
                     if (isValid) {
-                      _otpController.text = otpController.text.trim();
                       resendTimer?.cancel();
                       Navigator.of(dialogContext).pop(true);
 
@@ -1824,7 +1826,13 @@ class _EventDetailsState extends State<EventDetails> {
       }
     } catch (error) {
       debugPrint('Visit check-in/out failed: $error');
-      if (mounted) Warning.show(context, error.toString(), 'Error');
+      if (mounted) {
+        if (error is StateError && error.message == 'Wrong OTP') {
+          Warning.show(context, 'Wrong OTP', 'Warning');
+        } else {
+          Warning.show(context, error.toString(), 'Error');
+        }
+      }
     } finally {
       if (mounted) setState(() => _isActionInProgress = false);
     }
