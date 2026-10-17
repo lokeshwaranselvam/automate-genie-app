@@ -82,6 +82,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   List eventData = [];
   List<String> officeTypes = [];
   List<Map<String, String>> _sessionWebLinks = [];
+  bool _showOpportunities = false;
+  int _opportunityAccessRequest = 0;
   bool _webLinksLoading = false;
   String? _webLinksError;
   int _webLinksRequestId = 0;
@@ -287,6 +289,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       PendingWorkMonitor.start();
       if (!_isActionLoading) unawaited(_getStatusFromServer(force: true));
       if (_selectedTab == 0) unawaited(_refreshHomeSchedule());
+      if (_selectedTab == 4) unawaited(_loadOpportunityVisibility());
     } else {
       _appIsResumed = false;
       PendingWorkMonitor.stop();
@@ -972,6 +975,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   void _selectBottomTab(int index) {
+    if (index == 4) unawaited(_loadOpportunityVisibility());
     if (index == 0) unawaited(_loadHomeTaskTodayCount());
     if (index == 0) unawaited(_loadHomeLeadCount());
     if (_attendancePageOpen || _leaveApplicationOpen) {
@@ -996,6 +1000,22 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       MaterialPageRoute<void>(builder: (_) => const PendingWorkOverviewPage()),
     );
     if (mounted) unawaited(_loadHomePendingCount());
+  }
+
+  Future<void> _loadOpportunityVisibility() async {
+    final request = ++_opportunityAccessRequest;
+    if (!mounted) return;
+    setState(() => _showOpportunities = false);
+    try {
+      // This existing server check requires the exact Sales Manager role.
+      // It is scoped to the authenticated session, not locally saved roles.
+      final allowed = await SiteVisitCreationApi.canCreateVisit();
+      if (mounted && request == _opportunityAccessRequest) {
+        setState(() => _showOpportunities = allowed);
+      }
+    } catch (_) {
+      // Keep the entry hidden when the role cannot be verified.
+    }
   }
 
   Future<void> _openNewVisit() async {
@@ -1055,6 +1075,22 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             style: TextStyle(color: Colors.black54),
           ),
           const SizedBox(height: 14),
+          GlassCard(
+            margin: const EdgeInsets.only(bottom: 10),
+            child: ListTile(
+              leading: const Icon(
+                Icons.restaurant_outlined,
+                color: BrandColors.ink,
+              ),
+              title: const Text('Genieone Canteen'),
+              trailing: const Icon(Icons.open_in_new, size: 18),
+              onTap:
+                  () => _openSessionWebLink(const {
+                    'title': 'Genieone Canteen',
+                    'url': 'https://erp.homegeniegroup.in/Genieone-Canteen',
+                  }),
+            ),
+          ),
           if (_webLinksLoading)
             const Center(
               child: Padding(
@@ -1074,7 +1110,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 28),
               child: Center(
-                child: Text('No dashboards assigned to this account.'),
+                child: Text(
+                  'No additional dashboards assigned to this account.',
+                ),
               ),
             ),
           ..._sessionWebLinks.map(
@@ -1688,17 +1726,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             ),
           ),
           _moreTile(
-            Icons.fact_check_outlined,
-            'Attendance',
-            'View attendance and check-in records',
-            () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => _buildAttendanceTab()),
-              );
-            },
-          ),
-          _moreTile(
             Icons.space_dashboard_outlined,
             'Dashboards',
             'Open assigned dashboards',
@@ -1745,16 +1772,17 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
               );
             },
           ),
-          _moreTile(
-            Icons.handshake_outlined,
-            'Opportunities',
-            'View opportunities created by you',
-            () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => const MyOpportunitiesPage(),
+          if (_showOpportunities)
+            _moreTile(
+              Icons.handshake_outlined,
+              'Opportunities',
+              'View opportunities created by you',
+              () => Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) => const MyOpportunitiesPage(),
+                ),
               ),
             ),
-          ),
           _moreTile(
             Icons.logout_rounded,
             'Log Out',
