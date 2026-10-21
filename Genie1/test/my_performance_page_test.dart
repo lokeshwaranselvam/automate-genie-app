@@ -38,6 +38,7 @@ void main() {
   Widget page({
     Future<PerformanceData> Function(DateTime)? load,
     ValueChanged<int>? onNavigate,
+    Future<bool> Function()? canViewSales,
   }) => MaterialApp(
     debugShowCheckedModeBanner: false,
     theme: ThemeData(fontFamily: 'Roboto', useMaterial3: true),
@@ -45,8 +46,43 @@ void main() {
       initialMonth: DateTime(2026, 10),
       load: load ?? (_) async => PerformanceData.fromJson(performancePayload()),
       onNavigate: onNavigate,
+      canViewSales: canViewSales ?? () async => true,
     ),
   );
+
+  for (final failCheck in [false, true]) {
+    testWidgets(
+      'attendance only without verified sales access, error=$failCheck',
+      (tester) async {
+        var salesRequests = 0;
+        final permission = Completer<bool>();
+        await tester.pumpWidget(
+          page(
+            canViewSales: () => permission.future,
+            load: (_) async {
+              salesRequests++;
+              return PerformanceData.fromJson(performancePayload());
+            },
+          ),
+        );
+        expect(find.text('Sales'), findsNothing);
+        expect(find.byType(SessionWebView), findsNothing);
+        if (failCheck) {
+          permission.completeError(StateError('Permission check unavailable'));
+        } else {
+          permission.complete(false);
+        }
+        await tester.pumpAndSettle();
+        expect(find.text('Sales'), findsNothing);
+        expect(find.text('Attendance'), findsOneWidget);
+        expect(find.byTooltip('Find month'), findsNothing);
+        expect(find.byType(SessionWebView), findsOneWidget);
+        expect(find.text('Leads vs Conversions'), findsNothing);
+        expect(salesRequests, 0);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets('real metrics, monthly comparison, tabs and chart switch', (
     tester,
@@ -95,6 +131,7 @@ void main() {
         },
       ),
     );
+    await tester.pump();
     await tester.tap(find.byTooltip('Previous month'));
     requests['2026-09']!.complete(
       PerformanceData.fromJson(
@@ -154,6 +191,7 @@ void main() {
                           MaterialPageRoute<void>(
                             builder:
                                 (_) => MyPerformancePage(
+                                  canViewSales: () async => true,
                                   load:
                                       (_) async =>
                                           throw StateError('ERP unavailable'),

@@ -62,7 +62,7 @@ class SiteVisitApiTest(unittest.TestCase):
             ]),
             "Event": meta("Event", [
                 field("starts_on"), field("ends_on"), field("custom_product_enquired"),
-                field("event_category", "Select", "Installation\nMeeting\nCall"),
+                field("event_category", "Select", "Installation\nMeasurement\nSite Visit\nClient Visit\nMeeting\nCall"),
                 field("custom_validate"), field("location"), field("assigned_to"),
                 field("event_participants", "Table", "Event Participants"),
             ]),
@@ -115,6 +115,10 @@ class SiteVisitApiTest(unittest.TestCase):
         if doctype == "Product":
             self.assertEqual(kwargs["limit_page_length"], 0)
             return [Row(name="Doors"), Row(name="Windows")]
+        if doctype == "Event Category":
+            return [Row(name=name) for name in [
+                "Installation", "Measurement", "SiteVisit", "Client Visit", "Meeting",
+            ]]
         self.fail("Unexpected product source: " + doctype)
 
     def get_doc(self, value, *args):
@@ -154,7 +158,7 @@ class SiteVisitApiTest(unittest.TestCase):
     def test_options_and_mobile_search_return_title_party_and_custom_product(self):
         result = self.run_api(action="get")
         self.assertEqual(result["product_enquired_options"], ["D'sign Doors", "Windows"])
-        self.assertEqual(result["event_categories"], ["Installation", "Meeting", "Call"])
+        self.assertEqual(result["event_categories"], ["Installation", "Measurement", "Site Visit", "Client Visit"])
         opportunity_query = self.frappe.get_all.call_args_list[0]
         self.assertEqual(set(opportunity_query.kwargs["fields"]),
                          {"name", "owner", "title", "party_name", "custom_product_enquired"})
@@ -194,10 +198,10 @@ class SiteVisitApiTest(unittest.TestCase):
         self.assertEqual([doc.doctype for doc in self.created], ["Comment", "ToDo"])
 
     def test_changed_product_and_non_installation_category_are_saved(self):
-        self.run_api(product_enquired="Windows", category="Meeting")
+        self.run_api(product_enquired="Windows", category="Measurement")
         self.assertEqual(self.event.custom_product_enquired, "Windows")
         self.assertEqual(self.opportunity.custom_product_enquired, "D'sign Doors")
-        self.assertEqual(self.event.event_category, "Meeting")
+        self.assertEqual(self.event.event_category, "Measurement")
 
     def test_opportunity_without_product_returns_empty_selection(self):
         self.opportunity.custom_product_enquired = ""
@@ -206,17 +210,17 @@ class SiteVisitApiTest(unittest.TestCase):
         self.assertEqual(result["product_enquired_options"], ["D'sign Doors", "Windows"])
 
     def test_category_options_and_validation_use_the_same_event_field(self):
-        for category in ["", "Unknown"]:
+        for category in ["", "Unknown", "Meeting", "Call"]:
             with self.subTest(category=category), self.assertRaises(ValueError):
                 self.run_api(category=category)
         self.frappe.new_doc.assert_not_called()
         category_field = self.metas["Event"].get_field("event_category")
         category_field.fieldtype = "Link"
-        category_field.options = "Product"
+        category_field.options = "Event Category"
         result = self.run_api(action="get")
-        self.assertEqual(result["event_categories"], ["Doors", "Windows"])
-        self.run_api(category="Doors")
-        self.assertEqual(self.event.event_category, "Doors")
+        self.assertEqual(result["event_categories"], ["Installation", "Measurement", "SiteVisit", "Client Visit"])
+        self.run_api(category="Measurement")
+        self.assertEqual(self.event.event_category, "Measurement")
 
     def test_invalid_times_and_product_are_rejected_before_inserting(self):
         for overrides in [

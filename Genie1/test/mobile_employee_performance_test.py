@@ -42,12 +42,19 @@ class PerformanceTest(unittest.TestCase):
         }
         self.missing_fields = set()
         self.queries = []
+        self.roles = ['Sales User']
         self.frappe = SimpleNamespace(
             session=SimpleNamespace(user=self.user), form_dict={'month': '2026-10', 'user': 'other'}, response={},
             utils=SimpleNamespace(getdate=getdate, add_months=add_months, nowdate=lambda: '2026-10-13'),
             get_all=self.get_all,
             get_meta=lambda doctype: SimpleNamespace(get_field=lambda name: name not in self.missing_fields),
-            db=SimpleNamespace(exists=lambda doctype, name: name in self.tables),
+            db=SimpleNamespace(exists=lambda doctype, name: (
+                bool(set(self.roles).intersection(['Sales User', 'Sales Manager']))
+                if doctype == 'Has Role' and name == {
+                    'parent': self.user, 'parenttype': 'User', 'parentfield': 'roles',
+                    'role': ['in', ['Sales User', 'Sales Manager']],
+                } else name in self.tables if isinstance(name, str) else False
+            )),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
 
@@ -90,6 +97,23 @@ class PerformanceTest(unittest.TestCase):
         self.assertEqual(sum(row['leads'] for row in result['weekly']), result['sales']['leads'])
         self.assertEqual([row['month'] for row in result['trend']], ['2026-05', '2026-06', '2026-07', '2026-08', '2026-09', '2026-10'])
         self.assertEqual(result['current_user'], self.user)
+
+    def test_sales_permission_uses_either_sales_role_of_session_user(self):
+        self.frappe.form_dict['action'] = 'can_view_sales'
+        for roles, allowed in [([], False), (['Employee'], False),
+                               (['Sales User'], True), (['Sales Manager'], True),
+                               (['Sales User', 'Sales Manager'], True)]:
+            self.roles = roles
+            self.assertEqual(self.run_script(), {
+                'current_user': self.user, 'can_view_sales': allowed,
+            })
+        self.assertEqual(self.queries, [])
+
+    def test_non_sales_users_cannot_request_sales_aggregation(self):
+        self.roles = ['Employee']
+        with self.assertRaisesRegex(ValueError, 'Only Sales User or Sales Manager'):
+            self.run_script()
+        self.assertEqual(self.queries, [])
 
     def test_actual_visits_and_distinct_days_not_scheduled_events(self):
         result = self.run_script()

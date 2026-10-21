@@ -162,6 +162,14 @@ def get_event_category_config():
                 )
             ]
         if options:
+            options = [
+                value for value in options
+                if "".join(value.lower().split()) in [
+                    "installation", "measurement", "sitevisit", "clientvisit",
+                ]
+            ]
+            if not options:
+                frappe.throw("Configure Installation, Measurement, Site Visit, or Client Visit in Event categories.")
             return {"fieldname": candidate, "options": options}
     frappe.throw("Event has no configured category options.")
 

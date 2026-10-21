@@ -23,19 +23,23 @@ class MyPerformancePage extends StatefulWidget {
     this.load,
     this.initialMonth,
     this.onNavigate,
+    this.canViewSales,
   });
 
   final Future<PerformanceData> Function(DateTime)? load;
   final DateTime? initialMonth;
   final ValueChanged<int>? onNavigate;
+  final Future<bool> Function()? canViewSales;
 
   @override
   State<MyPerformancePage> createState() => _MyPerformancePageState();
 }
 
 class _MyPerformancePageState extends State<MyPerformancePage>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabs;
+    with TickerProviderStateMixin {
+  late TabController _tabs;
+  bool _checkingAccess = true;
+  bool _canViewSales = false;
   late DateTime _month;
   PerformanceData? _data;
   bool _loading = true;
@@ -49,14 +53,35 @@ class _MyPerformancePageState extends State<MyPerformancePage>
     super.initState();
     final now = widget.initialMonth ?? DateTime.now();
     _month = DateTime(now.year, now.month);
-    _tabs = TabController(length: 2, vsync: this)..addListener(_tabChanged);
-    _load();
+    _tabs = TabController(length: 1, vsync: this)..addListener(_tabChanged);
+    _checkSalesAccess();
+  }
+
+  Future<void> _checkSalesAccess() async {
+    var allowed = false;
+    try {
+      allowed =
+          await (widget.canViewSales ?? PerformanceApi.instance.canViewSales)();
+    } catch (error) {
+      debugPrint('Could not verify sales performance access: $error');
+    }
+    if (!mounted) return;
+    setState(() {
+      _canViewSales = allowed;
+      _checkingAccess = false;
+      _attendanceOpened = !allowed;
+      if (allowed) {
+        _tabs.dispose();
+        _tabs = TabController(length: 2, vsync: this)..addListener(_tabChanged);
+      }
+    });
+    if (allowed) await _load();
   }
 
   void _tabChanged() {
     if (mounted) {
       setState(() {
-        if (_tabs.index == 1) _attendanceOpened = true;
+        if (!_canViewSales || _tabs.index == 1) _attendanceOpened = true;
       });
     }
   }
@@ -200,11 +225,12 @@ class _MyPerformancePageState extends State<MyPerformancePage>
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
         ),
         actions: [
-          IconButton(
-            tooltip: 'Find month',
-            onPressed: _chooseMonth,
-            icon: const Icon(Icons.search_rounded, color: Colors.white),
-          ),
+          if (_canViewSales)
+            IconButton(
+              tooltip: 'Find month',
+              onPressed: _chooseMonth,
+              icon: const Icon(Icons.search_rounded, color: Colors.white),
+            ),
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(46),
@@ -230,18 +256,19 @@ class _MyPerformancePageState extends State<MyPerformancePage>
                   fontWeight: FontWeight.w700,
                   fontSize: 13,
                 ),
-                tabs: const [
-                  Tab(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.bar_chart_rounded, size: 20),
-                        SizedBox(width: 8),
-                        Flexible(child: Text('Sales')),
-                      ],
+                tabs: [
+                  if (_canViewSales)
+                    const Tab(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.bar_chart_rounded, size: 20),
+                          SizedBox(width: 8),
+                          Flexible(child: Text('Sales')),
+                        ],
+                      ),
                     ),
-                  ),
-                  Tab(
+                  const Tab(
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -257,21 +284,24 @@ class _MyPerformancePageState extends State<MyPerformancePage>
           ),
         ),
       ),
-      body: IndexedStack(
-        index: _tabs.index,
-        children: [
-          _salesBody(),
-          if (_attendanceOpened)
-            const SessionWebView(
-              url: 'https://erp.homegeniegroup.in/GOAD',
-              title: 'Attendance',
-              embedded: true,
-              blockSystemBack: false,
-            )
-          else
-            const SizedBox.shrink(),
-        ],
-      ),
+      body:
+          _checkingAccess
+              ? const Center(child: AgPathLoadingIndicator())
+              : IndexedStack(
+                index: _tabs.index,
+                children: [
+                  if (_canViewSales) _salesBody(),
+                  if (_attendanceOpened)
+                    const SessionWebView(
+                      url: 'https://erp.homegeniegroup.in/GOAD',
+                      title: 'Attendance',
+                      embedded: true,
+                      blockSystemBack: false,
+                    )
+                  else
+                    const SizedBox.shrink(),
+                ],
+              ),
       bottomNavigationBar:
           widget.onNavigate == null
               ? null

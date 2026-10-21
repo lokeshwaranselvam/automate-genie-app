@@ -80,6 +80,74 @@ void main() {
         savedUser: user ?? () async => 'staff@example.test',
       );
 
+  test('sales access comes from the current authenticated session', () async {
+    for (final allowed in [false, true]) {
+      final result =
+          await api(
+            MockClient((request) async {
+              expect(
+                request.url.path,
+                '/api/method/mobile_employee_performance',
+              );
+              expect(request.url.queryParameters, {'action': 'can_view_sales'});
+              expect(request.headers['Cookie'], 'sid=test-sid');
+              expect(request.headers['Cache-Control'], 'no-cache, no-store');
+              expect(request.followRedirects, isFalse);
+              return http.Response(
+                jsonEncode({
+                  'message': {
+                    'current_user': 'staff@example.test',
+                    'can_view_sales': allowed,
+                  },
+                }),
+                200,
+              );
+            }),
+          ).canViewSales();
+      expect(result, allowed);
+    }
+  });
+
+  test(
+    'sales access rejects unknown permissions and another account',
+    () async {
+      for (final message in [
+        {'current_user': 'other@example.test', 'can_view_sales': true},
+        {'current_user': 'staff@example.test'},
+        {'current_user': 'staff@example.test', 'can_view_sales': 'true'},
+      ]) {
+        await expectLater(
+          api(
+            MockClient(
+              (_) async => http.Response(jsonEncode({'message': message}), 200),
+            ),
+          ).canViewSales(),
+          throwsFormatException,
+        );
+      }
+      var calls = 0;
+      await expectLater(
+        api(
+          MockClient(
+            (_) async => http.Response(
+              jsonEncode({
+                'message': {
+                  'current_user': 'staff@example.test',
+                  'can_view_sales': true,
+                },
+              }),
+              200,
+            ),
+          ),
+          user:
+              () async =>
+                  calls++ == 0 ? 'staff@example.test' : 'other@example.test',
+        ).canViewSales(),
+        throwsStateError,
+      );
+    },
+  );
+
   test(
     'loads the selected month with session identity and no redirects',
     () async {

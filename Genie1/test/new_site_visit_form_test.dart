@@ -90,7 +90,14 @@ Future<void> withForm(
           if (request.method == 'GET') ...{
             'opportunities': opportunities,
             'product_enquired_options': ["D'sign Doors", 'Windows'],
-            'event_categories': ['Installation', 'Meeting', 'Call'],
+            'event_categories': [
+              'Installation',
+              'Measurement',
+              'Site Visit',
+              'Client Visit',
+              'Meeting',
+              'Call',
+            ],
             'location_types': ['Site', 'Home', 'Others'],
             'users': [
               {'name': user, 'full_name': 'Sales'},
@@ -1225,9 +1232,17 @@ void main() {
         await tester.ensureVisible(category);
         await tester.tap(category);
         await tester.pumpAndSettle();
-        expect(find.text('Meeting'), findsWidgets);
-        expect(find.text('Call'), findsWidgets);
-        await tester.tap(find.text('Meeting').last);
+        for (final name in [
+          'Installation',
+          'Measurement',
+          'Site Visit',
+          'Client Visit',
+        ]) {
+          expect(find.text(name), findsWidgets);
+        }
+        expect(find.text('Meeting'), findsNothing);
+        expect(find.text('Call'), findsNothing);
+        await tester.tap(find.text('Measurement').last);
         await tester.pumpAndSettle();
         final selected = tester.widget<DropdownButton<String>>(
           find.descendant(
@@ -1235,7 +1250,7 @@ void main() {
             matching: find.byType(DropdownButton<String>),
           ),
         );
-        expect(selected.value, 'Meeting');
+        expect(selected.value, 'Measurement');
 
         await tester.ensureVisible(find.text('Edit customer location'));
         await tester.tap(find.text('Edit customer location'));

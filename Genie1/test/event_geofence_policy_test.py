@@ -15,7 +15,9 @@ class EventGeofencePolicyTest(unittest.TestCase):
                             if isinstance(node, ast.FunctionDef) and node.name == "event_details")
             function.decorator_list = []
             for category in ("Installation", " installation ", "INSTALLATION",
-                             "Site Visit", "Complaint Visit", "Meeting", "", None):
+                             "Measurement", " measurement ", "MEASUREMENT",
+                             "Site Visit", "SiteVisit", "Client Visit",
+                             "Complaint Visit", "Meeting", "", None):
                 with self.subTest(filename=filename, category=category):
                     participant = SimpleNamespace(reference_doctype="Opportunity",
                                                   reference_docname="OPP-1")
@@ -35,7 +37,8 @@ class EventGeofencePolicyTest(unittest.TestCase):
                     self.assertEqual(result, {
                         "event": event_data,
                         "requires_geofence": category not in (
-                            "Installation", " installation ", "INSTALLATION"),
+                            "Installation", " installation ", "INSTALLATION",
+                            "Measurement", " measurement ", "MEASUREMENT"),
                         "reference_details": [{
                             "doctype": "Opportunity", "name": "OPP-1",
                             "opportunity_from": "Customer", "party_name": "CUSTOMER-1",

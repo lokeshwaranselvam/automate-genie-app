@@ -35,7 +35,7 @@ def event_list(user):
 
     assigned_events = frappe.get_all("Event",
         filters={"name": ["in", event_names],"status":"Open"},
-        fields=["name", "subject", "starts_on", "ends_on","custom_location","event_type"]
+        fields=["name", "subject", "starts_on", "ends_on","custom_location","event_type", "custom_distance"]
     )
     return assigned_events
 
@@ -74,7 +74,7 @@ def event_details(id):
     doc = frappe.get_doc("Event",id)
     response = {
     "event": doc.as_dict(),
-    "requires_geofence": (doc.get("event_category") or "").strip().lower() != "installation",
+    "requires_geofence": (doc.get("event_category") or "").strip().lower() not in ("installation", "measurement"),
     "reference_details": []
     }
 

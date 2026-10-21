@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../utils/api/event.dart';
+import '../utils/site_visit_distance.dart';
 import '../utils/api/site_visit_creation_api.dart';
 import 'dart:async';
 import 'event_details.dart';
@@ -338,6 +339,21 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
   @override
   Widget build(BuildContext context) {
     final visits = _visibleVisits;
+    final distances =
+        _visits
+            .map((visit) => SiteVisitDistance.meters(visit['custom_distance']))
+            .whereType<double>()
+            .toList();
+    final totalDistance = distances.fold<double>(
+      0,
+      (total, distance) => total + distance,
+    );
+    final distanceLabel =
+        _loading && _visits.isEmpty
+            ? 'Loading…'
+            : distances.isEmpty && (_visits.isNotEmpty || _error != null)
+            ? 'Not recorded'
+            : '${(totalDistance / 1000).toStringAsFixed(2)} km';
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
       appBar: brandAppBar(
@@ -347,6 +363,41 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
           'Site Visits',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
         ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Tooltip(
+              message:
+                  'Recorded distance for ${distances.length} of ${_visits.length} loaded visits. Includes all tabs; search and type filters do not change this total.',
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 110),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Text(
+                      'Total travelled',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Colors.white, fontSize: 10),
+                    ),
+                    Text(
+                      distanceLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(52),
           child: Row(
@@ -502,6 +553,7 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     final location = _location(visit);
     final title = _customer(visit);
     final actionLabel = overdue ? 'Details' : 'Start Visit';
+    final distance = SiteVisitDistance.meters(visit['custom_distance']);
     return Card(
       color: Colors.white,
       elevation: 0,
@@ -631,6 +683,15 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
                         style: TextStyle(fontSize: 11),
                       ),
                     ),
+                  const SizedBox(height: 4),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 110),
+                    child: Text(
+                      'Travelled: ${distance == null ? 'Not recorded' : SiteVisitDistance.format(distance)}',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(color: _visitMuted, fontSize: 11),
+                    ),
+                  ),
                   if (!completed) ...[
                     const SizedBox(height: 6),
                     FilledButton(

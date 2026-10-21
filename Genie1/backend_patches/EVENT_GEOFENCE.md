@@ -1,4 +1,4 @@
-# Installation event geofence exception
+# Installation and Measurement event geofence exceptions
 
 This patch is for the custom Frappe application, **not a restricted Server Script**.
 
@@ -12,7 +12,7 @@ def event_details(id):
     doc = frappe.get_doc("Event",id)
     response = {
     "event": doc.as_dict(),
-    "requires_geofence": (doc.get("event_category") or "").strip().lower() != "installation",
+    "requires_geofence": (doc.get("event_category") or "").strip().lower() not in ("installation", "measurement"),
     "reference_details": []
     }
 ```
@@ -30,18 +30,20 @@ python -m py_compile apps/ts_homegenie/ts_homegenie/ts_homegenie/utils/api.py
 bench restart
 ```
 
-Deploy this API change and install a build containing the updated
+Deploy this API change. If the installed app already supports the Installation
+exception through `requires_geofence`, no APK rebuild is needed for Measurement.
+Otherwise, install a build containing the updated
 `lib/Screen/event_details.dart`. The app reads `requires_geofence` from the
 existing event details response, so there is no extra API request. Missing flags
 retain the existing restrictions for compatibility with an older server.
 
-Installation events skip the existing 100 m check-in distance check and the
+Installation and Measurement events skip the existing 100 m check-in distance check and the
 200 m monitoring after check-in. All other categories retain those existing
 radii. Saved-location requirements, GPS permissions/recording, live tracking,
 attendance prerequisites, reports, OTPs, photos and checkout are unchanged.
 
-Verify on a phone with an assigned Installation event outside the saved-location
-radius, then verify a different category still blocks check-in outside 100 m
+Verify on a phone with assigned Installation and Measurement events outside the saved-location
+radius, then verify Site Visit and Client Visit still block check-in outside 100 m
 and starts 200 m monitoring after a successful check-in. Confirm that employee
 attendance prerequisites still apply and that the Event/Visit records are saved.
 The API still has the original check-in behavior; this change does not add

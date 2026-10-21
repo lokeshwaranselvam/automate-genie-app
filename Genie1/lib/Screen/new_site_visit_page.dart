@@ -151,7 +151,16 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
         _eventCategories =
             (result['event_categories'] as List)
                 .map((value) => value.toString().trim())
-                .where((value) => value.isNotEmpty)
+                .where(
+                  (value) => const {
+                    'installation',
+                    'measurement',
+                    'sitevisit',
+                    'clientvisit',
+                  }.contains(
+                    value.toLowerCase().replaceAll(RegExp(r'\s+'), ''),
+                  ),
+                )
                 .toSet()
                 .toList();
         _eventCategory =

@@ -81,6 +81,48 @@ class PerformanceApi {
   final Uri? _site;
   final Future<String?> Function() _sessionId, _savedUser;
 
+  /// Checks the roles of the authenticated ERP session, never locally saved roles.
+  Future<bool> canViewSales() async {
+    final sid = await _sessionId();
+    final user = await _savedUser();
+    if (sid == null || sid.isEmpty || user == null || user.isEmpty) {
+      throw StateError('Your ERP session expired. Please sign in again.');
+    }
+    final value = _site == null ? dotenv.env['SITE_URL']?.trim() ?? '' : '';
+    if (_site == null && value.isEmpty) {
+      throw StateError('SITE_URL is not configured.');
+    }
+    final base = _site ?? Uri.parse(value.endsWith('/') ? value : '$value/');
+    final request = http.Request(
+      'GET',
+      base
+          .resolve('api/method/mobile_employee_performance')
+          .replace(queryParameters: {'action': 'can_view_sales'}),
+    )..followRedirects = false;
+    request.headers.addAll({
+      'Accept': 'application/json',
+      'Cookie': 'sid=$sid',
+      'Cache-Control': 'no-cache, no-store',
+    });
+    final response = await (() async {
+      return http.Response.fromStream(await _client.send(request));
+    })().timeout(const Duration(seconds: 10));
+    await _assertSession(user, sid);
+    if (response.statusCode != 200) {
+      throw StateError('Could not verify sales performance access.');
+    }
+    final decoded = jsonDecode(response.body);
+    final message = decoded is Map ? decoded['message'] : null;
+    if (message is! Map ||
+        message['current_user'] != user ||
+        message['can_view_sales'] is! bool) {
+      throw const FormatException(
+        'Invalid sales performance permission response.',
+      );
+    }
+    return message['can_view_sales'] == true;
+  }
+
   Future<PerformanceData> load(DateTime month) async {
     final sid = await _sessionId();
     final user = await _savedUser();
