@@ -1,4 +1,5 @@
-import 'dart:io';
+import '../platform/multipart_file.dart';
+import 'package:homegenie/utils/platform/platform_file.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -54,7 +55,9 @@ class ImageUploadApi {
       request.headers['Authorization'] = token;
 
       request.files.add(
-        await http.MultipartFile.fromPath('file', filePath, filename: fileName),
+        await platformMultipartFile('file', filePath,
+          filename: fileName,
+        ),
       );
 
       debugPrint('📤 Uploading image "$fileName" to Event: $docname ...');
@@ -105,7 +108,9 @@ class ImageUploadApi {
       request.fields['folder'] = 'Home/Attachments';
       request.headers['Authorization'] = token;
       request.files.add(
-        await http.MultipartFile.fromPath('file', filePath, filename: fileName),
+        await platformMultipartFile('file', filePath,
+          filename: fileName,
+        ),
       );
 
       final streamedResponse = await request.send().timeout(

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'notifications_page.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
@@ -143,8 +144,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
-      await Permission.microphone.request();
-      await Permission.storage.request();
+      if (!kIsWeb) {
+        await Permission.microphone.request();
+        await Permission.storage.request();
+      }
 
       if (permission == LocationPermission.denied) {
         Warning.show(context, 'Location permission denied.', 'Error');

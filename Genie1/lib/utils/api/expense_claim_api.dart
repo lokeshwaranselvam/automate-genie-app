@@ -1,5 +1,6 @@
+import '../platform/multipart_file.dart';
 import 'dart:convert';
-import 'dart:io';
+import 'package:homegenie/utils/platform/platform_file.dart';
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
@@ -389,9 +390,7 @@ class ExpenseClaimApi {
       });
       for (final billPath in billPaths) {
         request.files.add(
-          await http.MultipartFile.fromPath(
-            'file',
-            billPath,
+          await platformMultipartFile('file', billPath,
             filename: path.basename(billPath),
           ),
         );

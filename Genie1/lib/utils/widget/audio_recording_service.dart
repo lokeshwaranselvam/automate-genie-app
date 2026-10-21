@@ -1,11 +1,13 @@
+import 'package:flutter/foundation.dart';
 import 'dart:async';
-import 'dart:io';
+import 'package:homegenie/utils/platform/platform_file.dart';
 import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 
 class AudioRecordingService {
-  static final AudioRecordingService _instance = AudioRecordingService._internal();
+  static final AudioRecordingService _instance =
+      AudioRecordingService._internal();
   factory AudioRecordingService() => _instance;
   AudioRecordingService._internal();
 
@@ -15,17 +17,34 @@ class AudioRecordingService {
   bool isRecording = false;
   bool isPaused = false;
   String? lastRecordingPath;
+  String _extension = 'm4a';
   final List<String> _recordingPaths = [];
   final TimerService timerService = TimerService();
 
   Future<void> startRecording() async {
     await record.create(recorderId);
-    const config = RecordConfig(encoder: AudioEncoder.aacLc);
+    var encoder = AudioEncoder.aacLc;
+    if (kIsWeb && !await record.isEncoderSupported(recorderId, encoder)) {
+      encoder = AudioEncoder.opus;
+      if (!await record.isEncoderSupported(recorderId, encoder)) {
+        await record.dispose(recorderId);
+        throw StateError('Audio recording is not supported by this browser.');
+      }
+    }
+    _extension = encoder == AudioEncoder.opus ? 'webm' : 'm4a';
+    final config = RecordConfig(encoder: encoder);
 
-    final dir = await getExternalStorageDirectory();
+    final dir = kIsWeb ? null : await getExternalStorageDirectory();
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final path = '${dir!.path}/recording_$timestamp.m4a';
+    final path =
+        kIsWeb
+            ? 'recording_$timestamp.m4a'
+            : '${dir!.path}/recording_$timestamp.m4a';
 
+    if (kIsWeb && !await record.hasPermission(recorderId)) {
+      await record.dispose(recorderId);
+      throw StateError('Allow microphone access to record visit audio.');
+    }
     await record.start(recorderId, config, path: path);
 
     isRecording = true;
@@ -56,7 +75,15 @@ class AudioRecordingService {
   }
 
   Future<void> stopRecording() async {
-    await record.stop(recorderId);
+    final savedPath = await record.stop(recorderId);
+    if (kIsWeb && savedPath != null) {
+      final audio = await File(savedPath).readAsBytes();
+      final saved = await File('/memory/recording_${DateTime.now().millisecondsSinceEpoch}.$_extension').writeAsBytes(audio);
+      _recordingPaths.remove(lastRecordingPath);
+      _recordingPaths.add(saved.path);
+      lastRecordingPath = saved.path;
+      await File(savedPath).delete();
+    }
     await record.dispose(recorderId);
     isRecording = false;
     isPaused = false;
@@ -79,8 +106,6 @@ class AudioRecordingService {
 
   bool get isRecordingActive => isRecording && !isPaused;
 }
-
-
 
 class TimerService {
   final _timerController = StreamController<Duration>.broadcast();

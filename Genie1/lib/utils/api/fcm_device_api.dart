@@ -1,6 +1,9 @@
+import '../platform/push_worker.dart';
+import '../platform/web_firebase_config.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:homegenie/utils/platform/platform_file.dart';
 import 'dart:math';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -40,6 +43,7 @@ class FcmDeviceApi {
   }
 
   static void initializeTokenRefreshListener() {
+    if (kIsWeb && Firebase.apps.isEmpty) return;
     _tokenRefreshSubscription ??= FirebaseMessaging.instance.onTokenRefresh
         .listen(
           (token) {
@@ -56,6 +60,8 @@ class FcmDeviceApi {
   static Future<void> requestPermissionAndRegister({
     bool rotateToken = false,
   }) async {
+    if (kIsWeb && (Firebase.apps.isEmpty || WebFirebaseConfig.vapidKey == null))
+      return;
     // A restored session can share pending work. An explicit login must still
     // rotate even if a restore registration was already in progress.
     if (rotateToken && _permissionRequest != null) await _permissionRequest;
@@ -93,7 +99,10 @@ class FcmDeviceApi {
       if (rotateToken) {
         // Firebase owns token generation; invalidate the previous registration
         // only after successful password authentication, never on app restore.
-        previousToken = await FirebaseMessaging.instance.getToken();
+        previousToken = await FirebaseMessaging.instance.getToken(
+          vapidKey: kIsWeb ? WebFirebaseConfig.vapidKey : null,
+          serviceWorkerScriptPath: pushWorkerPath,
+        );
       }
       String? token;
       for (var attempt = 0; attempt < (rotateToken ? 2 : 1); attempt++) {
@@ -101,7 +110,10 @@ class FcmDeviceApi {
           await FirebaseMessaging.instance.deleteToken();
           await _assertSession(sid);
         }
-        token = await FirebaseMessaging.instance.getToken();
+        token = await FirebaseMessaging.instance.getToken(
+          vapidKey: kIsWeb ? WebFirebaseConfig.vapidKey : null,
+          serviceWorkerScriptPath: pushWorkerPath,
+        );
         if (token == null || token.isEmpty || token != previousToken) break;
       }
       if (token == null || token.isEmpty) {
@@ -219,7 +231,12 @@ class FcmDeviceApi {
       final package = await PackageInfo.fromPlatform();
       final metadata = {
         'fcm_token': fcmToken,
-        'platform': Platform.isAndroid ? 'android' : 'ios',
+        'platform':
+            kIsWeb
+                ? 'web'
+                : Platform.isAndroid
+                ? 'android'
+                : 'ios',
         'device_id': await _registrationDeviceId(),
         'app_version': package.version,
         'build_version': int.tryParse(package.buildNumber) ?? 0,

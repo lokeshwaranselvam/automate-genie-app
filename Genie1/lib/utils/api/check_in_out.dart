@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
@@ -27,10 +28,10 @@ class Check {
     try {
       final baseUrl = dotenv.env['SITE_URL'];
       final uri = Uri.parse('$baseUrl/api/method/ping');
-      final response = await http.post(
-        uri,
-        headers: {'Accept': 'application/json'},
-      );
+      // Browser cookies are automatic; a read-only ping must not need CSRF.
+      final response = kIsWeb
+          ? await http.get(uri, headers: {'Accept': 'application/json'})
+          : await http.post(uri, headers: {'Accept': 'application/json'});
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
 

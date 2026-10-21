@@ -50,3 +50,9 @@ app.*.map.json
 /android/app/*.keystore
 /android/app/*.p12
 /android/app/*.pfx
+
+# PWA release packages and local analysis output
+/dist/
+/pwa_browser_tests.log
+/pwa_tests.log
+/pwa_analysis.log

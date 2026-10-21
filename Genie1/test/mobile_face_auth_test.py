@@ -382,8 +382,8 @@ class MobileFaceGuardTest(unittest.TestCase):
                      "arun.itdigital@homegeniegroup.com"):
             self.user = user
             self.frappe.session.user = user
-            for command, log_type in (("itgenie.api.checkin", "IN"),
-                                      ("itgenie.api.checkout", "OUT")):
+            for command, log_type in (("itgenie.api_utils.checkin", "IN"),
+                                      ("itgenie.api_utils.checkout", "OUT")):
                 with self.subTest(user=user, command=command):
                     with self.assertRaisesRegex(ValueError, "Complete face verification"):
                         self.run_guard("mobile_face_employee_checkin_guard",
@@ -395,8 +395,8 @@ class MobileFaceGuardTest(unittest.TestCase):
     def test_other_users_skip_both_receipt_hooks_without_modifying_records(self):
         self.user = "employee@example.test"
         self.frappe.session.user = self.user
-        for command, log_type in (("itgenie.api.checkin", "IN"),
-                                  ("itgenie.api.checkout", "OUT")):
+        for command, log_type in (("itgenie.api_utils.checkin", "IN"),
+                                  ("itgenie.api_utils.checkout", "OUT")):
             self.run_guard("mobile_face_employee_checkin_guard",
                            Document(employee="EMP-1", log_type=log_type), cmd=command)
             self.run_guard("mobile_face_employee_checkin_attach",
@@ -410,14 +410,14 @@ class MobileFaceGuardTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "employee or action"):
                 self.run_guard("mobile_face_employee_checkin_guard",
                                Document(employee=employee, log_type=log_type),
-                               cmd="itgenie.api.checkin")
+                               cmd="itgenie.api_utils.checkin")
 
     def test_guest_still_blocked_in_both_hooks(self):
         self.frappe.session.user = "Guest"
         for script in ("mobile_face_employee_checkin_guard", "mobile_face_employee_checkin_attach"):
             with self.assertRaisesRegex(ValueError, "Sign in"):
                 self.run_guard(script, Document(employee="EMP-1", log_type="IN"),
-                               cmd="itgenie.api.checkin")
+                               cmd="itgenie.api_utils.checkin")
 
     def test_int8_block_receipt_is_consumed_by_existing_attendance_guard(self):
         version = "opencv-sface-2021dec-int8bq-v1"

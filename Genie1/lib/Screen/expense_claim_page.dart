@@ -1,8 +1,11 @@
+import 'package:flutter/foundation.dart';
+import '../utils/widget/camera_service.dart';
+import '../utils/platform/file_image.dart';
 import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
-import 'dart:io';
+import 'package:homegenie/utils/platform/platform_file.dart';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -208,7 +211,10 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
     try {
       final multiple = _options!.supportsMultipleExpenses;
       final List<XFile> selected;
-      if (source == ImageSource.gallery && multiple) {
+      if (kIsWeb && source == ImageSource.camera) {
+        final photo = await CameraService.capturePhoto();
+        selected = photo == null ? [] : [XFile.fromData(await photo.readAsBytes(), name: 'bill.jpg', mimeType: 'image/jpeg')];
+      } else if (source == ImageSource.gallery && multiple) {
         selected = await _picker.pickMultiImage(
           imageQuality: 88,
           maxWidth: 2200,
@@ -220,6 +226,11 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
           maxWidth: 2200,
         );
         selected = image == null ? [] : [image];
+      }
+      if (kIsWeb) {
+        for (final bill in selected) {
+          await File(bill.path).writeAsBytes(await bill.readAsBytes());
+        }
       }
       if (selected.isNotEmpty && mounted && !_submitting) {
         setState(() {
@@ -764,8 +775,8 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
           borderRadius: BorderRadius.circular(10),
           child: Stack(
             children: [
-              Image.file(
-                File(_bills[index].path),
+              Image(
+                image: fileImage(File(_bills[index].path)),
                 width: 104,
                 height: 100,
                 fit: BoxFit.cover,

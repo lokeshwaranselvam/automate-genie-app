@@ -282,8 +282,25 @@ class MobileLoginBackendTest(unittest.TestCase):
         self.login('a' * 43, platform='ios')
         self.assertEqual(self.bindings[self.user].platform, 'ios')
 
+    def test_web_login_preserves_single_installation_binding(self):
+        self.assertTrue(self.login('a' * 43, platform='web')['single_device_login'])
+        self.assertEqual(self.bindings[self.user].platform, 'web')
+        result = self.login('b' * 43, platform='android')
+        self.assertEqual(result['http_status_code'], 409)
+        self.assertEqual(len(self.created_sessions), 1)
+
+    def test_pwa_alias_uses_web_platform_and_retains_device_binding(self):
+        first = self.login('a' * 43, platform=' PWA ')
+        self.assertTrue(first['single_device_login'])
+        self.assertEqual(self.bindings[self.user].platform, 'web')
+        second = self.login('a' * 43, platform='web')
+        self.assertEqual(first['token'], second['token'])
+        self.assertEqual(self.bindings[self.user].platform, 'web')
+        blocked = self.login('b' * 43, platform='pwa')
+        self.assertEqual(blocked['http_status_code'], 409)
+
     def test_platform_validation_happens_before_session_or_binding_changes(self):
-        for platform in ('web', '', 123, ['android']):
+        for platform in ('desktop', '', 123, ['android']):
             with self.subTest(platform=platform), self.assertRaisesRegex(ValueError, '[Pp]latform'):
                 self.login('a' * 43, platform=platform)
         self.assertEqual(self.created_sessions, [])

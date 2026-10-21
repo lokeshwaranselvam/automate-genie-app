@@ -28,14 +28,14 @@ Nothing has been installed on the live ERP by the local code changes.
 
 ## Deploy backend first
 
-The public mobile API module is `itgenie.api`. MariaDB is required;
+The public mobile API module is `itgenie.api_utils`. MariaDB is required;
 the code uses connection-scoped advisory locks that survive Frappe's internal
 login commits. Redis cache eviction does not remove the durable device binding.
 
 1. Back up any existing destination files and deploy the complete API and helper:
 
    ```text
-   backend_patches/api.py         -> apps/itgenie/itgenie/api.py
+   backend_patches/api.py         -> apps/itgenie/itgenie/api_utils.py
    backend_patches/mobile_auth.py -> apps/itgenie/itgenie/mobile_auth.py
    ```
 
@@ -74,7 +74,7 @@ login commits. Redis cache eviction does not remove the durable device binding.
 3. Run `bench restart` after deploying the files. Configure Flutter `.env`:
 
    ```env
-   URL=https://erp.homegeniegroup.in/api/method/itgenie.api
+   URL=https://erp.homegeniegroup.in/api/method/itgenie.api_utils
    SITE_URL=https://erp.homegeniegroup.in/
    ```
 
@@ -119,7 +119,7 @@ already vulnerable to the old rotation on every mobile login.
 
 The updated Flutter login sends `platform: android` or `platform: ios`.
 Deploy the updated `mobile_auth.py` together with this login wrapper in the
-current live `apps/itgenie/itgenie/api.py`; preserve every other live method:
+current live `apps/itgenie/itgenie/api_utils.py`; preserve every other live method:
 
 ```python
 @frappe.whitelist(allow_guest=True, methods=["POST"])

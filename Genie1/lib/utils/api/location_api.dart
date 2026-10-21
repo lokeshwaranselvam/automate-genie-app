@@ -1,3 +1,6 @@
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter/foundation.dart';
+import '../platform/browser_maps.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -22,7 +25,12 @@ class LocationSearchResult {
 }
 
 class LocationHelper {
-  static const String _googleApiKey = 'AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI';
+  static final String _googleApiKey =
+      kIsWeb
+          ? (dotenv.env['GOOGLE_MAPS_WEB_API_KEY']?.trim().isNotEmpty == true
+              ? dotenv.env['GOOGLE_MAPS_WEB_API_KEY']!.trim()
+              : 'AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI')
+          : 'AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI';
 
   static Future<List<LatLng>> getTwoWheelerRoute({
     required LatLng origin,
@@ -116,6 +124,10 @@ class LocationHelper {
     double lat,
     double lon,
   ) async {
+    if (kIsWeb) {
+      final data = await browserMapCall('reverse', {'lat': lat, 'lng': lon});
+      return data['address'] as String;
+    }
     final url = Uri.parse(
       'https://maps.googleapis.com/maps/api/geocode/json?latlng=$lat,$lon&key=$_googleApiKey',
     );
@@ -154,7 +166,7 @@ class LocationHelper {
     // http.get follows redirects automatically, but its Request URL may still
     // be the original maps.app.goo.gl link. Follow Location headers ourselves
     // so the expanded URL can be inspected for coordinates/place details.
-    var resolvedUri = await _expandMapUrl(inputUri);
+    var resolvedUri = kIsWeb ? inputUri : await _expandMapUrl(inputUri);
 
     final urls = <Uri>[resolvedUri, inputUri];
     for (final uri in urls) {
@@ -197,6 +209,15 @@ class LocationHelper {
       address = raw;
     }
 
+    if (kIsWeb) {
+      final data = await browserMapCall('geocode', {
+        if (placeId != null) 'placeId': placeId else 'address': address ?? raw,
+      });
+      return LatLng(
+        (data['lat'] as num).toDouble(),
+        (data['lng'] as num).toDouble(),
+      );
+    }
     final query = <String, String>{'key': _googleApiKey};
     if (placeId != null && placeId.trim().isNotEmpty) {
       query['place_id'] = placeId.trim();
@@ -293,6 +314,22 @@ class LocationHelper {
     required LatLng bias,
   }) async {
     if (query.trim().isEmpty) return [];
+    if (kIsWeb) {
+      final data = await browserMapCall('suggest', {
+        'query': query.trim(),
+        'sessionToken': sessionToken,
+        'lat': bias.latitude,
+        'lng': bias.longitude,
+      });
+      return (data['results'] as List)
+          .map(
+            (row) => LocationSuggestion(
+              address: row['address'] as String,
+              placeId: row['placeId'] as String,
+            ),
+          )
+          .toList();
+    }
     final response = await http
         .post(
           Uri.https('places.googleapis.com', '/v1/places:autocomplete'),
@@ -342,6 +379,19 @@ class LocationHelper {
     LocationSuggestion suggestion, {
     required String sessionToken,
   }) async {
+    if (kIsWeb) {
+      final data = await browserMapCall('place', {
+        'placeId': suggestion.placeId,
+        'sessionToken': sessionToken,
+      });
+      return LocationSearchResult(
+        address: suggestion.address,
+        coordinates: LatLng(
+          (data['lat'] as num).toDouble(),
+          (data['lng'] as num).toDouble(),
+        ),
+      );
+    }
     final response = await http
         .get(
           Uri(
@@ -379,6 +429,20 @@ class LocationHelper {
   ) async {
     final address = query.trim();
     if (address.isEmpty) return [];
+    if (kIsWeb) {
+      final data = await browserMapCall('search', {'address': address});
+      return (data['results'] as List)
+          .map(
+            (row) => LocationSearchResult(
+              address: row['address'] as String,
+              coordinates: LatLng(
+                (row['lat'] as num).toDouble(),
+                (row['lng'] as num).toDouble(),
+              ),
+            ),
+          )
+          .toList();
+    }
     final response = await http
         .get(
           Uri.https('maps.googleapis.com', '/maps/api/geocode/json', {
@@ -478,6 +542,7 @@ class LocationHelper {
     int height = 320,
     int zoom = 16,
   }) async {
+    if (kIsWeb) return null;
     final url = Uri.parse(
       'https://maps.googleapis.com/maps/api/staticmap'
       '?center=$lat,$lon'

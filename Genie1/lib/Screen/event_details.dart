@@ -1,7 +1,10 @@
+import '../utils/platform/multipart_file.dart';
+import '../utils/platform/file_image.dart';
+import 'package:flutter/foundation.dart';
 import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
-import 'dart:io';
+import 'package:homegenie/utils/platform/platform_file.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -174,6 +177,7 @@ class _EventDetailsState extends State<EventDetails> {
   }
 
   void _listenToPhoneState() async {
+    if (kIsWeb) return;
     await Permission.phone.request();
 
     PhoneState.stream.listen((PhoneState state) async {
@@ -1422,10 +1426,8 @@ class _EventDetailsState extends State<EventDetails> {
       request.fields['docname'] = docname;
       request.headers['Authorization'] = token;
       request.files.add(
-        await http.MultipartFile.fromPath(
-          'file',
-          filePath,
-          filename: 'event.mp3',
+        await platformMultipartFile('file', filePath,
+          filename: kIsWeb ? filePath.split('/').last : 'event.mp3',
         ),
       );
 
@@ -1713,7 +1715,7 @@ class _EventDetailsState extends State<EventDetails> {
           margin: const EdgeInsets.only(right: 8),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            image: DecorationImage(image: FileImage(file), fit: BoxFit.cover),
+            image: DecorationImage(image: fileImage(file), fit: BoxFit.cover),
           ),
         ),
         Positioned(

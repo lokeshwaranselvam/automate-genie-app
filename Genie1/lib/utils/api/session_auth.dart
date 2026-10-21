@@ -1,3 +1,4 @@
+import '../platform/temporary_files.dart';
 import 'dart:convert';
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -66,7 +67,9 @@ class SessionAuthApi {
             'usr': username,
             'pwd': password,
             'device_key': await MobileLoginDevice.key(),
-            if (defaultTargetPlatform == TargetPlatform.android)
+            if (kIsWeb)
+              'platform': 'web'
+            else if (defaultTargetPlatform == TargetPlatform.android)
               'platform': 'android'
             else if (defaultTargetPlatform == TargetPlatform.iOS)
               'platform': 'ios',
@@ -114,7 +117,12 @@ class SessionAuthApi {
       throw StateError('ERP did not return complete mobile login credentials.');
     }
 
-    final sid = _sidFrom(response);
+    // Set-Cookie is deliberately hidden by browsers. Validate the browser's
+    // cookie session on ERP, then keep a local generation marker for forms.
+    final sid =
+        kIsWeb
+            ? 'browser-${DateTime.now().microsecondsSinceEpoch}'
+            : _sidFrom(response);
     if (sid == null || sid.isEmpty) {
       throw Exception(
         'Frappe login succeeded but did not return a session cookie.',
@@ -197,8 +205,10 @@ class SessionAuthApi {
 
     try {
       final user = await _fetchLoggedInUser(sid);
-      if (user == null) {
+      final expectedUser = prefs.getString(_usernameKey)?.trim();
+      if (user == null || (kIsWeb && expectedUser != null && expectedUser.toLowerCase() != user.toLowerCase())) {
         await clearSession();
+        if (kIsWeb) await prefs.remove('token');
         return null;
       }
       await prefs.setString(_usernameKey, user);
@@ -418,6 +428,7 @@ class SessionAuthApi {
   }
 
   static Future<void> clearSession() async {
+    clearTemporaryFiles();
     await FaceTemplateCache.instance.clear();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_sidKey);

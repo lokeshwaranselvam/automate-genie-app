@@ -89,6 +89,13 @@ class RegistrationTests(unittest.TestCase):
             self.module.register_device('', 'android')
         self.frappe.get_doc.assert_not_called()
 
+    def test_web_registration_preserves_existing_login_binding(self):
+        self.doc.values.update({'custom_mobile_device_hash': 'hash', 'custom_mobile_session_id': 'sid'})
+        self.module.register_device('browser-token', 'web')
+        self.assertEqual(self.doc.values['platform'], 'web')
+        self.assertEqual(self.doc.values['custom_mobile_device_hash'], 'hash')
+        self.assertEqual(self.doc.values['custom_mobile_session_id'], 'sid')
+
     def test_invalid_platform_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'Platform'):
             self.module.register_device('token', 'unknown')

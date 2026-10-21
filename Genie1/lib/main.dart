@@ -1,3 +1,7 @@
+import 'utils/platform/app_navigation.dart';
+import 'package:flutter/foundation.dart';
+import 'utils/platform/browser_runtime.dart';
+import 'utils/platform/web_firebase_config.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 
@@ -13,7 +17,9 @@ import 'utils/widget/location_permission_helper.dart';
 import 'package:overlay_support/overlay_support.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-Future<void> main() async {
+void main() => runBrowserApp(_startApp);
+
+Future<void> _startApp() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   SystemChrome.setSystemUIOverlayStyle(
@@ -25,9 +31,18 @@ Future<void> main() async {
 
   await dotenv.load(fileName: ".env");
 
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  await FcmNotificationService.initialize();
-  FcmDeviceApi.initializeTokenRefreshListener();
+  if (!kIsWeb || WebFirebaseConfig.isConfigured) {
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      await FcmNotificationService.initialize();
+      FcmDeviceApi.initializeTokenRefreshListener();
+    } catch (error) {
+      if (!kIsWeb) rethrow;
+      debugPrint('Web push could not initialize: ${error.runtimeType}');
+    }
+  }
 
   runApp(const OverlaySupport.global(child: Myapp()));
 }
@@ -61,6 +76,7 @@ class _MyappState extends State<Myapp> {
   }
 
   Future<void> _requestPermissions() async {
+    if (kIsWeb) return;
     // Android 13+ requires this runtime permission for the live-tracking
     // foreground-service notification to appear in the notification drawer.
     final notificationStatus = await Permission.notification.request();
@@ -96,6 +112,7 @@ class _MyappState extends State<Myapp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: appNavigatorKey,
       debugShowCheckedModeBanner: false,
       scrollBehavior: const MaterialScrollBehavior().copyWith(
         physics: const ClampingScrollPhysics(),

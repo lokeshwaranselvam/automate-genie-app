@@ -23,8 +23,8 @@ def register_device(
     platform = (platform or "").strip().lower()
     if not fcm_token:
         frappe.throw("Missing FCM token")
-    if platform not in ("android", "ios"):
-        frappe.throw("Platform must be android or ios")
+    if platform not in ("android", "ios", "web"):
+        frappe.throw("Platform must be android, ios or web")
 
     # FCM Device is named by Employee, which is also unique. Lock that
     # employee row so simultaneous login/token-refresh requests serialize,

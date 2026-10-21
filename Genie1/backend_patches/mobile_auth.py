@@ -148,8 +148,11 @@ def login(usr, pwd, device_key=None, platform=None):
         if not isinstance(platform, str):
             frappe.throw("Invalid mobile platform.", frappe.ValidationError)
         platform = platform.strip().lower()
-        if platform not in ("android", "ios"):
-            frappe.throw("Platform must be android or ios.", frappe.ValidationError)
+        # Browser and installed-PWA clients share the existing web platform.
+        if platform == "pwa":
+            platform = "web"
+        if platform not in ("android", "ios", "web"):
+            frappe.throw("Platform must be android, ios, web or pwa.", frappe.ValidationError)
     manager = LoginManager()
     manager.authenticate(usr, pwd)
     user = manager.user  # Canonical ID, including logins using Employee/User aliases.
@@ -253,3 +256,23 @@ def reset_device(user):
         binding = _binding(user)
         if binding and binding["device_hash"]:
             _release(user, binding)
+
+
+def configure_web_platform():
+    """Custom app admin migration; extends only the existing platform Select."""
+    frappe.only_for("System Manager")
+    if not frappe.db.exists("DocType", DOCTYPE):
+        frappe.throw("FCM Device must already exist.", frappe.ValidationError)
+    field = frappe.get_meta(DOCTYPE).get_field("platform")
+    if not field:
+        frappe.throw("FCM Device.platform is missing.", frappe.ValidationError)
+    if field.fieldtype == "Select":
+        from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+        options = (field.options or "").splitlines()
+        if "web" not in options:
+            options.append("web")
+            make_property_setter(DOCTYPE, "platform", "options", "\n".join(options), "Text")
+            frappe.clear_cache(doctype=DOCTYPE)
+    elif field.fieldtype != "Data":
+        frappe.throw("Review the FCM Device.platform field type before enabling web.", frappe.ValidationError)
+    return {"status": "success"}

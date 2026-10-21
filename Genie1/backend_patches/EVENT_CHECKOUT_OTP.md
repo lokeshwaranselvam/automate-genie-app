@@ -17,7 +17,7 @@ working hours, status updates and other API methods remain unchanged.
    remain. OTP-only `save_otp` is retired; report saves ignore old OTP input and
    preserve historical Event OTP fields and the existing report response keys.
 2. Replace only `event_checkout()` (including its decorator) in the current live
-   `apps/itgenie/itgenie/api.py` with the function from `backend_patches/api.py`.
+   `apps/itgenie/itgenie/api_utils.py` with the function from `backend_patches/api.py`.
    This is unrestricted custom-app Python, not a restricted Server Script.
    Keep every other live method and import. The optional `custom_otp` argument
    is retained for older callers but is not checked or stored.

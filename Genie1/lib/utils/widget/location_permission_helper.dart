@@ -12,6 +12,7 @@ class LocationPermissionHelper {
   static const _backgroundRequestedKey = 'background_location_requested_v1';
 
   static Future<void> requestBackgroundOnce() async {
+    if (kIsWeb) return;
     try {
       if (await Permission.locationAlways.isGranted) return;
       if (!await Permission.location.isGranted) return;

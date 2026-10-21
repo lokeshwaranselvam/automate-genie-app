@@ -1,3 +1,4 @@
+import '../platform/browser_notifications.dart';
 import 'notification_inbox.dart';
 import 'lead_call_notification.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -103,6 +104,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 }
 
 Future<void> _initializeLocalNotifications() async {
+  if (kIsWeb) return;
   await _localNotifications.initialize(
     const InitializationSettings(
       android: AndroidInitializationSettings('ic_notification'),
@@ -147,7 +149,8 @@ class FcmNotificationService {
   static Future<void> initialize() async {
     if (_initialized) return;
 
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    if (!kIsWeb)
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     await _initializeLocalNotifications();
 
     FirebaseMessaging.onMessage.listen((message) async {
@@ -175,6 +178,7 @@ class FcmNotificationService {
           await NotificationInbox.capture(initial);
           await _openRemoteLeadCall(initial);
         }
+        if (kIsWeb) return;
         final launch =
             await _localNotifications.getNotificationAppLaunchDetails();
         final payload = launch?.notificationResponse?.payload;
@@ -203,6 +207,11 @@ Future<void> showPendingWorkNotification(
       message.notification?.body ??
       data['body']?.toString() ??
       'New work has been assigned to you.';
+
+  if (kIsWeb) {
+    await showBrowserNotification(title, body);
+    return;
+  }
 
   final notificationId =
       message.messageId?.hashCode ?? DateTime.now().microsecondsSinceEpoch;
@@ -245,6 +254,10 @@ Future<void> showLeadCallNotification(RemoteMessage message) async {
   final recipient = message.data['for_user'] ?? message.data['recipient'];
   if (recipient != null &&
       recipient.toString().toLowerCase() != user.toLowerCase()) {
+    return;
+  }
+  if (kIsWeb) {
+    await showBrowserNotification(lead.title, lead.body);
     return;
   }
   // Stable document ID replaces repeat updates to the same assignment alert.
