@@ -1,0 +1,41 @@
+{
+  "apk_sha256": "9c8018c6b89c844a66974ea485251da7965963637c75e14b6b44de7c0cdb4e29",
+  "old_bytes": 95314095,
+  "new_bytes": 75589203,
+  "saved_bytes": 19724892,
+  "old_mib": 90.9,
+  "new_mib": 72.09,
+  "saved_mib": 18.81,
+  "changed_entries": [
+    "lib/arm64-v8a/libonnxruntime.so",
+    "lib/armeabi-v7a/libonnxruntime.so",
+    "lib/x86_64/libonnxruntime.so"
+  ],
+  "all_other_apk_contents_identical": true,
+  "libraries": [
+    {
+      "abi": "arm64-v8a",
+      "device_validated_sha256": "63e0b4300465206d55e1e6652d2efe093e397582625069ff4c8799b778057d1c",
+      "apk_sha256": "9b0ac1b9e6e96134d9f4e6f7a9cb1ae924624f24f828f2f42ced7fdd236a0180",
+      "allocated_elf_sections_identical": true,
+      "only_changed_section": ".shstrtab"
+    },
+    {
+      "abi": "armeabi-v7a",
+      "device_validated_sha256": "32aa06238c18aace3260c0517ef4eec58ef7d7bef620a780544132e6e195e7f0",
+      "apk_sha256": "6810bada0e4cc4c0f72275b4ef18e45f21724b10a9fa976a54a00a4b79c3a44c",
+      "allocated_elf_sections_identical": true,
+      "only_changed_section": ".shstrtab"
+    },
+    {
+      "abi": "x86_64",
+      "device_validated_sha256": "048083def1f8ca1a2932790171d592a3cb5f0ba7b75c74fcb55275042ef618c8",
+      "apk_sha256": "04b5cb502e699851b86184b5c9243d862391a5630031375b9676c7d5e387e934",
+      "allocated_elf_sections_identical": true,
+      "only_changed_section": ".shstrtab"
+    }
+  ],
+  "signature_verified": true,
+  "signer_matches_previous_apk": true,
+  "zipalign_16k_verified": true
+}

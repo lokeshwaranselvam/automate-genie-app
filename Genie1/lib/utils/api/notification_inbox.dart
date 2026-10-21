@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'session_auth.dart';
+import 'lead_call_notification.dart';
 
 String notificationText(dynamic value) =>
     (value?.toString() ?? '')
@@ -198,14 +199,17 @@ class NotificationInbox {
         recipient.toString().toLowerCase() != user.toLowerCase()) {
       return;
     }
+    final leadCall = LeadCallNotification.fromData(message.data);
     final title =
         message.notification?.title ??
         message.data['title']?.toString() ??
+        leadCall?.title ??
         'New work notification';
     final body =
         message.notification?.body ??
         message.data['body']?.toString() ??
         message.data['message']?.toString() ??
+        leadCall?.body ??
         '';
     final reference =
         (message.data['document_name'] ??

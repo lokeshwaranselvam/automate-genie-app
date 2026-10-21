@@ -64,7 +64,7 @@ void main() {
     final attendance = tester.widget<SessionWebView>(
       find.byType(SessionWebView),
     );
-    expect(attendance.url, 'https://16.itgenie.online/GOAD');
+    expect(attendance.url, 'https://erp.homegeniegroup.in/GOAD');
     expect(attendance.embedded, isTrue);
     expect(find.text('Leads vs Conversions'), findsNothing);
     await tester.tap(find.text('Sales'));

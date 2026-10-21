@@ -24,7 +24,7 @@ class FaceEmbeddingException implements Exception {
 class FaceEmbeddingService {
   static final FaceEmbeddingService instance = FaceEmbeddingService();
   static const modelAsset = 'assets/face_recognition/sface_2021dec.onnx';
-  static const modelVersion = 'opencv-sface-2021dec-v1';
+  static const modelVersion = 'opencv-sface-2021dec-int8bq-v1';
   static const embeddingDimensions = 128;
   // Pilot value only. Validate false accept/reject rates on the actual fleet.
   static const pilotCosineThreshold = 0.5;

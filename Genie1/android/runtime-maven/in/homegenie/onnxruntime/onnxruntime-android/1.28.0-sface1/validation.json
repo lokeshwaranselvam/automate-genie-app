@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-17",
+  "comparisons": [
+    {
+      "abi": "arm64-v8a",
+      "tensor_cases": 8,
+      "model_sha256": "487a139eb85ccd5ff30aef7d0add7f12d2bb7abb90c5f08a7f481b452a660e00",
+      "full_library_sha256": "324679b9a86f3160e36be940e794b507a627c0d34331585df62c7f6be75e8c0f",
+      "reduced_library_sha256": "63e0b4300465206d55e1e6652d2efe093e397582625069ff4c8799b778057d1c",
+      "bit_identical_outputs": true,
+      "max_absolute_embedding_error": 0.0,
+      "max_cosine_score_error": 0.0,
+      "all_pairwise_match_decisions_equal": true,
+      "java_jni_validated": true,
+      "all_bridges_bit_identical": true,
+      "limitation": "Synthetic compatibility tests; not real-face accuracy or pure inference latency.",
+      "environment": "Android 15 / API 35, physical phone"
+    },
+    {
+      "abi": "armeabi-v7a",
+      "tensor_cases": 8,
+      "model_sha256": "487a139eb85ccd5ff30aef7d0add7f12d2bb7abb90c5f08a7f481b452a660e00",
+      "full_library_sha256": "b3c75a8638731382e808d2de679deb42ed38b93724b92ff53d6ce5327f0bac5d",
+      "reduced_library_sha256": "32aa06238c18aace3260c0517ef4eec58ef7d7bef620a780544132e6e195e7f0",
+      "bit_identical_outputs": true,
+      "max_absolute_embedding_error": 0.0,
+      "max_cosine_score_error": 0.0,
+      "all_pairwise_match_decisions_equal": true,
+      "java_jni_validated": true,
+      "all_bridges_bit_identical": true,
+      "limitation": "Synthetic compatibility tests; not real-face accuracy or pure inference latency.",
+      "environment": "Android 15 / API 35, physical phone"
+    },
+    {
+      "abi": "x86_64",
+      "tensor_cases": 8,
+      "model_sha256": "487a139eb85ccd5ff30aef7d0add7f12d2bb7abb90c5f08a7f481b452a660e00",
+      "full_library_sha256": "ba286047bfaa6c00d9fd82ffa7d7685ac84cba152378c8c44b1bd573ab1684cf",
+      "reduced_library_sha256": "048083def1f8ca1a2932790171d592a3cb5f0ba7b75c74fcb55275042ef618c8",
+      "bit_identical_outputs": true,
+      "max_absolute_embedding_error": 0.0,
+      "max_cosine_score_error": 0.0,
+      "all_pairwise_match_decisions_equal": true,
+      "java_jni_validated": true,
+      "all_bridges_bit_identical": true,
+      "limitation": "Synthetic compatibility tests; not real-face accuracy or pure inference latency.",
+      "environment": "Android 15 / API 35, emulator"
+    }
+  ]
+}

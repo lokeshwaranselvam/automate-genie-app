@@ -9,9 +9,9 @@ from frappe.utils import nowdate,getdate
 from frappe.core.doctype.user.user import generate_keys
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
-def login(usr, pwd, device_key=None):
-    from .mobile_auth import login as mobile_login
-    return mobile_login(usr, pwd, device_key)
+def login(usr, pwd, device_key=None, platform=None):
+    from itgenie.mobile_auth import login as mobile_login
+    return mobile_login(usr, pwd, device_key, platform=platform)
 
 
 @frappe.whitelist(allow_guest = False)
@@ -67,6 +67,7 @@ def event_details(id):
     doc = frappe.get_doc("Event",id)
     response = {
     "event": doc.as_dict(),
+    "requires_geofence": (doc.get("event_category") or "").strip().lower() != "installation",
     "reference_details": []
     }
 
@@ -588,17 +589,15 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
         if doc.custom_check_out:
             return {"status": "error", "message": "Already Checked Out"}
 
-        otp = custom_otp if custom_otp is not None else doc.get("custom_otp")
-        if not isinstance(otp, str) or not otp.strip():
-            return {"status": "error", "message": "OTP is required before checking out."}
-        if len(otp.strip()) != 4 or otp.strip().strip("0123456789"):
-            return {"status": "error", "message": "OTP must contain exactly 4 digits."}
-        expected_otp = str(doc.get("custom_whats_app") or "").strip()
-        if not expected_otp:
-            return {"status": "error", "message": "OTP is not configured for this Event. Contact your administrator."}
-        if otp.strip() != expected_otp:
-            return {"status": "error", "message": "Wrong OTP"}
-        doc.custom_otp = otp.strip()
+        # OTP is no longer required. Keep the optional argument for older
+        # callers, but require an actual saved Event attachment before writes.
+        if not frappe.db.exists("File", {
+            "attached_to_doctype": "Event",
+            "attached_to_name": event_id,
+            "is_folder": 0,
+            "file_url": ["is", "set"],
+        }):
+            return {"status": "error", "message": "Attach a visit photo before checking out."}
 
         current_time = now_datetime().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -884,5 +883,5 @@ def is_otp_required(event_id):
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def mobile_logout(user, device_key):
-    from .mobile_auth import logout as release_mobile_login
+    from itgenie.mobile_auth import logout as release_mobile_login
     return release_mobile_login(user, device_key)

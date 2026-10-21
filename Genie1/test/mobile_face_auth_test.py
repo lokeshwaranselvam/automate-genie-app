@@ -151,6 +151,17 @@ class MobileFaceAuthTest(unittest.TestCase):
                 self.run_api(action)
         self.assertFalse(self.created)
 
+    def test_model_version_negotiation_preserves_existing_clients(self):
+        self.assertEqual(self.run_api()["model_version"], "opencv-sface-2021dec-v1")
+        version = "opencv-sface-2021dec-int8bq-v1"
+        self.assertEqual(self.run_api(model_version=version)["model_version"], version)
+        self.enroll(model_version=version)
+        result = self.verify(model_version=version)
+        metadata = json.loads(self.store[result["record_id"]].content)
+        self.assertEqual(metadata["model_version"], version)
+        with self.assertRaisesRegex(ValueError, "model has changed"):
+            self.run_api(model_version="unknown")
+
     def test_status_is_read_only_and_returns_no_other_user_reference(self):
         result = self.run_api()
         self.assertFalse(result["enrolled"])
@@ -330,7 +341,11 @@ class MobileFaceGuardTest(unittest.TestCase):
         cls.script = (Path(__file__).resolve().parents[1] /
                       "frappe_server_scripts/mobile_face_auth.py").read_text()
 
-    setUp = MobileFaceAuthTest.setUp
+    def setUp(self):
+        MobileFaceAuthTest.setUp(self)
+        self.user = "lokeshwaran.trainee@homegeniegroup.com"
+        self.frappe.session.user = self.user
+
     log_error = MobileFaceAuthTest.log_error
     get_doc = MobileFaceAuthTest.get_doc
     get_value = MobileFaceAuthTest.get_value
@@ -361,6 +376,57 @@ class MobileFaceGuardTest(unittest.TestCase):
             Document(name="CHECKIN-1"),
             **values,
         )
+
+    def test_both_rollout_users_require_receipts_for_checkin_and_checkout(self):
+        for user in ("lokeshwaran.trainee@homegeniegroup.com",
+                     "arun.itdigital@homegeniegroup.com"):
+            self.user = user
+            self.frappe.session.user = user
+            for command, log_type in (("itgenie.api.checkin", "IN"),
+                                      ("itgenie.api.checkout", "OUT")):
+                with self.subTest(user=user, command=command):
+                    with self.assertRaisesRegex(ValueError, "Complete face verification"):
+                        self.run_guard("mobile_face_employee_checkin_guard",
+                                       Document(employee="EMP-1", log_type=log_type), cmd=command)
+                    with self.assertRaisesRegex(ValueError, "receipt is missing"):
+                        self.run_guard("mobile_face_employee_checkin_attach",
+                                       Document(name="CHECKIN-1"), cmd=command)
+
+    def test_other_users_skip_both_receipt_hooks_without_modifying_records(self):
+        self.user = "employee@example.test"
+        self.frappe.session.user = self.user
+        for command, log_type in (("itgenie.api.checkin", "IN"),
+                                  ("itgenie.api.checkout", "OUT")):
+            self.run_guard("mobile_face_employee_checkin_guard",
+                           Document(employee="EMP-1", log_type=log_type), cmd=command)
+            self.run_guard("mobile_face_employee_checkin_attach",
+                           Document(name="CHECKIN-1"), cmd=command)
+        self.assertEqual(self.store, {})
+
+    def test_other_users_still_cannot_submit_for_another_employee_or_wrong_action(self):
+        self.user = "employee@example.test"
+        self.frappe.session.user = self.user
+        for employee, log_type in (("EMP-OTHER", "IN"), ("EMP-1", "OUT")):
+            with self.assertRaisesRegex(ValueError, "employee or action"):
+                self.run_guard("mobile_face_employee_checkin_guard",
+                               Document(employee=employee, log_type=log_type),
+                               cmd="itgenie.api.checkin")
+
+    def test_guest_still_blocked_in_both_hooks(self):
+        self.frappe.session.user = "Guest"
+        for script in ("mobile_face_employee_checkin_guard", "mobile_face_employee_checkin_attach"):
+            with self.assertRaisesRegex(ValueError, "Sign in"):
+                self.run_guard(script, Document(employee="EMP-1", log_type="IN"),
+                               cmd="itgenie.api.checkin")
+
+    def test_int8_block_receipt_is_consumed_by_existing_attendance_guard(self):
+        version = "opencv-sface-2021dec-int8bq-v1"
+        self.enroll(model_version=version)
+        receipt = self.verify(model_version=version)
+        self.daily(receipt)
+        self.assertTrue(json.loads(self.store[receipt["record_id"]].content)["used"])
+        with self.assertRaisesRegex(ValueError, "used or expired"):
+            self.daily(receipt)
 
     def test_daily_valid_receipt_consumed_and_cannot_be_replayed(self):
         self.enroll()

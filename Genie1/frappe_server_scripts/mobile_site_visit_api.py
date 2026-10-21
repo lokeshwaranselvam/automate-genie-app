@@ -115,7 +115,7 @@ def digits_only(value):
     digits = ""
     for char in str(value or ""):
         if char.isdigit():
-            digits += char
+            digits = digits + char
     # Compare on the last 10 digits so +91 / 0 prefixes still match.
     return digits[-10:]
 

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart';
 import 'package:homegenie/utils/api/login_api.dart';
 import 'package:homegenie/utils/api/mobile_login_device.dart';
 import 'package:homegenie/utils/api/session_auth.dart';
@@ -47,6 +48,30 @@ void main() {
     );
   });
 
+  for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
+    test('login sends the mobile platform: ${platform.name}', () async {
+      debugDefaultTargetPlatformOverride = platform;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      await http.runWithClient(
+        () async {
+          expect((await LoginApi.login(user, 'password'))['error'], isNull);
+        },
+        () => MockClient((request) async {
+          if (request.url.path == '$api.login') {
+            final body = jsonDecode(request.body) as Map;
+            expect(
+              body['platform'],
+              platform == TargetPlatform.iOS ? 'ios' : 'android',
+            );
+            expect(body['device_key'], matches(RegExp(r'^[A-Za-z0-9_-]{43}$')));
+            return loggedIn();
+          }
+          return http.Response(jsonEncode({'message': user}), 200);
+        }),
+      );
+    });
+  }
+
   test(
     'one guarded login supplies API token and verified Frappe session',
     () async {
@@ -68,6 +93,7 @@ void main() {
             final body = jsonDecode(request.body) as Map;
             expect(body['usr'], user);
             expect(body['pwd'], 'password');
+            expect(body['platform'], 'android');
             expect(body['device_key'], matches(RegExp(r'^[A-Za-z0-9_-]{43}$')));
             expect(request.headers['Cookie'], isNull);
             return loggedIn();

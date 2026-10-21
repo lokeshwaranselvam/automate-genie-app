@@ -1,14 +1,28 @@
 # SFace model used by mobile face verification
 
-- Artifact: OpenCV Zoo `face_recognition_sface_2021dec.onnx`, copied unchanged as `sface_2021dec.onnx`.
-- Download source: https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx
+- Artifact: OpenCV Zoo `face_recognition_sface_2021dec_int8bq.onnx`, block-quantized INT8 SFace, packaged under the existing asset name `sface_2021dec.onnx`.
+- Download source: https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec_int8bq.onnx
 - Original model directory and license declaration: https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface
 - License: Apache-2.0; a copy accompanies this asset in `LICENSE-SFace.txt`. The model-directory README states that all files in the directory use this license. Preserve the license and attribution when distributing the app.
 - Contributor attribution: Yaoyao Zhong; OpenCV Zoo SFace wrapper copyright (C) 2021, Shenzhen Institute of Artificial Intelligence and Robotics for Society. Original project: https://github.com/zhongyy/SFace
-- Bytes: **38,696,353**.
-- SHA-256: **0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79**.
-- Integration model version: `opencv-sface-2021dec-v1` (upright five-point aligned, RGB 0..255, NCHW 112x112 preprocessing).
-- Model weights and hash verified on 2026-10-12. The repository's Git LFS pointer records the same size and checksum.
+- Source bytes: **10,667,852**; source SHA-256: **fb143eea07838aa532d1c95df5f69899974ea0140e1fba05e94204be13ed74ee**.
+- Packaged bytes: **10,660,286**; packaged SHA-256: **487a139eb85ccd5ff30aef7d0add7f12d2bb7abb90c5f08a7f481b452a660e00**.
+- Integration model version: `opencv-sface-2021dec-int8bq-v1` (upright five-point aligned, RGB 0..255, NCHW 112x112 preprocessing).
+- Verified on 2026-10-17. The upstream export includes 174 unused or initializer-backed graph inputs. `tool/prepare_sface_int8bq.py` removes these declarations so ONNX Runtime requires only `data`. Weights and operators remain byte-for-byte unchanged from the verified upstream block model. The original full-precision model is not bundled.
+- Desktop ONNX Runtime CPU **1.28.0** (same version as the Android plugin) loaded the adapted model and passed three synthetic inference runs with finite, nonzero 128-dimensional outputs. This is a compatibility smoke test, not Android-device or recognition-accuracy validation.
+
+## Rollout
+
+Deploy both updated Frappe Server Scripts **before** installing the new APK:
+
+1. API method `mobile_face_auth`: replace with `frappe_server_scripts/mobile_face_auth.py`.
+2. Employee Checkin **Before Insert** guard: replace with `frappe_server_scripts/mobile_face_employee_checkin_guard.py`; keep its existing event configuration. The After Insert attachment script is unchanged.
+
+Both scripts accept the existing FP32 model version and the new INT8 block version, so existing apps continue working. New apps request their version on status calls. An old backend fails the new app's version check rather than mixing models. Keep all authentication, CSRF, blink, location, receipt expiry and single-use checks enabled.
+
+The private enrolled reference JPEG remains unchanged. The local template identity contains the model version, so the new app automatically regenerates its embedding from that JPEG; employee re-enrollment is not required. Do not reuse old embeddings with this model.
+
+The pilot similarity threshold stays **0.5**. OpenCV reports 0.9942 for block quantization versus 0.9940 for its original model in its evaluation; this is not a guarantee for employee photos. Validate false accepts/rejects and device latency before production distribution. Upstream results: https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface
 
 ## Input and output
 

@@ -158,7 +158,7 @@ class _LoginState extends State<Login> {
         return;
       }
 
-      unawaited(FcmDeviceApi.requestPermissionAndRegister(rotateToken: true));
+      unawaited(FcmDeviceApi.requestPermissionAndRegister());
       Warning.show(context, 'Login Successful', 'Success');
       Navigator.pushReplacement(
         context,

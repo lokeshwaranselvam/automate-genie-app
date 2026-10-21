@@ -1,6 +1,6 @@
 """Single-installation mobile login for the custom Frappe app (not Safe Exec).
 
-Install beside utils/api.py; run install() once before replacing api.login.
+Deploy to apps/itgenie/itgenie/mobile_auth.py; run install() before replacing api.login.
 MariaDB advisory locks intentionally survive commits made inside Frappe login.
 """
 from contextlib import contextmanager
@@ -13,29 +13,99 @@ from frappe.auth import LoginManager
 from frappe.sessions import delete_session
 from frappe.utils.password import get_decrypted_password
 
-DOCTYPE = "Genie Mobile Session"
+DOCTYPE = "FCM Device"
+HASH_FIELD = "custom_mobile_device_hash"
+SESSION_FIELD = "custom_mobile_session_id"
 DEVICE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 
 def install():
-    """Run from bench console/execute as Administrator, not as a public API."""
+    """Add protected fields to the existing FCM Device; never create a DocType.
+
+    No legacy Genie Mobile Session records are read, copied or deleted.
+    Run from bench as Administrator during the backend rollout.
+    """
+    from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
+
     frappe.only_for("System Manager")
     if not frappe.db.exists("DocType", DOCTYPE):
-        frappe.get_doc({
-            "doctype": "DocType", "name": DOCTYPE, "module": "Custom",
-            "custom": 1, "autoname": "field:user", "track_changes": 0,
-            "fields": [
-                {"fieldname": "user", "label": "User", "fieldtype": "Link",
-                 "options": "User", "reqd": 1, "unique": 1},
-                {"fieldname": "device_hash", "label": "Installation Hash",
-                 "fieldtype": "Data", "reqd": 1, "read_only": 1},
-                {"fieldname": "session_id", "label": "Session",
-                 "fieldtype": "Data", "hidden": 1},
-            ],
-            # Ordinary users cannot read or modify installation credentials.
-            "permissions": [{"role": "System Manager", "read": 1}],
-        }).insert(ignore_permissions=True)
+        frappe.throw("FCM Device must already exist.", frappe.ValidationError)
+    meta = frappe.get_meta(DOCTYPE)
+    for name in ("user", "employee", "fcm_token", "is_active"):
+        if not meta.has_field(name):
+            frappe.throw("FCM Device schema is missing: " + name, frappe.ValidationError)
+    # Hidden/read-only alone do not prevent API reads. No existing role is
+    # granted permission level 1; ordinary FCM readers cannot see these fields.
+    if any(p.permlevel == 1 for p in meta.permissions):
+        frappe.throw("Review FCM Device permission level 1 before installation.", frappe.ValidationError)
+    for name in (HASH_FIELD, SESSION_FIELD):
+        field = meta.get_field(name)
+        if field and field.fieldtype != "Data":
+            frappe.throw("Unexpected mobile login field type: " + name, frappe.ValidationError)
+    create_custom_fields({DOCTYPE: [
+        {"fieldname": HASH_FIELD, "label": "Mobile Installation Hash",
+         "fieldtype": "Data", "length": 64, "insert_after": "device_id",
+         "hidden": 1, "read_only": 1, "permlevel": 1, "no_copy": 1, "reqd": 0},
+        {"fieldname": SESSION_FIELD, "label": "Mobile Session ID",
+         "fieldtype": "Data", "length": 255, "insert_after": HASH_FIELD,
+         "hidden": 1, "read_only": 1, "permlevel": 1, "no_copy": 1, "reqd": 0},
+    ]})
     frappe.db.commit()
+
+
+def _setup_ready():
+    if not frappe.db.exists("DocType", DOCTYPE):
+        return False
+    meta = frappe.get_meta(DOCTYPE)
+    return all(meta.has_field(name) for name in (HASH_FIELD, SESSION_FIELD))
+
+
+def _binding(user):
+    # FCM Device is named by Employee, not by User. Reject ambiguous mappings.
+    rows = frappe.get_all(
+        DOCTYPE, filters={"user": user},
+        fields=["name", "employee", HASH_FIELD, SESSION_FIELD], limit_page_length=2,
+    )
+    if len(rows) > 1:
+        frappe.throw("Multiple FCM Device records are linked to this user. Contact your administrator.",
+                     frappe.ValidationError)
+    if not rows:
+        return None
+    row = rows[0]
+    return {"name": row.name, "employee": row.employee,
+            "device_hash": row.get(HASH_FIELD), "session_id": row.get(SESSION_FIELD)}
+
+
+def _save_binding(user, employee, device_hash, sid, binding, platform=None):
+    # Serialize first-row creation with register_device(), including requests
+    # authenticated before the API secret was rotated by this login.
+    frappe.db.get_value("Employee", employee, "name", for_update=True)
+    existing = frappe.db.get_value(
+        DOCTYPE, {"employee": employee}, ["name", "user", "platform"], as_dict=True, for_update=True,
+    )
+    if existing and existing.user not in (None, "", user):
+        frappe.throw("FCM Device belongs to another user. Contact your administrator.", frappe.ValidationError)
+    if binding and (not existing or existing.name != binding["name"]):
+        frappe.throw("FCM Device Employee mapping changed. Contact your administrator.", frappe.ValidationError)
+    values = {"user": user, HASH_FIELD: device_hash, SESSION_FIELD: sid}
+    # Use the validated platform reported by this login. This also repairs
+    # previously blank or incorrect values before FCM registration runs.
+    if platform is not None:
+        values["platform"] = platform
+    elif not existing or not existing.platform:
+        # Compatibility for older Android builds that omit this new parameter.
+        values["platform"] = "android"
+    if not binding or not binding["device_hash"]:
+        # Old notification tokens must not be active for a newly claimed phone.
+        # Registration restores the current token and is_active after login.
+        values["is_active"] = 0
+    if existing:
+        # Preserve notification token and version metadata.
+        frappe.db.set_value(DOCTYPE, existing.name, values)
+    else:
+        frappe.get_doc({"doctype": DOCTYPE, "employee": employee, **values}).insert(
+            ignore_permissions=True,
+        )
 
 
 def _device_hash(device_key):
@@ -71,20 +141,24 @@ def _revoke_session(sid, user):
         delete_session(sid, user=user, reason="Genie mobile sign out")
 
 
-def login(usr, pwd, device_key=None):
+def login(usr, pwd, device_key=None, platform=None):
     """Called only through api.login. Passwords are checked before lock details."""
     device_hash = _device_hash(device_key)
+    if platform is not None:
+        if not isinstance(platform, str):
+            frappe.throw("Invalid mobile platform.", frappe.ValidationError)
+        platform = platform.strip().lower()
+        if platform not in ("android", "ios"):
+            frappe.throw("Platform must be android or ios.", frappe.ValidationError)
     manager = LoginManager()
     manager.authenticate(usr, pwd)
     user = manager.user  # Canonical ID, including logins using Employee/User aliases.
-    if not frappe.db.exists("DocType", DOCTYPE):
+    if not _setup_ready():
         return _error("Mobile login setup is incomplete. Contact your administrator.", 503)
     with _user_lock(user):
         # Read after mutex acquisition; don't use a stale cached document.
-        binding = frappe.db.get_value(
-            DOCTYPE, user, ["device_hash", "session_id"], as_dict=True,
-        )
-        if binding and not hmac.compare_digest(binding.device_hash, device_hash):
+        binding = _binding(user)
+        if binding and binding["device_hash"] and not hmac.compare_digest(binding["device_hash"], device_hash):
             return _error(
                 "This account is already signed in on another phone. "
                 "Log out from that phone first, then sign in here.", 409,
@@ -113,7 +187,7 @@ def login(usr, pwd, device_key=None):
             secret = get_decrypted_password("User", user, "api_secret", raise_exception=False)
             # Rotate on a NEW claim, never on a same-installation retry. An old
             # build/token from before this rollout cannot retain API access.
-            if not binding or not account.api_key or not secret:
+            if not binding or not binding["device_hash"] or not account.api_key or not secret:
                 if not account.api_key:
                     account.api_key = frappe.generate_hash(length=15)
                 # Keep the generated value separately: Frappe masks Password
@@ -121,20 +195,14 @@ def login(usr, pwd, device_key=None):
                 secret = frappe.generate_hash(length=32)
                 account.api_secret = secret
                 account.save(ignore_permissions=True)
-            if binding:
-                frappe.db.set_value(DOCTYPE, user, "session_id", sid)
-            else:
-                frappe.get_doc({
-                    "doctype": DOCTYPE, "user": user,
-                    "device_hash": device_hash, "session_id": sid,
-                }).insert(ignore_permissions=True)
+            _save_binding(user, employee.name, device_hash, sid, binding, platform=platform)
             frappe.db.commit()
         except Exception:
             frappe.db.rollback()
             _revoke_session(sid, user)
             raise
-        if binding and binding.session_id != sid:
-            _revoke_session(binding.session_id, user)
+        if binding and binding["session_id"] != sid:
+            _revoke_session(binding["session_id"], user)
         frappe.local.response.update({
             "message": "Logged In", "email": user, "full_name": account.full_name,
             "name": account.full_name, "employee_id": employee.name,
@@ -154,24 +222,27 @@ def logout(user, device_key):
     device_hash = _device_hash(device_key)
     if not isinstance(user, str) or not user or len(user) > 140:
         frappe.throw("Invalid user.", frappe.ValidationError)
+    if not _setup_ready():
+        return _error("Mobile login setup is incomplete. Contact your administrator.", 503)
     with _user_lock(user):
-        binding = frappe.db.get_value(
-            DOCTYPE, user, ["device_hash", "session_id"], as_dict=True,
-        )
-        if binding:
-            if not hmac.compare_digest(binding.device_hash, device_hash):
+        binding = _binding(user)
+        if binding and binding["device_hash"]:
+            if not hmac.compare_digest(binding["device_hash"], device_hash):
                 return _error("This phone cannot sign out that account.", 403)
-            _release(user, binding.session_id)
+            _release(user, binding)
     frappe.local.response["message"] = {"status": "success"}
 
 
-def _release(user, sid):
+def _release(user, binding):
     # Revoke the token too: merely deleting an SID leaves API-token calls valid.
     account = frappe.get_doc("User", user)
     account.api_secret = frappe.generate_hash(length=32)
     account.save(ignore_permissions=True)
-    _revoke_session(sid, user)
-    frappe.db.delete(DOCTYPE, {"name": user})
+    _revoke_session(binding["session_id"], user)
+    # Release the binding without deleting the notification registration row.
+    frappe.db.set_value(DOCTYPE, binding["name"], {
+        HASH_FIELD: None, SESSION_FIELD: None, "is_active": 0,
+    })
     frappe.db.commit()
 
 
@@ -179,6 +250,6 @@ def reset_device(user):
     """Administrator console recovery for a lost/reinstalled phone; never whitelist."""
     frappe.only_for("System Manager")
     with _user_lock(user):
-        sid = frappe.db.get_value(DOCTYPE, user, "session_id")
-        if sid:
-            _release(user, sid)
+        binding = _binding(user)
+        if binding and binding["device_hash"]:
+            _release(user, binding)

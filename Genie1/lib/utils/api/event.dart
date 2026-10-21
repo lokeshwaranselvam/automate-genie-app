@@ -381,9 +381,6 @@ class Event {
     required String outcome,
     String? customOtp,
   }) async {
-    if (customOtp != null && !EventOtp.isValid(customOtp)) {
-      throw ArgumentError(EventOtp.validationMessage);
-    }
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     if (token == null || token.isEmpty) {
@@ -402,7 +399,6 @@ class Event {
         'event_id': eventId,
         'observation': observation,
         'outcome': outcome,
-        if (customOtp != null) 'custom_otp': customOtp.trim(),
       },
     );
     return _visitReportResponse(response);
@@ -734,21 +730,14 @@ class Event {
     String lastLatLng,
     String locationLogs,
     BuildContext context, {
-    required String customOtp,
+    String? customOtp,
     Future<bool> Function()? beforeCheckout,
   }) async {
-    final otp = customOtp.trim();
-    if (!EventOtp.isValid(otp)) {
-      throw ArgumentError(EventOtp.validationMessage);
-    }
     final prefs = await SharedPreferences.getInstance();
 
     final String? token = prefs.getString('token');
 
-    // The deployed checkout method may ignore unknown arguments. Persist and
-    // confirm the exact Event field through the assigned-user API first.
-    await saveVisitOtp(eventId: eventId, customOtp: otp);
-    // Photo preparation runs only after the server accepts the OTP.
+    // Upload/confirm the required attachments before submitting checkout.
     if (beforeCheckout != null && !await beforeCheckout()) {
       return {'cancelled': true};
     }
@@ -766,7 +755,6 @@ class Event {
             'distance': distance,
             'last_lat_lng': lastLatLng,
             "location_logs": locationLogs,
-            'custom_otp': otp,
           },
           headers: {'Authorization': token ?? ''},
         )

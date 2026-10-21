@@ -9,13 +9,13 @@ def prepare(source):
     lines = source.splitlines(keepends=True)
     replacements = {
         'login': '''@frappe.whitelist(allow_guest=True, methods=["POST"])
-def login(usr, pwd, device_key=None):
-    from .mobile_auth import login as mobile_login
-    return mobile_login(usr, pwd, device_key)
+def login(usr, pwd, device_key=None, platform=None):
+    from itgenie.mobile_auth import login as mobile_login
+    return mobile_login(usr, pwd, device_key, platform=platform)
 ''',
         'mobile_logout': '''@frappe.whitelist(allow_guest=True, methods=["POST"])
 def mobile_logout(user, device_key):
-    from .mobile_auth import logout as release_mobile_login
+    from itgenie.mobile_auth import logout as release_mobile_login
     return release_mobile_login(user, device_key)
 ''',
     }

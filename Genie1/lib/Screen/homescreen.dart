@@ -1134,13 +1134,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildAttendanceTab() {
-    return const SessionWebView(
-      url: 'https://16.itgenie.online/GOAD',
-      title: 'Attendance',
-    );
-  }
-
   void _showLogoutDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -1348,13 +1341,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     if (hour < 12) return 'Good Morning';
     if (hour < 17) return 'Good Afternoon';
     return 'Good Evening';
-  }
-
-  String _scheduleTime(Map<String, dynamic> event) {
-    final startsOn = DateTime.tryParse(event['starts_on']?.toString() ?? '');
-    return startsOn == null
-        ? '—'
-        : DateFormat('hh:mm a').format(startsOn.toLocal());
   }
 
   DateTime? _scheduleDateTime(dynamic value) {

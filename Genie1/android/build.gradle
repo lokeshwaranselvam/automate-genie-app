@@ -1,7 +1,23 @@
+def useFullOnnxRuntime = providers.gradleProperty('genieFullOnnxRuntime')
+        .map { it.toBoolean() }.getOrElse(false)
+
 allprojects {
     repositories {
+        maven {
+            url = rootProject.uri('runtime-maven')
+            content { includeGroup 'in.homegenie.onnxruntime' }
+        }
         google()
         mavenCentral()
+    }
+
+    if (!useFullOnnxRuntime) {
+        configurations.configureEach {
+            resolutionStrategy.dependencySubstitution {
+                substitute(module('com.microsoft.onnxruntime:onnxruntime-android:1.28.0'))
+                        .using(module('in.homegenie.onnxruntime:onnxruntime-android:1.28.0-sface1'))
+            }
+        }
     }
 }
 
@@ -33,88 +49,3 @@ subprojects {
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
 }
-
-// ✅ STRONG FIX (Toolchain - avoids future issues)
-// kotlin {
-//     jvmToolchain(17)
-// }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// allprojects {
-
-//     repositories {
-//         google()
-//         mavenCentral()
-
-//     }
-
-//     // Fix JVM target inconsistency across all plugins
-//     afterEvaluate { project ->
-//         if (project.hasProperty('android')) {
-//             project.android {
-//                 if (it.hasProperty('compileOptions')) {
-//                     compileOptions {
-//                         sourceCompatibility JavaVersion.VERSION_21
-//                         targetCompatibility JavaVersion.VERSION_21
-//                     }
-//                 }
-//             }
-//         }
-//         project.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-//             kotlinOptions {
-//                 jvmTarget = '21'
-//             }
-//         }
-//     }
-// }
-
-// rootProject.buildDir = '../build'
-
-
-// subprojects {
-
-//     project.buildDir = "${rootProject.buildDir}/${project.name}"
-
-//     afterEvaluate { project ->
-//         if (project.hasProperty("android")) {
-//             project.android {
-//                 compileOptions {
-//                     sourceCompatibility JavaVersion.VERSION_17
-//                     targetCompatibility JavaVersion.VERSION_17
-//                 }
-//             }
-//         }
-//     }
-
-//     // ✅ Force Kotlin for ALL modules (including plugins)
-//     tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-//         kotlinOptions {
-//             jvmTarget = "17"
-//         }
-//     }
-// }
-
-// // subprojects {
-// //     project.buildDir = "${rootProject.buildDir}/${project.name}"
-// // }
-// // subprojects {
-// //     project.evaluationDependsOn(':app')
-// // }
-
-// tasks.register("clean", Delete) {
-//     delete rootProject.buildDir
-// }

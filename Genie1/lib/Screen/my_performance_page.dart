@@ -263,7 +263,7 @@ class _MyPerformancePageState extends State<MyPerformancePage>
           _salesBody(),
           if (_attendanceOpened)
             const SessionWebView(
-              url: 'https://16.itgenie.online/GOAD',
+              url: 'https://erp.homegeniegroup.in/GOAD',
               title: 'Attendance',
               embedded: true,
               blockSystemBack: false,

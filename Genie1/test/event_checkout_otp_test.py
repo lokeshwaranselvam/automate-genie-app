@@ -1,4 +1,4 @@
-"""OTP must block checkout before any Visit writes or route requests."""
+"""Attachment-only checkout and report contracts, without a live ERP."""
 import ast
 from datetime import datetime
 from pathlib import Path
@@ -6,102 +6,73 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
-
 ROOT = Path(__file__).resolve().parents[1]
-
 
 class Row(dict):
     __getattr__ = dict.get
     __setattr__ = dict.__setitem__
 
-
-class EventCheckoutOtpTest(unittest.TestCase):
-    def run_checkout(self, filename, otp=None, saved_otp=None, checked_in=True, checked_out=False, expected_otp='0123'):
+class EventCheckoutAttachmentTest(unittest.TestCase):
+    def run_checkout(self, filename, attachment=True, checked_in=True, checked_out=False, otp=None):
         doc = Row(custom_check_in='2026-10-16 09:00:00' if checked_in else None,
                   custom_check_out='2026-10-16 10:00:00' if checked_out else None,
-                  custom_otp=saved_otp, custom_whats_app=expected_otp)
+                  custom_otp='historical', custom_whats_app=None)
         doc.save = Mock()
+        def exists(doctype, filters):
+            if doctype == 'File':
+                self.assertEqual(filters, {
+                    'attached_to_doctype': 'Event', 'attached_to_name': 'EVENT-1',
+                    'is_folder': 0, 'file_url': ['is', 'set'],
+                })
+                return 'FILE-1' if attachment else None
+            self.assertEqual(doctype, 'Visit')
+            return False
         frappe = SimpleNamespace(
             get_doc=Mock(return_value=doc),
-            db=SimpleNamespace(exists=Mock(return_value=False), rollback=Mock()),
+            db=SimpleNamespace(exists=Mock(side_effect=exists), rollback=Mock()),
             log_error=Mock(), get_traceback=lambda: 'trace',
         )
         tree = ast.parse((ROOT / 'backend_patches' / filename).read_text(encoding='utf-8'))
-        function = next(node for node in tree.body
-                        if isinstance(node, ast.FunctionDef) and node.name == 'event_checkout')
-        function.decorator_list = []
-        module = ast.Module(body=[function], type_ignores=[])
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'event_checkout')
+        node.decorator_list = []
         namespace = dict(frappe=frappe, now_datetime=lambda: datetime(2026, 10, 16, 10))
-        exec(compile(module, filename, 'exec'), namespace)
-        result = namespace['event_checkout'](
-            'sales@example.test', 'EVENT-1', custom_otp=otp,
-            address='Site', working_hrs='01:00',
-        )
+        exec(compile(ast.Module(body=[node], type_ignores=[]), filename, 'exec'), namespace)
+        result = namespace['event_checkout']('sales@example.test', 'EVENT-1',
+            custom_otp=otp, address='Site', working_hrs='01:00')
         return result, doc, frappe
 
-    def test_empty_invalid_or_missing_otp_cannot_start_checkout_writes(self):
-        for filename in ['api.py', 'api_single_device_updated.py']:
-            for otp in [None, '', '   ', 123, []]:
-                with self.subTest(filename=filename, otp=otp):
-                    result, doc, frappe = self.run_checkout(filename, otp)
-                    self.assertEqual(result['status'], 'error')
-                    self.assertIn('OTP is required', result['message'])
-                    frappe.db.exists.assert_not_called()
-                    doc.save.assert_not_called()
-                    self.assertIsNone(doc.custom_check_out)
-
-    def test_otp_and_checkout_are_saved_together_preserving_leading_zeroes(self):
+    def test_missing_attachment_blocks_before_visit_lookup_or_checkout_writes(self):
         for filename in ['api.py', 'api_single_device_updated.py']:
             with self.subTest(filename=filename):
-                result, doc, _ = self.run_checkout(filename, ' 0123 ')
-                self.assertEqual(result['status'], 'success')
-                self.assertEqual(doc.custom_otp, '0123')
-                self.assertEqual(doc.status, 'Completed')
-                self.assertEqual(doc.custom_check_out_location, 'Site')
-                doc.save.assert_called_once_with(ignore_permissions=True)
+                result, doc, frappe = self.run_checkout(filename, attachment=False)
+                self.assertEqual(result['status'], 'error')
+                self.assertIn('Attach a visit photo', result['message'])
+                doc.save.assert_not_called()
+                self.assertIsNone(doc.custom_check_out)
+                self.assertEqual(frappe.db.exists.call_count, 1)
 
-    def test_checkout_rejects_short_long_or_nonnumeric_otp_before_writes(self):
+    def test_attachment_allows_checkout_without_any_otp_configuration(self):
         for filename in ['api.py', 'api_single_device_updated.py']:
-            for otp in ['1', '123', '12345', '123456', '12a4', '12 4', '１２３４']:
-                with self.subTest(filename=filename, otp=otp):
-                    result, doc, frappe = self.run_checkout(filename, otp)
-                    self.assertEqual(result['status'], 'error')
-                    self.assertIn('exactly 4 digits', result['message'])
-                    doc.save.assert_not_called()
-                    frappe.db.exists.assert_not_called()
+            for otp in [None, '', 'wrong', 123]:
+                with self.subTest(filename=filename, legacy_otp=otp):
+                    result, doc, _ = self.run_checkout(filename, otp=otp)
+                    self.assertEqual(result['status'], 'success')
+                    self.assertEqual(doc.status, 'Completed')
+                    self.assertEqual(doc.custom_otp, 'historical')
+                    self.assertEqual(doc.custom_check_out_location, 'Site')
+                    self.assertEqual(doc.custom_duration, '01:00')
+                    doc.save.assert_called_once_with(ignore_permissions=True)
 
-    def test_previously_saved_otp_is_preserved_when_parameter_is_omitted(self):
-        result, doc, _ = self.run_checkout('api.py', saved_otp='0123')
-        self.assertEqual(result['status'], 'success')
-        self.assertEqual(doc.custom_otp, '0123')
-
-    def test_explicit_blank_cannot_replace_saved_otp(self):
-        result, doc, _ = self.run_checkout('api.py', ' ', saved_otp='0123')
-        self.assertEqual(result['status'], 'error')
-        doc.save.assert_not_called()
-
-    def test_existing_checkin_and_completed_checks_are_preserved(self):
-        for kwargs, message in [
-            ({'checked_in': False}, 'Cannot check out before check-in'),
-            ({'checked_out': True}, 'Already Checked Out'),
-        ]:
-            result, doc, _ = self.run_checkout('api.py', **kwargs)
-            self.assertEqual(result['message'], message)
-            doc.save.assert_not_called()
-
-    def test_direct_checkout_cannot_bypass_expected_otp_comparison(self):
+    def test_existing_checkin_and_completed_guards_are_preserved(self):
         for filename in ['api.py', 'api_single_device_updated.py']:
-            for expected, message in [('9999', 'Wrong OTP'), ('', 'not configured'), (None, 'not configured')]:
-                with self.subTest(filename=filename, expected=expected):
-                    result, doc, frappe = self.run_checkout(filename, '0123', expected_otp=expected)
-                    self.assertEqual(result['status'], 'error')
-                    self.assertIn(message, result['message'])
-                    self.assertIsNone(doc.custom_check_out)
-                    doc.save.assert_not_called()
-                    frappe.db.exists.assert_not_called()
+            for kwargs, message in [({'checked_in': False}, 'Cannot check out before check-in'),
+                                    ({'checked_out': True}, 'Already Checked Out')]:
+                result, doc, frappe = self.run_checkout(filename, **kwargs)
+                self.assertEqual(result['message'], message)
+                frappe.db.exists.assert_not_called()
+                doc.save.assert_not_called()
 
-
-class EventVisitReportOtpTest(unittest.TestCase):
+class EventVisitReportWithoutOtpTest(unittest.TestCase):
     def report(self, params=None, owner='sales@example.test', description='', otp='0123', clear_on_save=False, expected_otp='0123'):
         event = Row(name='EVENT-1', owner=owner, description=description, custom_otp=otp, custom_whats_app=expected_otp)
         self.last_event = event
@@ -120,84 +91,23 @@ class EventVisitReportOtpTest(unittest.TestCase):
         exec(compile(script, 'event_visit_report_api.py', 'exec'), {'frappe': frappe})
         return response['message'], event
 
-    def test_get_includes_saved_otp_without_modifying_event(self):
-        result, event = self.report()
+
+    def test_get_preserves_report_options_and_historical_data(self):
+        result, event = self.report(description='observation : Visited\nOutcome: Interested')
+        self.assertTrue(result['is_submitted'])
+        self.assertEqual(result['observation'], 'Visited')
+        self.assertEqual(result['outcome'], 'Interested')
         self.assertEqual(result['custom_otp'], '0123')
         event.save.assert_not_called()
 
-    def test_save_otp_persists_independently_without_requiring_report(self):
-        result, event = self.report(dict(action='save_otp', custom_otp=' 0123 '),
-                                    description='Existing notes', otp='')
-        self.assertEqual(event.custom_otp, '0123')
-        self.assertEqual(event.description, 'Existing notes')
-        self.assertEqual(result['action'], 'save_otp')
-        self.assertTrue(result['otp_saved'])
-        self.assertEqual(result['custom_otp'], '0123')
-        event.save.assert_called_once_with(ignore_permissions=True)
-
-    def test_save_otp_rejects_empty_and_unassigned_requests(self):
-        for otp in [None, '', ' ', 123]:
-            with self.subTest(otp=otp), self.assertRaisesRegex(ValueError, 'OTP is required'):
-                self.report(dict(action='save_otp', custom_otp=otp))
-        with self.assertRaisesRegex(ValueError, 'not assigned'):
-            self.report(dict(action='save_otp', custom_otp='0123'), owner='other@example.test')
-
-    def test_save_otp_detects_a_hook_clearing_the_field(self):
-        with self.assertRaisesRegex(ValueError, 'OTP could not be saved'):
-            self.report(dict(action='save_otp', custom_otp='0123'), clear_on_save=True)
-
-    def test_both_save_actions_reject_invalid_digit_lengths(self):
-        for action in ['save_otp', 'save']:
-            for otp in ['1', '123', '12345', '123456', '12a4', '12 4', '１２３４']:
-                with self.subTest(action=action, otp=otp), self.assertRaisesRegex(ValueError, 'exactly 4 digits'):
-                    self.report(dict(action=action, custom_otp=otp,
-                                     observation='Visited', outcome='Interested'))
-
-    def test_save_otp_does_not_unlock_a_submitted_report(self):
-        description = 'observation : Visited\nOutcome: Interested'
-        _, event = self.report(dict(action='save_otp', custom_otp='0123'), description=description)
-        self.assertEqual(event.description, description)
-
-    def test_existing_report_submission_preserves_otp(self):
-        result, event = self.report(dict(action='save', observation='Site visited', outcome='Interested'))
-        self.assertEqual(result['description'], 'observation : Site visited\nOutcome: Interested')
-        self.assertEqual(event.custom_otp, '0123')
-        self.assertTrue(result['is_submitted'])
-        event.save.assert_called_once_with(ignore_permissions=True)
-
-    def test_optional_otp_is_saved_as_text(self):
-        result, event = self.report(dict(action='save', observation='Visited',
-                                         outcome='Interested', custom_otp=' 0012 '), expected_otp='0012')
-        self.assertEqual(result['custom_otp'], '0012')
-        self.assertEqual(event.custom_otp, '0012')
-
-    def test_mismatched_otp_rejects_both_actions_without_modifying_event(self):
-        for action in ['save_otp', 'save']:
-            with self.subTest(action=action), self.assertRaisesRegex(ValueError, '^Wrong OTP$'):
-                self.report(dict(action=action, custom_otp='9999',
-                                 observation='New report', outcome='Interested'),
-                            otp='1111', description='Original notes')
-            self.assertEqual(self.last_event.custom_otp, '1111')
-            self.assertEqual(self.last_event.description, 'Original notes')
-            self.last_event.save.assert_not_called()
-
-    def test_missing_expected_otp_cannot_be_saved(self):
-        for expected in [None, '', ' ']:
-            with self.subTest(expected=expected), self.assertRaisesRegex(ValueError, 'not configured'):
-                self.report(dict(action='save_otp', custom_otp='0123'), expected_otp=expected)
-            self.last_event.save.assert_not_called()
-
-    def test_expected_otp_is_trimmed_but_never_returned(self):
-        result, event = self.report(dict(action='save_otp', custom_otp=' 0123 '), expected_otp=' 0123 ')
-        self.assertTrue(result['otp_saved'])
-        self.assertEqual(event.custom_whats_app, ' 0123 ')
-        self.assertNotIn('custom_whats_app', result)
-        result, _ = self.report()
-        self.assertNotIn('custom_whats_app', result)
-
-    def test_empty_explicit_otp_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, 'OTP cannot be empty'):
-            self.report(dict(action='save', observation='Visited', outcome='Interested', custom_otp=' '))
+    def test_report_saves_without_otp_and_ignores_legacy_otp_parameter(self):
+        for params in ({}, {'custom_otp': 'wrong'}, {'custom_otp': ''}):
+            result, event = self.report(dict(action='save', observation='Visited',
+                                            outcome='Interested', **params), expected_otp=None)
+            self.assertTrue(result['is_submitted'])
+            self.assertEqual(event.description, 'observation : Visited\nOutcome: Interested')
+            self.assertEqual(event.custom_otp, '0123')
+            event.save.assert_called_once_with(ignore_permissions=True)
 
     def test_assignment_and_submitted_report_locks_are_preserved(self):
         with self.assertRaisesRegex(ValueError, 'not assigned'):
@@ -206,6 +116,15 @@ class EventVisitReportOtpTest(unittest.TestCase):
             self.report(dict(action='save', observation='Changed', outcome='Interested'),
                         description='observation : Visited\nOutcome: Interested')
 
+    def test_observation_and_outcome_validations_remain(self):
+        for observation, outcome in [('', 'Interested'), ('Visited', 'invalid')]:
+            with self.assertRaises(ValueError):
+                self.report(dict(action='save', observation=observation, outcome=outcome))
+
+    def test_retired_otp_action_does_not_modify_event(self):
+        with self.assertRaisesRegex(ValueError, 'Invalid action'):
+            self.report(dict(action='save_otp', custom_otp='0123'))
+        self.last_event.save.assert_not_called()
 
 class EventOtpVerificationTest(unittest.TestCase):
     def load(self, filename):

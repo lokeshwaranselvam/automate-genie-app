@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -12,6 +14,30 @@ import 'package:package_info_plus/package_info_plus.dart';
 /// Registers this installation's FCM token against the logged-in Frappe user.
 class FcmDeviceApi {
   static StreamSubscription<String>? _tokenRefreshSubscription;
+  static const _deviceStorage = FlutterSecureStorage();
+  static const _deviceIdKey = 'genie_fcm_registration_device_id';
+  static Future<String>? _deviceIdRequest;
+
+  static Future<String> _registrationDeviceId() async {
+    final request = _deviceIdRequest ??= _loadRegistrationDeviceId();
+    try {
+      return await request;
+    } finally {
+      if (identical(_deviceIdRequest, request)) _deviceIdRequest = null;
+    }
+  }
+
+  static Future<String> _loadRegistrationDeviceId() async {
+    final saved = await _deviceStorage.read(key: _deviceIdKey);
+    if (saved != null && saved.isNotEmpty) return saved;
+    final random = Random.secure();
+    final id = base64UrlEncode(
+      List<int>.generate(32, (_) => random.nextInt(256)),
+    ).replaceAll('=', '');
+    // Separate from the private mobile-login credential: this ID is metadata.
+    await _deviceStorage.write(key: _deviceIdKey, value: id);
+    return id;
+  }
 
   static void initializeTokenRefreshListener() {
     _tokenRefreshSubscription ??= FirebaseMessaging.instance.onTokenRefresh
@@ -168,9 +194,12 @@ class FcmDeviceApi {
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      // register_device uses frappe.session.user, so authenticate it with
-      // the Frappe session created by SessionAuthApi, not Genie1's API token.
+      // Both Frappe API-token and cookie authentication establish session.user.
+      // Prefer the authenticated user's API token; retain cookie/CSRF support
+      // for restored sessions that do not have a token.
       final sessionId = prefs.getString('session_sid');
+      final apiToken = prefs.getString('token')?.trim() ?? '';
+      final useApiToken = RegExp(r'^token [^\s:]+:[^\s:]+$').hasMatch(apiToken);
       if (expectedSessionId != null && sessionId != expectedSessionId) return;
       final siteUrl = dotenv.env['SITE_URL']?.trim();
       if (sessionId == null ||
@@ -185,31 +214,42 @@ class FcmDeviceApi {
 
       final endpoint = Uri.parse(
         siteUrl,
-      ).resolve('/api/method/itgenie.fcm.devices.register_device');
+      ).resolve('/api/method/itgenie.lead_calling.mobile_api.register_device');
       if (fcmToken.trim().isEmpty) return;
       final package = await PackageInfo.fromPlatform();
       final metadata = {
         'fcm_token': fcmToken,
         'platform': Platform.isAndroid ? 'android' : 'ios',
-        'device_id': fcmToken.split(':').first,
+        'device_id': await _registrationDeviceId(),
         'app_version': package.version,
-        'build_version': package.buildNumber,
+        'build_version': int.tryParse(package.buildNumber) ?? 0,
       };
-      var csrf = await _csrfToken(sessionId, endpoint);
+      var csrf = useApiToken ? null : await _csrfToken(sessionId, endpoint);
       Future<http.Response> post() async {
         await _assertSession(sessionId);
+        if (useApiToken &&
+            (await SharedPreferences.getInstance())
+                    .getString('token')
+                    ?.trim() !=
+                apiToken) {
+          throw StateError('FCM registration credentials changed.');
+        }
         final client = http.Client();
         try {
           final request =
               http.Request('POST', endpoint)
                 ..followRedirects = false
                 ..headers.addAll({
-                  'Cookie': 'sid=$sessionId',
+                  if (!useApiToken) 'Cookie': 'sid=$sessionId',
                   'Content-Type': 'application/json',
                   'Accept': 'application/json',
-                  'X-Frappe-CSRF-Token': csrf,
+                  if (csrf != null) 'X-Frappe-CSRF-Token': csrf,
+                  if (useApiToken) 'Authorization': apiToken,
                 })
-                ..body = jsonEncode({...metadata, 'csrf_token': csrf});
+                ..body = jsonEncode({
+                  ...metadata,
+                  if (csrf != null) 'csrf_token': csrf,
+                });
           return await client
               .send(request)
               .then(http.Response.fromStream)
@@ -220,7 +260,7 @@ class FcmDeviceApi {
       }
 
       var response = await post();
-      if (_csrfRejected(response)) {
+      if (!useApiToken && _csrfRejected(response)) {
         csrf = await _csrfToken(sessionId, endpoint);
         response = await post();
       }
@@ -253,9 +293,7 @@ class FcmDeviceApi {
 
         final message = payload is Map ? payload['message'] : null;
         if (message is Map && message['status'] == 'success') {
-          debugPrint(
-            'FCM device token registered for ${message['user'] ?? 'unknown user'}.',
-          );
+          debugPrint('FCM device registration confirmed.');
         } else {
           // A 2xx status alone does not prove the Frappe method saved the row.
           debugPrint(

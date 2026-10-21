@@ -27,7 +27,10 @@ action = (frappe.form_dict.get("action") or "status").strip().lower()
 # as frappe.session.csrf_token, but does not expose token-generation functions.
 csrf_token = frappe.session.get("csrf_token") or frappe.session.data.csrf_token
 reference_name = "GENIE-FACE-REF-" + frappe.utils.sha256_hash(current_user)[:32]
-model_version = "opencv-sface-2021dec-v1"
+# Missing version is the existing app's status request. Keep it working during rollout.
+model_version = frappe.form_dict.get("model_version") or "opencv-sface-2021dec-v1"
+if model_version not in ["opencv-sface-2021dec-v1", "opencv-sface-2021dec-int8bq-v1"]:
+    frappe.throw("The face model has changed. Update the app before registering or verifying.")
 # Starting threshold for the selected SFace model; evaluate and calibrate with
 # the actual phone fleet before rollout. This is a similarity, not confidence.
 minimum_similarity = 0.5

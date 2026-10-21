@@ -10,7 +10,6 @@ import 'package:homegenie/Screen/login.dart';
 
 import '../utils/api/event.dart';
 import '../utils/event_location_selection.dart';
-import '../utils/event_otp.dart';
 import '../utils/api/image_upload_api.dart';
 import '../utils/api/session_auth.dart';
 import '../utils/widget/camera_service.dart';
@@ -22,7 +21,6 @@ import '../utils/widget/warning.dart';
 // Import geofence_service but hide conflicting types
 import 'package:geofence_service/geofence_service.dart'
     hide LocationAccuracy, LocationPermission;
-import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../utils/api/location_api.dart';
@@ -61,7 +59,6 @@ class _EventDetailsState extends State<EventDetails> {
   List<LatLng> _customerRoutePoints = [];
   File? capturedImage;
   String? selectedLocationType;
-  final TextEditingController _otpController = TextEditingController();
 
   bool _isLoading = false;
   bool _isActionInProgress = false;
@@ -238,7 +235,6 @@ class _EventDetailsState extends State<EventDetails> {
 
   @override
   void dispose() {
-    _otpController.dispose();
     _audioPlayer.dispose();
     GeofenceManager.instance.stopMonitoring();
     super.dispose();
@@ -247,6 +243,8 @@ class _EventDetailsState extends State<EventDetails> {
   // ── Geofence ───────────────────────────────────────────────────────────────
 
   Future<void> _startGeofenceForEvent(double lat, double lng) async {
+    if (!_requiresEventGeofence) return;
+
     GeofenceManager.instance.onStatusChange = (id, status) {
       if (!mounted) return;
       final msg =
@@ -799,10 +797,15 @@ class _EventDetailsState extends State<EventDetails> {
     }
   }
 
+  // The API decides the exception; older responses keep geofencing enabled.
+  bool get _requiresEventGeofence => eventData['requires_geofence'] != false;
+
   bool _isWithinAllowedLocation({
     required double currentLat,
     required double currentLng,
   }) {
+    if (!_requiresEventGeofence) return true;
+
     final target = _getLocationCoordinates(selectedLocationType);
     if (target == null) {
       return false;
@@ -1002,28 +1005,6 @@ class _EventDetailsState extends State<EventDetails> {
     required String workingHrs,
     required Position position,
   }) async {
-    if (!EventOtp.isValid(_otpController.text)) {
-      Warning.show(context, EventOtp.validationMessage, 'OTP required');
-      return;
-    }
-    bool isOtpRequired = await Event.checkIfOtpRequired(
-      widget.eventid,
-      context,
-    );
-
-    if (isOtpRequired) {
-      bool confirmed = await showOTPDialog(context);
-
-      if (!confirmed) {
-        Warning.show(
-          context,
-          "OTP verification failed. Cannot proceed.",
-          "Error",
-        );
-        return;
-      }
-    }
-
     LocationTrackerService.stopTracking();
     double distance = LocationTrackerService.calculateTotalDistance();
 
@@ -1061,7 +1042,6 @@ class _EventDetailsState extends State<EventDetails> {
       lastLatLng,
       jsonEncode(locationLogs),
       context,
-      customOtp: _otpController.text.trim(),
       beforeCheckout: () async {
         if (!mounted) return false;
         final photosUploaded = await _uploadCheckoutPhotosBeforeCheckout(
@@ -1325,25 +1305,6 @@ class _EventDetailsState extends State<EventDetails> {
     }
   }
 
-  String _formatTime(String? dateTime) {
-    if (dateTime == null || dateTime.isEmpty) return "--:--";
-
-    try {
-      DateTime dt = DateTime.parse(dateTime);
-      String period = dt.hour >= 12 ? "pm" : "am";
-      int hour =
-          dt.hour > 12
-              ? dt.hour - 12
-              : dt.hour == 0
-              ? 12
-              : dt.hour;
-      String minute = dt.minute.toString().padLeft(2, '0');
-      return "$hour:$minute$period";
-    } catch (e) {
-      return "--:--";
-    }
-  }
-
   String _calculateWorkingHours(String? checkIn, String? checkOut) {
     if (checkIn == null || checkOut == null) return "--:--";
 
@@ -1406,40 +1367,6 @@ class _EventDetailsState extends State<EventDetails> {
     if (value.isEmpty) return value;
     return _userFullNames[value.toLowerCase()] ??
         (value.contains('@') ? 'User' : value);
-  }
-
-  String _getParticipantsTitles() {
-    final participants = eventData['reference_details'];
-    if (participants == null || participants is! List) return '';
-
-    List<String> titles =
-        participants
-            .map<String>((p) => "${p['opportunity_from']}-${p['party_name']}")
-            .toList();
-
-    return titles.join(', ');
-  }
-
-  Future<String> _getCurrentLocationAddress() async {
-    try {
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-
-      final address = await LocationHelper.getAddressFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
-
-      if (address.isNotEmpty) {
-        return address;
-      } else {
-        return "Unknown location";
-      }
-    } catch (e) {
-      print("Error fetching location: $e");
-      return "Error fetching location";
-    }
   }
 
   Future<bool> _handleLocationPermission() async {
@@ -1574,121 +1501,6 @@ class _EventDetailsState extends State<EventDetails> {
     }
   }
 
-  Future<bool> showOTPDialog(BuildContext context) async {
-    TextEditingController otpController = TextEditingController();
-    int timerSeconds = 30;
-    Timer? resendTimer;
-
-    Future<void> sendOtp() async {
-      await Event.sendOtp(widget.eventid, context);
-    }
-
-    await sendOtp();
-
-    return await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            void startTimer() {
-              resendTimer?.cancel();
-              resendTimer = Timer.periodic(Duration(seconds: 1), (timer) {
-                if (timerSeconds == 0) {
-                  timer.cancel();
-                } else {
-                  setState(() {
-                    timerSeconds--;
-                  });
-                }
-              });
-            }
-
-            if (resendTimer == null) {
-              startTimer();
-            }
-
-            return AlertDialog(
-              title: const Text('Enter OTP to Confirm'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: otpController,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(4),
-                    ],
-                    decoration: const InputDecoration(labelText: 'OTP'),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    timerSeconds > 0
-                        ? 'Resend OTP in $timerSeconds sec'
-                        : 'Didn’t receive it?',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  TextButton(
-                    onPressed:
-                        timerSeconds == 0
-                            ? () async {
-                              await sendOtp();
-                              setState(() {
-                                timerSeconds = 30;
-                              });
-                              startTimer();
-                            }
-                            : null,
-                    child: const Text('Resend OTP'),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    resendTimer?.cancel();
-                    Navigator.of(dialogContext).pop(false);
-                  },
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  style: const ButtonStyle(
-                    backgroundBuilder: BrandColors.buttonBackground,
-                    foregroundColor: WidgetStatePropertyAll(Colors.white),
-                  ),
-                  onPressed: () async {
-                    if (!EventOtp.isValid(otpController.text)) {
-                      Warning.show(
-                        context,
-                        EventOtp.validationMessage,
-                        'OTP required',
-                      );
-                      return;
-                    }
-                    final isValid = await Event.verifyOtp(
-                      otpController.text,
-                      widget.eventid,
-                    );
-                    if (isValid) {
-                      resendTimer?.cancel();
-                      Navigator.of(dialogContext).pop(true);
-
-                      Warning.show(context, 'OTP verified.', 'Success');
-                    } else {
-                      Warning.show(context, 'Invalid OTP', 'Error');
-                    }
-                  },
-                  child: const Text('Submit'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    ).then((value) => value ?? false);
-  }
-
   Future<Position> _getCurrentVisitPosition() async {
     final cached = _employeeMapPosition;
     if (cached != null) {
@@ -1729,10 +1541,6 @@ class _EventDetailsState extends State<EventDetails> {
       final checkOut = event['custom_check_out']?.toString().trim() ?? '';
       final startingVisit = checkIn.isEmpty && checkOut.isEmpty;
       final endingVisit = checkIn.isNotEmpty && checkOut.isEmpty;
-      if (endingVisit && !EventOtp.isValid(_otpController.text)) {
-        Warning.show(context, EventOtp.validationMessage, 'OTP required');
-        return;
-      }
       if (!startingVisit && !endingVisit) {
         Warning.show(
           context,
@@ -1827,11 +1635,7 @@ class _EventDetailsState extends State<EventDetails> {
     } catch (error) {
       debugPrint('Visit check-in/out failed: $error');
       if (mounted) {
-        if (error is StateError && error.message == 'Wrong OTP') {
-          Warning.show(context, 'Wrong OTP', 'Warning');
-        } else {
-          Warning.show(context, error.toString(), 'Error');
-        }
+        Warning.show(context, error.toString(), 'Error');
       }
     } finally {
       if (mounted) setState(() => _isActionInProgress = false);
@@ -1891,32 +1695,6 @@ class _EventDetailsState extends State<EventDetails> {
                 color: Color(0xFF202B3C),
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _visitChecklistItem(String label, bool checked) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          Checkbox(
-            value: checked,
-            onChanged: null,
-            activeColor: BrandColors.ink,
-            visualDensity: VisualDensity.compact,
-          ),
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: checked ? const Color(0xFF202B3C) : Colors.black54,
-                fontSize: 13,
-                decoration: checked ? TextDecoration.none : null,
               ),
             ),
           ),
@@ -2343,27 +2121,6 @@ class _EventDetailsState extends State<EventDetails> {
                       ),
                     ],
                     if (checkedIn && !checkedOut) ...[
-                      const SizedBox(height: 14),
-                      TextField(
-                        controller: _otpController,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                          LengthLimitingTextInputFormatter(4),
-                        ],
-                        enabled: !_isActionInProgress,
-                        autocorrect: false,
-                        enableSuggestions: false,
-                        textInputAction: TextInputAction.done,
-                        decoration: const InputDecoration(
-                          labelText: 'OTP',
-                          hintText: 'Enter 4-digit OTP',
-                          helperText:
-                              'Exactly 4 digits required before checking out',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
                       Row(
                         children: [
                           Expanded(

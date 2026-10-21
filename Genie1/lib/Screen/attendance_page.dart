@@ -75,6 +75,7 @@ class AttendancePage extends StatelessWidget {
 
   String _shift() {
     final direct = _firstValue([
+      'default_shift',
       'shift_time',
       'shift_hours',
       'shift',

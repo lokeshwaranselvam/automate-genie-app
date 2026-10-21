@@ -205,7 +205,7 @@ class LeadApi {
             .toList();
     if (sourceOptions.isEmpty) {
       throw const FormatException(
-        'No Lead Source options were returned. Configure Lead.custom_source in Frappe.',
+        'No Lead Source options were returned. Configure Lead.source in Frappe.',
       );
     }
     if (productCategoryOptions.isEmpty) {
@@ -313,7 +313,7 @@ class LeadApi {
               if (whatsappNo.trim().isNotEmpty)
                 'whatsapp_no': LeadPhoneNumber.normalize(whatsappNo),
               'custom_requirement': requirement.trim(),
-              'custom_source': source.trim(),
+              'source': source.trim(),
               'custom_product_enquired': productCategory.trim(),
               'custom_address': address.trim(),
               'csrf_token': currentToken,

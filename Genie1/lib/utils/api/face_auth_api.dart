@@ -47,7 +47,7 @@ class FaceAuthApi {
        _siteOverride = site;
 
   static final instance = FaceAuthApi();
-  static const modelVersion = 'opencv-sface-2021dec-v1';
+  static const modelVersion = 'opencv-sface-2021dec-int8bq-v1';
   static const _timeout = Duration(seconds: 25);
   static const _imageUploadTimeout = Duration(seconds: 90);
   final http.Client _client;
@@ -190,7 +190,10 @@ class FaceAuthApi {
       'GET',
       site
           .resolve('api/method/mobile_face_auth')
-          .replace(queryParameters: {'action': 'status'}),
+          .replace(queryParameters: {
+            'action': 'status',
+            'model_version': modelVersion,
+          }),
     )..headers.addAll(auth.headers);
     final response = await _send(request);
     await assertSessionUser(auth.user);

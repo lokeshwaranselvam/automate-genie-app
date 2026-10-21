@@ -1,4 +1,6 @@
 import 'notification_inbox.dart';
+import 'lead_call_notification.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -10,6 +12,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../firebase_options.dart';
 import '../widget/pending_work_alarm_player.dart';
+
+const String _leadCallChannelId = 'crm_lead_calls';
 
 const String _pendingWorkChannelId = 'work_assignment';
 const String _pendingWorkSilentChannelId = 'pending_work_alarm_playback';
@@ -85,6 +89,13 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   await NotificationInbox.capture(message);
+  if (LeadCallNotification.fromData(message.data) != null) {
+    if (message.notification == null) {
+      await _initializeLocalNotifications();
+      await showLeadCallNotification(message);
+    }
+    return;
+  }
   if (!_isPendingWork(message) || message.notification != null) return;
 
   await _initializeLocalNotifications();
@@ -96,6 +107,11 @@ Future<void> _initializeLocalNotifications() async {
     const InitializationSettings(
       android: AndroidInitializationSettings('ic_notification'),
     ),
+    onDidReceiveNotificationResponse: (response) {
+      final payload = response.payload;
+      if (payload == null) return;
+      unawaited(_openLeadCallPayload(payload));
+    },
   );
 
   final android =
@@ -115,6 +131,14 @@ Future<void> _initializeLocalNotifications() async {
   }
   await android?.createNotificationChannel(_pendingWorkChannel);
   await android?.createNotificationChannel(_pendingWorkSilentChannel);
+  await android?.createNotificationChannel(
+    const AndroidNotificationChannel(
+      _leadCallChannelId,
+      'Lead and Opportunity Calls',
+      description: 'Assigned customers awaiting a call',
+      importance: Importance.high,
+    ),
+  );
 }
 
 class FcmNotificationService {
@@ -128,7 +152,9 @@ class FcmNotificationService {
 
     FirebaseMessaging.onMessage.listen((message) async {
       await NotificationInbox.capture(message);
-      if (_isPendingWork(message)) {
+      if (LeadCallNotification.fromData(message.data) != null) {
+        await showLeadCallNotification(message);
+      } else if (_isPendingWork(message)) {
         final audioUrl = message.data['alarm_audio_url']?.toString().trim();
         await showPendingWorkNotification(message, playChannelSound: false);
         await PendingWorkAlarmPlayer.play(url: audioUrl);
@@ -137,6 +163,7 @@ class FcmNotificationService {
 
     FirebaseMessaging.onMessageOpenedApp.listen((message) async {
       await NotificationInbox.capture(message);
+      await _openRemoteLeadCall(message);
     });
     // Reading a launch notification should not delay opening the app.
     unawaited(() async {
@@ -144,7 +171,16 @@ class FcmNotificationService {
         final initial = await FirebaseMessaging.instance
             .getInitialMessage()
             .timeout(const Duration(seconds: 5));
-        if (initial != null) await NotificationInbox.capture(initial);
+        if (initial != null) {
+          await NotificationInbox.capture(initial);
+          await _openRemoteLeadCall(initial);
+        }
+        final launch =
+            await _localNotifications.getNotificationAppLaunchDetails();
+        final payload = launch?.notificationResponse?.payload;
+        if (launch?.didNotificationLaunchApp == true && payload != null) {
+          await _openLeadCallPayload(payload);
+        }
       } catch (error) {
         debugPrint('Could not read initial notification: ${error.runtimeType}');
       }
@@ -197,4 +233,73 @@ Future<void> showPendingWorkNotification(
   );
 
   debugPrint('Displayed pending-work alarm notification: $title');
+}
+
+Future<void> showLeadCallNotification(RemoteMessage message) async {
+  final lead = LeadCallNotification.fromData(message.data);
+  if (lead == null) return;
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.reload();
+  final user = prefs.getString('session_username');
+  if (user == null || prefs.getString('session_sid') == null) return;
+  final recipient = message.data['for_user'] ?? message.data['recipient'];
+  if (recipient != null &&
+      recipient.toString().toLowerCase() != user.toLowerCase()) {
+    return;
+  }
+  // Stable document ID replaces repeat updates to the same assignment alert.
+  final id = 'lead-call:${lead.doctype}:${lead.docname}'.hashCode & 0x7fffffff;
+  await _localNotifications.show(
+    id,
+    lead.title,
+    lead.body,
+    const NotificationDetails(
+      android: AndroidNotificationDetails(
+        _leadCallChannelId,
+        'Lead and Opportunity Calls',
+        channelDescription: 'Assigned customers awaiting a call',
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: 'ic_notification',
+      ),
+    ),
+    payload: jsonEncode({...message.data, '_genie_user': user}),
+  );
+}
+
+Future<void> _openRemoteLeadCall(RemoteMessage message) async {
+  final recipient = message.data['for_user'] ?? message.data['recipient'];
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.reload();
+  final user = prefs.getString('session_username');
+  if (user == null ||
+      (recipient != null &&
+          recipient.toString().toLowerCase() != user.toLowerCase())) {
+    return;
+  }
+  await _openLeadCallPayload(
+    jsonEncode({...message.data, '_genie_user': user}),
+  );
+}
+
+Future<void> _openLeadCallPayload(String payload) async {
+  try {
+    final decoded = jsonDecode(payload);
+    if (decoded is! Map) return;
+    final data = Map<String, dynamic>.from(decoded);
+    final lead = LeadCallNotification.fromData(data);
+    if (lead == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    if (prefs.getString('session_sid') == null ||
+        prefs.getString('session_username') != data['_genie_user']) {
+      return;
+    }
+    // Only a notification tap opens the dialer. Push receipt never places a call.
+    if (!await launchUrl(lead.dialUri, mode: LaunchMode.externalApplication)) {
+      debugPrint('Could not open the assigned customer dialer.');
+    }
+  } catch (error) {
+    debugPrint('Could not open lead notification: ${error.runtimeType}');
+  }
 }

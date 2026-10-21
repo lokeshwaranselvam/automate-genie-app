@@ -6,6 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/test.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/utils/api/fcm_device_api.dart';
 import 'package:http/http.dart' as http;
@@ -13,7 +14,7 @@ import 'package:http/testing.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const endpoint = '/api/method/itgenie.fcm.devices.register_device';
+const endpoint = '/api/method/itgenie.lead_calling.mobile_api.register_device';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
@@ -29,6 +30,7 @@ void main() {
   });
   setUp(() {
     SharedPreferences.setMockInitialValues({'session_sid': 'login-sid'});
+    FlutterSecureStorage.setMockInitialValues({});
     PackageInfo.setMockInitialValues(
       appName: 'Genie',
       packageName: 'test.genie',
@@ -46,7 +48,7 @@ void main() {
     200,
   );
   test(
-    'every registration sends the FCM token prefix as the device ID',
+    'registration keeps its device ID across token rotation and session changes',
     () async {
       final records = <Map>[];
       await http.runWithClient(
@@ -73,11 +75,20 @@ void main() {
         }),
       );
       expect(records, hasLength(2));
-      expect(records[0]['device_id'], 'token-one');
-      expect(records[1]['device_id'], 'token-two');
+      final deviceId = records[0]['device_id'] as String;
+      expect(deviceId, matches(RegExp(r'^[A-Za-z0-9_-]{43}$')));
+      expect(records[1]['device_id'], deviceId);
+      expect(deviceId, isNot('token-one'));
+      expect(deviceId, isNot('token-two'));
+      expect(
+        await const FlutterSecureStorage().read(
+          key: 'genie_fcm_registration_device_id',
+        ),
+        deviceId,
+      );
       for (final record in records) {
         expect(record['app_version'], '1.2.3');
-        expect(record['build_version'], '42');
+        expect(record['build_version'], 42);
         expect(record['platform'], isNotEmpty);
         expect(record.containsKey('is_active'), isFalse); // Set by the backend.
         expect(record['csrf_token'], 'csrf');
@@ -94,6 +105,75 @@ void main() {
         'token-one:token-data-one',
         'token-two:token-data-two',
       ]);
+    },
+  );
+
+  test(
+    'registration reuses the persisted ID without exposing the login key',
+    () async {
+      FlutterSecureStorage.setMockInitialValues({
+        'genie_fcm_registration_device_id': 'saved-fcm-device-id',
+        'genie_mobile_installation_key': 'private-login-key',
+      });
+      Map? submitted;
+      await http.runWithClient(
+        () => FcmDeviceApi.registerToken('refreshed-token'),
+        () => MockClient((request) async {
+          if (request.url.path == '/app') {
+            return http.Response("frappe.csrf_token = 'csrf';", 200);
+          }
+          expect(request.url.path, endpoint);
+          submitted = jsonDecode(request.body) as Map;
+          return success();
+        }),
+      );
+      expect(submitted?['device_id'], 'saved-fcm-device-id');
+      expect(submitted?['fcm_token'], 'refreshed-token');
+      expect(submitted.toString(), isNot(contains('private-login-key')));
+    },
+  );
+
+  test(
+    'supplied mobile API receives token auth and exact registration fields',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'session_sid': 'login-sid',
+        'token': 'token key:secret',
+      });
+      var posts = 0;
+      await http.runWithClient(
+        () => FcmDeviceApi.registerToken('firebase-token'),
+        () => MockClient((request) async {
+          expect(request.method, 'POST'); // No dependency on ERP Desk /app.
+          expect(request.url.path, endpoint);
+          expect(request.headers['Authorization'], 'token key:secret');
+          expect(request.headers.containsKey('Cookie'), isFalse);
+          expect(request.followRedirects, isFalse);
+          final data = jsonDecode(request.body) as Map;
+          expect(data.keys.toSet(), {
+            'fcm_token',
+            'device_id',
+            'platform',
+            'app_version',
+            'build_version',
+          });
+          expect(data['fcm_token'], 'firebase-token');
+          expect(data['build_version'], 42);
+          posts++;
+          return http.Response(
+            jsonEncode({
+              'message': {
+                'status': 'success',
+                'device': 'EMP-1',
+                'app_version': '1.2.3',
+                'build_version': 42,
+              },
+            }),
+            200,
+          );
+        }),
+      );
+      expect(posts, 1);
     },
   );
 

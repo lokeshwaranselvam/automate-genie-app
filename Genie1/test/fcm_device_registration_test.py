@@ -48,6 +48,16 @@ class RegistrationTests(unittest.TestCase):
         self.frappe.db.get_value.assert_any_call('Employee', {'user_id': 'staff@example.test'}, 'name', for_update=True)
         self.frappe.get_doc.assert_called_once_with('FCM Device', 'EMP-1', for_update=True)
 
+    def test_notification_refresh_preserves_mobile_login_binding(self):
+        self.doc.values.update({
+            'custom_mobile_device_hash': 'hash',
+            'custom_mobile_session_id': 'sid',
+        })
+        self.module.register_device('new-token', 'android')
+        self.assertEqual(self.doc.values['custom_mobile_device_hash'], 'hash')
+        self.assertEqual(self.doc.values['custom_mobile_session_id'], 'sid')
+        self.assertEqual(self.doc.values['is_active'], 1)
+
     def test_first_registration_inserts_employee_keyed_document(self):
         self.frappe.db.get_value.side_effect = ['EMP-1', None]
         self.module.register_device('new-token', 'android', 'device', '1.0', '1')

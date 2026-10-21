@@ -359,7 +359,10 @@ void main() {
       final client = MockClient((request) async {
         expect(request.method, 'GET');
         expect(request.url.path, '/api/method/mobile_face_auth');
-        expect(request.url.queryParameters, {'action': 'status'});
+        expect(request.url.queryParameters, {
+          'action': 'status',
+          'model_version': FaceAuthApi.modelVersion,
+        });
         expect(request.headers['cookie'], 'sid=face-session');
         expect(request.headers['cache-control'], 'no-cache, no-store');
         return response(statusMessage());

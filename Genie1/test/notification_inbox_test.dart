@@ -77,6 +77,29 @@ void main() {
   });
 
   test(
+    'supplied lead-call payload has a meaningful inbox title and body',
+    () async {
+      await NotificationInbox.capture(
+        const RemoteMessage(
+          messageId: 'lead-call-1',
+          data: {
+            'type': 'NEW_LEAD_CALL',
+            'doctype': 'Lead',
+            'docname': 'LEAD-1',
+            'customer_name': 'Customer',
+            'mobile_no': '9876543210',
+            'auto_call': '1',
+          },
+        ),
+      );
+      final items = await NotificationInbox.cached();
+      expect(items.single.title, 'New lead assigned');
+      expect(items.single.body, contains('Customer'));
+      expect(items.single.reference, 'LEAD-1');
+    },
+  );
+
+  test(
     'notifications are recipient scoped, categorized and stripped of HTML',
     () async {
       await http.runWithClient(

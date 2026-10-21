@@ -1,0 +1,6 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>in.homegenie.onnxruntime</groupId><artifactId>onnxruntime-android</artifactId>
+  <version>1.28.0-sface1</version><packaging>aar</packaging>
+  <name>Genie SFace reduced ONNX Runtime 1.28.0</name>
+</project>

@@ -75,7 +75,7 @@ void main() {
           expect(posts, 1);
           expect(submittedFields?['first_name'], 'Customer One');
           expect(submittedFields?['custom_product_enquired'], 'Doors');
-          expect(submittedFields?['custom_source'], 'Website');
+          expect(submittedFields?['source'], 'Website');
           expect(submittedFields?['whatsapp_no'], '+919876543210');
           expect(gets, 2);
           pending.complete(

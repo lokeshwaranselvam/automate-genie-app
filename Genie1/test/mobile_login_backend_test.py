@@ -71,14 +71,19 @@ class MobileLoginBackendTest(unittest.TestCase):
             test.mutex.release()
             return [(1,)]
 
-        def get_value(doctype, user, fields, **kwargs):
+        def get_value(doctype, filters, fields, **kwargs):
             self.events.append('read')
-            row = self.bindings.get(user)
-            if not row:
-                return None
-            if isinstance(fields, str):
-                return row[fields]
-            return Row(copy.deepcopy(row))
+            if doctype == 'Employee':
+                return 'EMP-1'
+            self.assertEqual(doctype, 'FCM Device')
+            row = next((r for r in self.bindings.values()
+                        if r.employee == filters['employee']), None)
+            return copy.deepcopy(row)
+
+        def set_value(doctype, name, values):
+            self.assertEqual(doctype, 'FCM Device')
+            row = next(r for r in self.bindings.values() if r.name == name)
+            row.update(values)
 
         def get_doc(doctype, user=None):
             if doctype == 'Employee':
@@ -88,8 +93,8 @@ class MobileLoginBackendTest(unittest.TestCase):
             if isinstance(doctype, dict):
                 values = Row(doctype)
                 def insert(**kwargs):
-                    self.bindings[values.user] = Row(
-                        device_hash=values.device_hash, session_id=values.session_id)
+                    values['name'] = values.employee
+                    self.bindings[values.user] = values
                     return values
                 return SimpleNamespace(insert=insert)
             values = copy.deepcopy(self.accounts[user])
@@ -111,7 +116,7 @@ class MobileLoginBackendTest(unittest.TestCase):
             sql=sql, commit=lambda: self.events.append('commit'),
             rollback=lambda: None, exists=lambda *args: True,
             get_value=get_value,
-            set_value=lambda dt, user, field, value: self.bindings[user].update({field: value}),
+            set_value=set_value,
             delete=lambda dt, filters: self.bindings.pop(filters['name'], None),
         )
         frappe = ModuleType('frappe')
@@ -121,7 +126,14 @@ class MobileLoginBackendTest(unittest.TestCase):
         frappe.ValidationError = ValueError
         frappe.throw = lambda message, exc: (_ for _ in ()).throw(exc(message))
         frappe.get_doc = get_doc
+        self.meta = SimpleNamespace(
+            has_field=lambda name: True, get_field=lambda name: None, permissions=[],
+        )
+        frappe.get_meta = lambda dt: self.meta
         def get_all(doctype, **kwargs):
+            if doctype == 'FCM Device':
+                return [copy.deepcopy(r) for r in self.bindings.values()
+                        if r.user == kwargs['filters']['user']][:2]
             self.assertEqual(doctype, 'Employee')
             # Child Table fields are not scalar columns in tabEmployee.
             if 'custom_office_type_mapping' in kwargs.get('fields', []):
@@ -145,12 +157,12 @@ class MobileLoginBackendTest(unittest.TestCase):
                                      'frappe.utils.password': password}):
             spec.loader.exec_module(self.module)
 
-    def login(self, device, password='correct'):
+    def login(self, device, password='correct', platform='android'):
         self.context.site = 'erp.example.test'
         self.context.response = {}
         self.context.sid = 'Guest'
         self.context.user = 'Guest'
-        self.module.login(self.user, password, device)
+        self.module.login(self.user, password, device, platform=platform)
         return self.context.response.copy()
 
     def logout(self, device):
@@ -162,13 +174,13 @@ class MobileLoginBackendTest(unittest.TestCase):
     def test_second_phone_cannot_replace_token_or_session(self):
         first = self.login('a' * 43)
         secret = self.accounts[self.user].api_secret
-        sid = self.bindings[self.user].session_id
+        sid = self.bindings[self.user].custom_mobile_session_id
         second = self.login('b' * 43)
         self.assertTrue(first['single_device_login'])
         self.assertEqual(second['http_status_code'], 409)
         self.assertIn('another phone', second['message']['message'])
         self.assertEqual(self.accounts[self.user].api_secret, secret)
-        self.assertEqual(self.bindings[self.user].session_id, sid)
+        self.assertEqual(self.bindings[self.user].custom_mobile_session_id, sid)
         self.assertEqual(len(self.created_sessions), 1)
         self.assertEqual(self.deleted_sessions, [])
 
@@ -184,7 +196,7 @@ class MobileLoginBackendTest(unittest.TestCase):
         second = self.login('a' * 43)
         self.assertEqual(first['token'], second['token'])
         self.assertEqual(self.deleted_sessions, ['sid-1'])
-        self.assertEqual(self.bindings[self.user].session_id, 'sid-2')
+        self.assertEqual(self.bindings[self.user].custom_mobile_session_id, 'sid-2')
 
     def test_logout_releases_binding_revokes_credentials_and_allows_other_phone(self):
         self.login('a' * 43)
@@ -192,7 +204,7 @@ class MobileLoginBackendTest(unittest.TestCase):
         # Logout uses the installation capability, including after SID expiry.
         self.context.sid = 'Guest'
         self.assertEqual(self.logout('a' * 43)['message']['status'], 'success')
-        self.assertNotIn(self.user, self.bindings)
+        self.assertIsNone(self.bindings[self.user].custom_mobile_device_hash)
         self.assertNotEqual(old_secret, self.accounts[self.user].api_secret)
         self.assertEqual(self.deleted_sessions, ['sid-1'])
         self.assertTrue(self.login('b' * 43)['single_device_login'])
@@ -243,31 +255,132 @@ class MobileLoginBackendTest(unittest.TestCase):
     def test_admin_reset_releases_lost_phone(self):
         self.login('a' * 43)
         self.module.reset_device(self.user)
-        self.assertNotIn(self.user, self.bindings)
+        self.assertIsNone(self.bindings[self.user].custom_mobile_device_hash)
         self.assertTrue(self.login('b' * 43)['single_device_login'])
 
-    def test_installer_fields_pass_hidden_mandatory_validation_and_rerun_safely(self):
-        created = []
-
-        def get_doc(values):
-            def insert(**kwargs):
-                # Reproduce the DocType validation from the reported traceback.
-                for field in values['fields']:
-                    if field.get('hidden') and field.get('reqd') and not field.get('default'):
-                        raise ValueError('HiddenAndMandatoryWithoutDefaultError')
-                created.append(values)
-            return SimpleNamespace(insert=insert)
-
-        with patch.object(self.module.frappe.db, 'exists', side_effect=[False, True]), \
-                patch.object(self.module.frappe, 'get_doc', side_effect=get_doc):
+    def test_installer_adds_only_protected_optional_custom_fields(self):
+        custom_fields = ModuleType('frappe.custom.doctype.custom_field.custom_field')
+        calls = []
+        custom_fields.create_custom_fields = lambda fields: calls.append(fields)
+        with patch.dict(sys.modules, {custom_fields.__name__: custom_fields}), \
+                patch.object(self.module.frappe, 'get_doc') as get_doc:
             self.module.install()
             self.module.install()
-        self.assertEqual(len(created), 1)
-        fields = {field['fieldname']: field for field in created[0]['fields']}
-        self.assertEqual(fields['device_hash']['reqd'], 1)
-        self.assertEqual(fields['device_hash']['read_only'], 1)
-        self.assertFalse(fields['device_hash'].get('default'))
-        self.assertEqual(created[0]['permissions'], [{'role': 'System Manager', 'read': 1}])
+        get_doc.assert_not_called()  # No new DocType or legacy records.
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(set(calls[0]), {'FCM Device'})
+        for field in calls[0]['FCM Device']:
+            self.assertEqual(field['permlevel'], 1)
+            self.assertEqual(field['read_only'], 1)
+            self.assertEqual(field['hidden'], 1)
+            self.assertEqual(field['reqd'], 0)
+
+    def test_ios_login_sets_platform_before_notification_registration(self):
+        self.assertTrue(self.login('a' * 43, platform='ios')['single_device_login'])
+        self.assertEqual(self.bindings[self.user].platform, 'ios')
+        self.bindings[self.user]['platform'] = 'android'
+        self.login('a' * 43, platform='ios')
+        self.assertEqual(self.bindings[self.user].platform, 'ios')
+
+    def test_platform_validation_happens_before_session_or_binding_changes(self):
+        for platform in ('web', '', 123, ['android']):
+            with self.subTest(platform=platform), self.assertRaisesRegex(ValueError, '[Pp]latform'):
+                self.login('a' * 43, platform=platform)
+        self.assertEqual(self.created_sessions, [])
+        self.assertEqual(self.bindings, {})
+
+    def test_platform_normalization_and_legacy_android_compatibility(self):
+        self.login('a' * 43, platform=' IOS ')
+        self.assertEqual(self.bindings[self.user].platform, 'ios')
+        self.logout('a' * 43)
+        self.bindings[self.user]['platform'] = None
+        self.login('b' * 43, platform=None)
+        self.assertEqual(self.bindings[self.user].platform, 'android')
+
+    def test_first_login_seeds_android_for_registration_platform_lookup(self):
+        self.assertTrue(self.login('a' * 43)['single_device_login'])
+        row = self.bindings[self.user]
+        self.assertEqual(row.employee, 'EMP-1')
+        self.assertEqual(row.platform, 'android')
+        self.assertEqual(row.is_active, 0)
+        self.assertFalse(row.fcm_token)  # Firebase still supplies the real token.
+        matching = [r for r in self.bindings.values()
+                    if r.user == self.user and r.platform == 'android']
+        self.assertEqual(len(matching), 1)
+
+    def test_same_phone_login_repairs_existing_blank_platform(self):
+        self.login('a' * 43)
+        row = self.bindings[self.user]
+        device_hash = row.custom_mobile_device_hash
+        for blank in (None, ''):
+            with self.subTest(platform=blank):
+                row.update(platform=blank, fcm_token='existing-token', is_active=1)
+                self.assertTrue(self.login('a' * 43)['single_device_login'])
+                self.assertEqual(row.platform, 'android')
+                self.assertEqual(row.fcm_token, 'existing-token')
+                self.assertEqual(row.is_active, 1)
+                self.assertEqual(row.custom_mobile_device_hash, device_hash)
+                self.assertEqual(len(self.bindings), 1)
+
+    def test_existing_ios_platform_is_not_overwritten(self):
+        self.login('a' * 43)
+        self.bindings[self.user]['platform'] = 'ios'
+        self.login('a' * 43, platform=None)
+        self.assertEqual(self.bindings[self.user].platform, 'ios')
+
+    def test_existing_fcm_row_is_reused_and_notification_metadata_preserved(self):
+        self.bindings[self.user] = Row(
+            name='EMP-1', employee='EMP-1', user=self.user, fcm_token='old-token',
+            platform='android', is_active=1, app_version='2',
+            custom_mobile_device_hash=None, custom_mobile_session_id=None,
+        )
+        secret = self.accounts[self.user].api_secret
+        self.assertTrue(self.login('a' * 43)['single_device_login'])
+        row = self.bindings[self.user]
+        self.assertEqual(len(self.bindings), 1)
+        self.assertEqual(row.fcm_token, 'old-token')
+        self.assertEqual(row.platform, 'android')
+        self.assertEqual(row.app_version, '2')
+        self.assertEqual(row.is_active, 0)
+        self.assertNotEqual(self.accounts[self.user].api_secret, secret)
+        row['is_active'] = 1  # Successful notification registration.
+        self.login('a' * 43)
+        self.assertEqual(row.is_active, 1)  # Same-phone retry preserves FCM.
+        self.logout('a' * 43)
+        self.assertEqual(row.fcm_token, 'old-token')
+        self.assertEqual(row.is_active, 0)
+        self.assertIsNone(row.custom_mobile_session_id)
+
+    def test_missing_fields_returns_setup_error_before_session_creation(self):
+        self.meta.has_field = lambda name: False
+        self.assertEqual(self.login('a' * 43)['http_status_code'], 503)
+        self.assertEqual(self.created_sessions, [])
+
+    def test_conflicting_employee_owner_is_not_overwritten(self):
+        self.bindings['other'] = Row(name='EMP-1', employee='EMP-1', user='other')
+        with self.assertRaisesRegex(ValueError, 'another user'):
+            self.login('a' * 43)
+        self.assertEqual(self.bindings['other'].user, 'other')
+        self.assertEqual(self.deleted_sessions, ['sid-1'])
+
+    def test_duplicate_user_rows_fail_closed(self):
+        for key in ('one', 'two'):
+            self.bindings[key] = Row(name=key, employee=key, user=self.user)
+        with self.assertRaisesRegex(ValueError, 'Multiple FCM Device'):
+            self.login('a' * 43)
+        self.assertEqual(self.created_sessions, [])
+
+    def test_no_legacy_doctype_queries_or_migration(self):
+        with patch.object(self.db, 'exists', side_effect=lambda dt, name: name == 'FCM Device'):
+            self.assertTrue(self.login('a' * 43)['single_device_login'])
+
+    def test_installer_rejects_existing_level_one_permissions(self):
+        custom_fields = ModuleType('frappe.custom.doctype.custom_field.custom_field')
+        custom_fields.create_custom_fields = lambda fields: self.fail('Must not change schema')
+        self.meta.permissions = [Row(permlevel=1, role='Trainee')]
+        with patch.dict(sys.modules, {custom_fields.__name__: custom_fields}):
+            with self.assertRaisesRegex(ValueError, 'permission level 1'):
+                self.module.install()
 
 
 if __name__ == '__main__':

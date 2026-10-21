@@ -1,0 +1,23 @@
+{
+  "source": "https://github.com/microsoft/onnxruntime/tree/v1.28.0",
+  "coordinates": "in.homegenie.onnxruntime:onnxruntime-android:1.28.0-sface1",
+  "upstream_aar_sha256": "f351a0638696f54b35184290dbc001d66daae17281ad0b548d2c70347d53b8a9",
+  "aar_sha256": "c3d792cb8b246f8b4f3f7bf993a5a25cfe848bd36bc541901800d09a3f237e1a",
+  "model_sha256": "487a139eb85ccd5ff30aef7d0add7f12d2bb7abb90c5f08a7f481b452a660e00",
+  "operators_config_sha256": "fccbde944ca45b6396fbd482c194ba064048700afaeeed8138ac5c57d794aede",
+  "native_libraries": {
+    "jni/arm64-v8a/libonnxruntime.so": {
+      "sha256": "63e0b4300465206d55e1e6652d2efe093e397582625069ff4c8799b778057d1c",
+      "bytes": 11753800
+    },
+    "jni/armeabi-v7a/libonnxruntime.so": {
+      "sha256": "32aa06238c18aace3260c0517ef4eec58ef7d7bef620a780544132e6e195e7f0",
+      "bytes": 7465240
+    },
+    "jni/x86_64/libonnxruntime.so": {
+      "sha256": "048083def1f8ca1a2932790171d592a3cb5f0ba7b75c74fcb55275042ef618c8",
+      "bytes": 12937216
+    }
+  },
+  "preserved": "Published Java/JNI, manifest and notices; same model, types and CPU calculations"
+}

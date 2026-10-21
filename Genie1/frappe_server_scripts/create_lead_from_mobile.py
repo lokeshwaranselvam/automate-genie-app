@@ -16,7 +16,7 @@ lead_fields = ["name"]
 lead_fields.extend(["owner", "creation", "modified", "modified_by", "docstatus"])
 for fieldname in [
     "lead_name", "first_name", "mobile_no", "phone", "email_id", "status",
-    "lead_owner", "company_name", "territory", "source", "custom_source",
+    "lead_owner", "company_name", "territory", "source",
     "custom_requirement", "custom_product_enquired", "custom_address",
     "custom_pincode", "custom_sales_person", "custom_customer_category",
     "whatsapp_no",
@@ -51,7 +51,7 @@ elif request_method == "GET":
     # The mobile form reads these two arrays to populate its dropdowns.
     lead_meta = frappe.get_meta("Lead")
     lead_options = {}
-    for fieldname, label in [("custom_source", "Lead Source"), ("custom_product_enquired", "Product Enquired")]:
+    for fieldname, label in [("source", "Lead Source"), ("custom_product_enquired", "Product Enquired")]:
         field = lead_meta.get_field(fieldname)
         if not field:
             frappe.throw("Lead is missing the " + fieldname + " field.")
@@ -102,7 +102,7 @@ elif request_method == "GET":
                 + "'."
             )
         lead_options[fieldname] = options
-    source_options = lead_options["custom_source"]
+    source_options = lead_options["source"]
     product_category_options = lead_options["custom_product_enquired"]
     csrf_token = (
         frappe.session.get("csrf_token")
@@ -143,7 +143,7 @@ elif request_method == "POST":
         if not lead_meta.get_field("whatsapp_no"):
             frappe.throw("Lead is missing the whatsapp_no field. Contact your administrator.")
     requirement = (frappe.form_dict.get("custom_requirement") or "").strip()
-    source = (frappe.form_dict.get("custom_source") or "").strip()
+    source = (frappe.form_dict.get("source") or "").strip()
     product_category = (
         frappe.form_dict.get("custom_product_enquired") or ""
     ).strip()
@@ -164,7 +164,7 @@ elif request_method == "POST":
 
     lead_meta = frappe.get_meta("Lead")
     lead_options = {}
-    for fieldname, label in [("custom_source", "Lead Source"), ("custom_product_enquired", "Product Enquired")]:
+    for fieldname, label in [("source", "Lead Source"), ("custom_product_enquired", "Product Enquired")]:
         field = lead_meta.get_field(fieldname)
         if not field:
             frappe.throw("Lead is missing the " + fieldname + " field.")
@@ -215,7 +215,7 @@ elif request_method == "POST":
                 + "'."
             )
         lead_options[fieldname] = options
-    source_options = lead_options["custom_source"]
+    source_options = lead_options["source"]
     product_category_options = lead_options["custom_product_enquired"]
     if source not in source_options:
         frappe.throw("Choose a Lead Source from the configured options.")
@@ -223,18 +223,13 @@ elif request_method == "POST":
         frappe.throw("Choose a Product Enquired from the configured options.")
 
     lead = frappe.new_doc("Lead")
-    # Older Lead controllers/hooks may still read doc.source after the standard
-    # field was removed from the site's schema. Keep that legacy attribute
-    # empty; the selected source belongs to custom_source, not a Lead Source Link.
-    if not lead_meta.get_field("source"):
-        lead.source = None
     lead.first_name = first_name
     lead.lead_owner = current_user
     lead.mobile_no = mobile_no
     if lead_meta.get_field("whatsapp_no"):
         lead.whatsapp_no = whatsapp_no
     lead.custom_requirement = requirement
-    lead.custom_source = source
+    lead.source = source
     lead.custom_product_enquired = product_category
     lead.custom_address = address
     lead.flags.ignore_mandatory = True
@@ -248,7 +243,7 @@ elif request_method == "POST":
         "mobile_no": lead.mobile_no,
         "whatsapp_no": whatsapp_no,
         "custom_requirement": lead.custom_requirement,
-        "custom_source": lead.custom_source,
+        "source": lead.source,
         "custom_product_enquired": lead.custom_product_enquired,
         "custom_address": lead.custom_address,
     }

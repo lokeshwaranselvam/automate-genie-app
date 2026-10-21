@@ -108,14 +108,20 @@ class Check {
   }) async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final auth = prefs.getString('token') ?? '';
+    final employeeDetails = <String, dynamic>{};
     if (recordsFirst) {
       final records = await const FacePerformanceTrace().measure(
         'direct attendance records',
-        () => _readAttendanceRecords(email, auth),
+        () => _readAttendanceRecords(
+          email,
+          auth,
+          employeeDetails: employeeDetails,
+        ),
       );
       if (records != null) {
         return {
           ...records,
+          ...employeeDetails,
           'attendance_records_verified': true,
           'attendance_status_source': 'employee_checkin_records',
         };
@@ -137,7 +143,11 @@ class Check {
           .catchError((Object _) => http.Response('', 503)),
       recordsFirst
           ? Future<Map<String, dynamic>?>.value(null)
-          : _readAttendanceRecords(email, auth),
+          : _readAttendanceRecords(
+            email,
+            auth,
+            employeeDetails: employeeDetails,
+          ),
     ]);
     final response = results[0] as http.Response;
     Map<String, dynamic> status = {};
@@ -168,13 +178,14 @@ class Check {
     } else {
       status['attendance_records_verified'] = false;
     }
-    return status;
+    return {...status, ...employeeDetails};
   }
 
   static Future<Map<String, dynamic>?> _readAttendanceRecords(
     String email,
-    String authorization,
-  ) async {
+    String authorization, {
+    Map<String, dynamic>? employeeDetails,
+  }) async {
     final site = dotenv.env['SITE_URL']?.trim() ?? '';
     if (site.isEmpty) return null;
     final base = Uri.parse(site.endsWith('/') ? site : '$site/');
@@ -186,7 +197,7 @@ class Check {
       String doctype,
       Map<String, String> query,
     ) async {
-      final response = await http
+      var response = await http
           .get(
             base
                 .resolve('api/resource/${Uri.encodeComponent(doctype)}')
@@ -194,6 +205,23 @@ class Check {
             headers: headers,
           )
           .timeout(const Duration(seconds: 12));
+      if (doctype == 'Employee' &&
+          (response.statusCode == 403 || response.statusCode == 417)) {
+        // Optional profile metadata must not break attendance record lookup.
+        response = await http
+            .get(
+              base
+                  .resolve('api/resource/Employee')
+                  .replace(
+                    queryParameters: {
+                      ...query,
+                      'fields': jsonEncode(['name']),
+                    },
+                  ),
+              headers: headers,
+            )
+            .timeout(const Duration(seconds: 12));
+      }
       if (response.statusCode != 200) {
         throw StateError('Attendance records unavailable.');
       }
@@ -209,11 +237,14 @@ class Check {
     try {
       final employees = await rows('Employee', {
         'filters': jsonEncode({'user_id': email, 'status': 'Active'}),
-        'fields': jsonEncode(['name']),
+        'fields': jsonEncode(['name', 'default_shift']),
         'limit_page_length': '2',
       });
       if (employees.length != 1 || employees.single['name'] is! String) {
         return null;
+      }
+      if (employees.single.containsKey('default_shift')) {
+        employeeDetails?['default_shift'] = employees.single['default_shift'];
       }
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
