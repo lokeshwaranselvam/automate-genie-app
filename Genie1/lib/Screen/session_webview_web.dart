@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:web/web.dart' as web;
 import '../utils/api/session_auth.dart';
+import '../utils/navigation/home_navigation.dart';
+import '../utils/platform/embedded_page_uri.dart';
 import '../utils/theme/brand_theme.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 
@@ -22,6 +24,8 @@ class SessionWebView extends StatefulWidget {
 
 class _SessionWebViewState extends State<SessionWebView> {
   bool _ready = false, _loading = true;
+  Uri? _frameUri;
+  int _generation = 0;
   String? _error;
   StreamSubscription<web.Event>? _load;
   Timer? _timeout;
@@ -32,8 +36,22 @@ class _SessionWebViewState extends State<SessionWebView> {
   }
 
   Future<void> _initialize() async {
-    final uri = Uri.tryParse(widget.url);
-    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+    final generation = ++_generation;
+    _timeout?.cancel();
+    _load?.cancel();
+    final uri = embeddedPageUri(
+      widget.url,
+      app: Uri.base,
+      site: dotenv.env['SITE_URL'],
+      proxyErpOrigin: dotenv.env['WEB_PROXY_ERP_ORIGIN'],
+    );
+    setState(() {
+      _ready = false;
+      _loading = true;
+      _error = null;
+      _frameUri = uri;
+    });
+    if (uri == null) {
       setState(() {
         _error = 'This link cannot be opened.';
         _loading = false;
@@ -41,35 +59,40 @@ class _SessionWebViewState extends State<SessionWebView> {
       return;
     }
     try {
-      if (await SessionAuthApi.getActiveSessionUser() == null)
+      final user = await SessionAuthApi.getActiveSessionUser();
+      if (!mounted || generation != _generation) return;
+      if (user == null) {
         throw StateError('Your session has expired. Please sign in again.');
-      if (!mounted) return;
+      }
       setState(() => _ready = true);
       _timeout = Timer(const Duration(seconds: 20), () {
-        if (mounted && _loading)
+        if (mounted && generation == _generation && _loading) {
           setState(() {
             _loading = false;
             _error =
-                'This page could not be displayed here. Open it in your browser to continue.';
+                'This page did not finish loading. Retry, or ask your ERP administrator to check that the page allows embedding inside the web app.';
           });
+        }
       });
     } catch (error) {
-      if (mounted)
+      if (mounted && generation == _generation) {
         setState(() {
-          _error = error.toString();
+          _error = error.toString().replaceFirst('Bad state: ', '');
           _loading = false;
         });
+      }
     }
   }
 
-  Future<void> _open() async {
-    final uri = Uri.tryParse(widget.url);
-    if (uri != null && uri.scheme == 'https')
-      await launchUrl(uri, webOnlyWindowName: '_blank');
+  @override
+  void didUpdateWidget(covariant SessionWebView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) _initialize();
   }
 
   @override
   void dispose() {
+    _generation++;
     _timeout?.cancel();
     _load?.cancel();
     super.dispose();
@@ -77,15 +100,18 @@ class _SessionWebViewState extends State<SessionWebView> {
 
   @override
   Widget build(BuildContext context) {
+    final generation = _generation;
+    final frameUri = _frameUri;
     final body = Stack(
       children: [
         if (_ready && _error == null)
           Positioned.fill(
             child: HtmlElementView.fromTagName(
+              key: ValueKey(generation),
               tagName: 'iframe',
               onElementCreated: (element) {
+                if (!mounted || generation != _generation) return;
                 final frame = element as web.HTMLIFrameElement;
-                frame.src = widget.url;
                 frame.title = widget.title;
                 frame.style.border = '0';
                 frame.style.width = '100%';
@@ -93,9 +119,26 @@ class _SessionWebViewState extends State<SessionWebView> {
                 frame.allow = 'camera; microphone; geolocation';
                 frame.referrerPolicy = 'same-origin';
                 _load = frame.onLoad.listen((_) {
+                  if (!mounted || generation != _generation) return;
                   _timeout?.cancel();
-                  if (mounted) setState(() => _loading = false);
+                  String? error;
+                  if (frameUri?.origin == Uri.base.origin) {
+                    try {
+                      if (frame.contentDocument == null) {
+                        error =
+                            'ERP did not allow this page inside the web app. Ask your ERP administrator to check its framing policy and redirects.';
+                      }
+                    } catch (_) {
+                      error =
+                          'The page redirected to another host and cannot be verified inside the web app.';
+                    }
+                  }
+                  setState(() {
+                    _loading = false;
+                    _error = error;
+                  });
                 });
+                frame.src = frameUri.toString();
               },
             ),
           ),
@@ -110,27 +153,28 @@ class _SessionWebViewState extends State<SessionWebView> {
                   Text(_error!, textAlign: TextAlign.center),
                   const SizedBox(height: 16),
                   FilledButton(
-                    onPressed: _open,
-                    child: const Text('Open page'),
+                    onPressed: _initialize,
+                    child: const Text('Retry'),
                   ),
                 ],
               ),
             ),
           ),
-        if (widget.embedded && !_loading)
+        if (widget.embedded && !_loading && _error == null)
           Positioned(
             right: 8,
             bottom: 8,
             child: IconButton.filledTonal(
-              tooltip: 'Open page in browser',
-              onPressed: _open,
-              icon: const Icon(Icons.open_in_new),
+              tooltip: 'Reload page',
+              onPressed: _initialize,
+              icon: const Icon(Icons.refresh),
             ),
           ),
       ],
     );
-    if (widget.embedded)
+    if (widget.embedded) {
       return PopScope(canPop: !widget.blockSystemBack, child: body);
+    }
     return PopScope(
       canPop: false,
       child: Scaffold(
@@ -143,13 +187,14 @@ class _SessionWebViewState extends State<SessionWebView> {
           title: Text(widget.title),
           actions: [
             IconButton(
-              tooltip: 'Open page in browser',
-              onPressed: _open,
-              icon: const Icon(Icons.open_in_new, color: Colors.white),
+              tooltip: 'Reload page',
+              onPressed: _initialize,
+              icon: const Icon(Icons.refresh, color: Colors.white),
             ),
           ],
         ),
         body: body,
+        bottomNavigationBar: HomeNavigation.navigationBar(context),
       ),
     );
   }

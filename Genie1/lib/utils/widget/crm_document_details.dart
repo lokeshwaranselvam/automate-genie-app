@@ -13,6 +13,8 @@ class CrmDocumentDetails extends StatelessWidget {
     this.refreshing = false,
     this.onCallContact,
     this.callInProgress = false,
+    this.onEditOpportunity,
+    this.creatorFullName,
   });
 
   final Map<String, dynamic> document;
@@ -21,6 +23,8 @@ class CrmDocumentDetails extends StatelessWidget {
   final bool refreshing;
   final ValueChanged<String>? onCallContact;
   final bool callInProgress;
+  final VoidCallback? onEditOpportunity;
+  final String? creatorFullName;
 
   static const background = Color(0xFFF3F7FC);
   static const _ink = Color(0xFF101A36);
@@ -473,7 +477,13 @@ class CrmDocumentDetails extends StatelessWidget {
       children: [
         for (var i = 0; i < keys.length; i++) ...[
           if (i > 0) const Divider(height: 1, color: Color(0xFFE1E7F0)),
-          _field(keys[i], document[keys[i]]),
+          _field(
+            keys[i],
+            (documentType == 'Opportunity' || documentType == 'Lead') &&
+                    keys[i] == 'owner'
+                ? creatorFullName ?? 'Full name unavailable'
+                : document[keys[i]],
+          ),
         ],
       ],
     ),
@@ -493,6 +503,15 @@ class CrmDocumentDetails extends StatelessWidget {
             )
             .toSet();
     final sections = <Widget>[];
+    if (documentType == 'Opportunity') {
+      remaining.removeAll(_document);
+      remaining.removeAll(_valueFields.skip(2));
+      remaining.removeAll(_audit.skip(1));
+    }
+    if (documentType == 'Lead') {
+      remaining.removeAll(_document);
+      remaining.removeAll(_audit.skip(1));
+    }
     void add(String title, IconData icon, List<String> fields) {
       final keys = fields.where(remaining.contains).toList();
       remaining.removeAll(keys);
@@ -501,7 +520,15 @@ class CrmDocumentDetails extends StatelessWidget {
 
     add('Audit Information', Icons.description_rounded, _audit);
     add('Document Information', Icons.description_rounded, _document);
-    add('$documentType Information', Icons.pie_chart_rounded, _information);
+    String fieldKind(String key) => key
+        .replaceFirst(RegExp(r'^custom_'), '')
+        .toLowerCase()
+        .replaceAll(RegExp('[^a-z]'), '');
+    add('$documentType Information', Icons.pie_chart_rounded, [
+      ..._information,
+      if (documentType == 'Opportunity')
+        ...remaining.where((key) => fieldKind(key) == 'nextfollowupdate'),
+    ]);
     add(
       'Contact Information',
       Icons.contact_phone_outlined,
@@ -518,7 +545,14 @@ class CrmDocumentDetails extends StatelessWidget {
     add(
       'Additional Information',
       Icons.info_outline_rounded,
-      remaining.where((key) => !tables.contains(key)).toList(),
+      documentType == 'Opportunity'
+          ? [
+            for (final kind in ['customertype', 'citytown', 'district'])
+              ...remaining.where(
+                (key) => fieldKind(key) == kind && !tables.contains(key),
+              ),
+          ]
+          : remaining.where((key) => !tables.contains(key)).toList(),
     );
     for (final key in tables) {
       add(_label(key), Icons.table_rows_outlined, [key]);
@@ -529,6 +563,15 @@ class CrmDocumentDetails extends StatelessWidget {
       children: [
         if (refreshing) const LinearProgressIndicator(minHeight: 2),
         _summary(context),
+        if (documentType == 'Opportunity' && onEditOpportunity != null)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: refreshing ? null : onEditOpportunity,
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('Edit status, notes & follow-up'),
+            ),
+          ),
         ...sections,
       ],
     );

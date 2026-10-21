@@ -96,8 +96,8 @@ class PerformanceApi {
     final request = http.Request(
       'GET',
       base
-          .resolve('api/method/mobile_employee_performance')
-          .replace(queryParameters: {'action': 'can_view_sales'}),
+          .resolve('api/method/mobile_site_visit')
+          .replace(queryParameters: {'action': 'can_create'}),
     )..followRedirects = false;
     request.headers.addAll({
       'Accept': 'application/json',
@@ -115,12 +115,15 @@ class PerformanceApi {
     final message = decoded is Map ? decoded['message'] : null;
     if (message is! Map ||
         message['current_user'] != user ||
-        message['can_view_sales'] is! bool) {
+        message['can_create_lead'] is! bool ||
+        message['can_create'] is! bool) {
       throw const FormatException(
         'Invalid sales performance permission response.',
       );
     }
-    return message['can_view_sales'] == true;
+    // Share Home's server-verified Sales User OR Sales Manager capability.
+    // Performance aggregation still enforces its own server permissions.
+    return message['can_create_lead'] == true || message['can_create'] == true;
   }
 
   Future<PerformanceData> load(DateTime month) async {

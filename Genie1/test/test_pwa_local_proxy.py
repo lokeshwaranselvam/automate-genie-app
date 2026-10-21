@@ -43,6 +43,7 @@ class ProxyTests(unittest.TestCase):
         status, _, body = self.request("/genie/assets/.env")
         self.assertEqual(status, 200)
         self.assertIn(f"URL={self.server.local_origin}/api/method/itgenie.api_utils".encode(), body)
+        self.assertIn(b"WEB_PROXY_ERP_ORIGIN=https://erp.example.test", body)
         self.assertEqual((self.root / "assets/.env").read_bytes(), original)
 
     def test_foreign_origin_and_dns_rebinding_cannot_reach_erp(self):

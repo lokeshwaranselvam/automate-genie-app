@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../utils/api/lead_api.dart';
+import '../utils/api/session_auth.dart';
 import '../utils/widget/pull_to_refresh.dart';
 
 import '../utils/theme/brand_theme.dart';
@@ -44,13 +45,39 @@ class LeadDetailsPage extends StatefulWidget {
 class _LeadDetailsPageState extends State<LeadDetailsPage> {
   late Map<String, dynamic> lead = widget.lead;
   bool _refreshing = false;
+  String? _creatorFullName;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCreatorName();
+  }
+
+  Future<void> _loadCreatorName() async {
+    final owner = lead['owner']?.toString().trim() ?? '';
+    if (owner.isEmpty) return;
+    try {
+      final name = await SessionAuthApi.getUserFullName(owner);
+      if (mounted && lead['owner'] == owner) {
+        setState(() => _creatorFullName = name);
+      }
+    } catch (_) {
+      // A missing full name must not prevent displaying existing Lead details.
+    }
+  }
 
   Future<void> _refresh() async {
     if (_refreshing) return;
     setState(() => _refreshing = true);
     try {
       final updated = await LeadApi.getLeadDetails(lead['name'].toString());
-      if (mounted) setState(() => lead = updated);
+      if (mounted) {
+        setState(() {
+          lead = updated;
+          _creatorFullName = null;
+        });
+        await _loadCreatorName();
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -95,6 +122,7 @@ class _LeadDetailsPageState extends State<LeadDetailsPage> {
       child: CrmDocumentDetails(
         document: lead,
         documentType: 'Lead',
+        creatorFullName: _creatorFullName,
         fieldLabels: LeadDetailsPage._fields,
         refreshing: _refreshing,
       ),

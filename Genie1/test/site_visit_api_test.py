@@ -266,10 +266,28 @@ class SiteVisitApiTest(unittest.TestCase):
             result = self.run_api(action="can_create", user="other@example.test")
             self.assertEqual(result["can_create"], allowed)
             self.assertEqual(result["current_user"], self.user)
-            self.frappe.db.exists.assert_called_with("Has Role", {
+            self.frappe.db.exists.assert_any_call("Has Role", {
                 "parent": self.user, "parenttype": "User", "parentfield": "roles",
                 "role": "Sales Manager",
             })
+        self.frappe.get_all.assert_not_called()
+
+    def test_home_actions_follow_exact_session_sales_roles(self):
+        for roles, lead, visit, pending in [([], False, False, False),
+                                   (["Employee"], False, False, False),
+                                   (["Sales User"], True, False, True),
+                                   (["Sales Manager"], True, True, True),
+                                   (["Production User"], False, False, True),
+                                   (["Production Manager"], False, False, True)]:
+            self.frappe.db.exists.side_effect = lambda doctype, filters: (
+                doctype == "Has Role" and filters["parent"] == self.user
+                and (any(role in roles for role in filters["role"][1])
+                     if isinstance(filters["role"], list) else filters["role"] in roles)
+            )
+            result = self.run_api(action="can_create", user="other@example.test")
+            self.assertEqual(result["can_create_lead"], lead)
+            self.assertEqual(result["can_create"], visit)
+            self.assertEqual(result["can_view_pending"], pending)
         self.frappe.get_all.assert_not_called()
         self.frappe.get_doc.assert_not_called()
 

@@ -64,6 +64,32 @@ real Frappe session cookies or the existing authenticated API token.
 
 ## Backend prerequisite: web installation platform
 
+### Home role visibility and CRM updates
+
+The web app now uses the mobile app's current Home role decisions: Sales
+Managers see visit creation, Sales Users/Managers see lead actions, and the
+production roles can see Pending. The task summary and CRM filters/details
+also follow the mobile changes. The Home content is constrained for desktop
+screens; Opportunity writes use browser cookies, CSRF-protected PUT requests,
+and the local same-origin proxy when testing on localhost.
+
+The ERP API Server Script `mobile_site_visit` must include the `can_create_lead`
+and `can_view_pending` fields in its `action=can_create` response. The local
+source is `frappe_server_scripts/mobile_site_visit_api.py`; see its README for
+installation. If these role fields are already deployed from the mobile app,
+no additional server change is required. This port does not deploy the script.
+Frappe continues to enforce document and workflow permissions for updates.
+
+My Performance now shares the reference app's Home role check through
+`mobile_site_visit?action=can_create`. Its Sales tab is available when the
+authenticated response grants `can_create_lead` (Sales User) or `can_create`
+(Sales Manager). Other users, failed role checks and invalid/account-mismatched
+responses retain Attendance only. Sales figures still come from the existing
+permission-checked performance API/resource flow. The web app's embedded
+Attendance page and app navigation are retained. This focused port passed
+17 API/UI tests and analysis without findings; the reference files were not
+modified. Live account roles and server deployment remain separate checks.
+
 These are **unrestricted custom Frappe application Python files**, not Safe
 Exec Server Scripts. If the existing single-device backend is already installed,
 back up the live helper and update it with:
@@ -106,6 +132,19 @@ The PWA remains one installation under the current single-device policy.
 Employees must explicitly sign out of a different bound phone before signing
 in from a browser. Clearing browser site data does not release the server
 binding; sign out first.
+
+Browser logout retains the existing installation-credential release protocol.
+Because browsers automatically attach their ERP cookie, a POST rejected with
+an explicit `CSRFTokenError` now loads a fresh token from the same-origin
+`/app` page and retries once with the token in the header and JSON body. A
+guest/expired session can still release its binding without that bootstrap
+when ERP accepts the installation credential directly. Timeouts, permission
+errors and server errors are not automatically retried. Saved credentials and
+pending recovery remain until ERP confirms success. Web errors report a safe
+HTTP status or CSRF explanation rather than assuming every failure is offline.
+This frontend correction does not require disabling CSRF or replacing backend
+modules. Nine Chrome logout tests and ten native login/logout tests passed;
+the screenshot's actual failed ERP response was not captured.
 
 ## Serve beside ERP
 
@@ -158,7 +197,56 @@ separate scope from the application shell worker. Browser/OS settings govern
 notification delivery and sound. Desktop-style Android alarm behavior and
 phone call-state access are unavailable on the web.
 
-## Maps
+## Embedded ERP pages and app navigation
+
+Web page shortcuts remain inside an iframe. Standalone page screens keep the
+Home/Tasks/More navigation and permitted Visits/Leads entries; embedded Tasks
+and Attendance keep their parent screen navigation. Reload/Retry stays inside
+the app. The Flutter page wrapper no longer offers an external-tab button.
+The webpage itself can still contain its own links or popup actions.
+
+The web app's My Tasks and New Task entries use the requested
+`https://erp.homegeniegroup.in/TG`. Native builds retain their existing TGC URL.
+Other requested URLs are retained, including `https://16.itgenie.online/SVR`.
+Anonymous header checks on the previously configured TGC page, SVR,
+GOAD and Canteen returned `X-Frame-Options: SAMEORIGIN`. Therefore:
+
+- On the live ERP origin, GOAD and Canteen can use the ERP session in a
+  same-origin iframe, subject to their own page/redirect permissions.
+- For local development, restart `tool/serve_pwa_local.py`. It publishes its
+  configured upstream ERP origin in memory; iframe URLs on that exact ERP
+  origin are routed through localhost, preserving their path/query/fragment.
+  It does not rewrite the `16.itgenie.online` URLs or strip framing headers.
+- The administrator of `16.itgenie.online` must allow the live parent origin
+  for the intended embedded pages. Scope this to the approved pages and any
+  login/redirect pages they need. An appropriate response policy is:
+
+  ```http
+  Content-Security-Policy: frame-ancestors 'self' https://erp.homegeniegroup.in;
+  ```
+
+  Ensure those approved responses do not also send a conflicting
+  `X-Frame-Options: SAMEORIGIN` or a second, more restrictive `frame-ancestors`
+  policy. Keep other sites/pages protected and preserve authentication, CSRF,
+  roles and document permissions. The exact server edit depends on whether
+  Frappe or Nginx currently sets those headers; it has not been deployed here.
+- Authentication on `16.itgenie.online` remains separate from the ERP-host
+  session. Verify its own sign-in and cookie behavior in a framed browser;
+  browsers may block third-party cookies even when framing is permitted.
+  Do not copy a SID into a URL or disable authentication/CSRF checks.
+
+The frontend cannot override browser framing restrictions. Cross-origin
+iframe load events do not reliably expose a blocked page, so a blank/refused
+frame still needs a browser-console and response-header check on the server.
+Do not allow localhost in production framing policy just to test these pages.
+
+Embedding changes passed 24 focused Flutter checks, five local-proxy tests,
+and two Chrome widget tests. The Chrome widget tests use mocked ERP sessions
+and the Flutter platform-view registry to check frame configuration and app
+navigation; they do not prove authenticated live-page rendering. The Windows
+SDK renderer workaround described below was used for the Chrome test session.
+
+## Maps configuration
 
 Set `GOOGLE_MAPS_WEB_API_KEY` to a browser key with the deployed HTTPS referrer
 allowed and Maps JavaScript/Places/Geocoding and existing route services enabled.
@@ -179,7 +267,7 @@ the optional Static Maps image thumbnail is omitted in browser stamps.
 | GPS and event geofence | Existing radii and installation exception retained; monitors while the browser executes; may stop/suspend when hidden, locked or closed |
 | Face enrollment and face-protected attendance | Mobile app required; browser ML Kit/blink verification is not available. No selfie-only bypass or reduced thresholds |
 | Employees without an enrolled face | Original enrollment gate remains; complete enrollment in the mobile app before accessing the dashboard through the PWA |
-| ERP web pages | Same-origin iframe session; open-page fallback when a page prohibits framing |
+| ERP web pages | Embedded iframe with app navigation; retry stays inside the app; server framing policy still applies |
 | Push | Requires web Firebase/VAPID and backend platform update; browser permissions and OS limits apply |
 | Offline | Public app shell can load after the first complete installation. ERP reads/writes require connectivity; no offline attendance or queued submissions |
 
@@ -190,7 +278,7 @@ The existing SFace model, thresholds and native face pipeline are preserved.
 ## Validation
 
 ```powershell
-flutter test --platform chrome test/pwa_browser_test.dart
+flutter test --platform chrome test/pwa_browser_test.dart test/opportunity_web_test.dart
 node tool/test_pwa.mjs
 python -m unittest discover -s test -p "test_pwa_build.py"
 ```
@@ -205,9 +293,20 @@ login and FCM suites passed all 33 tests; the two build-script tests and
 service-worker privacy/fallback tests also passed. Project analysis reported
 no errors or warnings, with existing/style information-level findings.
 
-Chrome browser tests compiled but the runner could not load the suite and
-reported `Connection closed before test suite loaded`. Browser assertions
-are therefore unverified. No browser surface was connected for visual QA.
+For the role/CRM port, 40 focused Flutter tests passed across Home layout,
+role visibility, lead/opportunity filters, CRM details and editing. This
+includes a 1440 px desktop layout check. All 23 site-visit backend tests passed.
+Analysis of the ported code reported no errors or warnings and 21 existing
+information-level findings.
+
+All eight Chrome browser tests passed with mocked ERP responses, covering
+login/session cleanup, role flags, Opportunity writes with CSRF, final-origin
+validation, localhost transport, uploads and the face-verification boundary.
+The Windows Flutter test server returned 404 for its CanvasKit URLs. For this
+run only, the browser test session received those renderer files from the
+installed Flutter SDK; no SDK or mobile source files were changed. An SDK
+with a working CanvasKit test route can run the command above directly.
+These browser assertions do not establish live ERP account/transaction results.
 
 An earlier focused run including the unchanged native tracking test passed
 102 of 103 tests. The existing

@@ -278,10 +278,21 @@ def get_opportunities(query_digits=None):
 
 
 if action == "can_create":
+    can_create_lead = can_create_visit or bool(frappe.db.exists(
+        "Has Role",
+        {"parent": current_user, "parenttype": "User", "parentfield": "roles",
+         "role": "Sales User"},
+    ))
     frappe.response["message"] = {
         "status": "success",
         "current_user": current_user,
         "can_create": can_create_visit,
+        "can_create_lead": can_create_lead,
+        "can_view_pending": can_create_lead or bool(frappe.db.exists(
+            "Has Role",
+            {"parent": current_user, "parenttype": "User", "parentfield": "roles",
+             "role": ["in", ["Production Manager", "Production User"]]},
+        )),
     }
 
 elif action == "get":

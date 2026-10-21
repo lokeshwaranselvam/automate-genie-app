@@ -4,12 +4,14 @@ import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart' show DateFormat;
 
 import '../utils/api/performance_api.dart';
 import 'session_webview.dart';
 import '../utils/connection_notice.dart';
 import '../utils/widget/warning.dart';
+import '../utils/navigation/home_navigation.dart';
 
 const _blue = BrandColors.ink;
 const _ink = Color(0xFF202936);
@@ -304,7 +306,7 @@ class _MyPerformancePageState extends State<MyPerformancePage>
               ),
       bottomNavigationBar:
           widget.onNavigate == null
-              ? null
+              ? (kIsWeb ? HomeNavigation.navigationBar(context) : null)
               : brandBottomNavigationBar(
                 currentIndex: 4,
                 onTap: widget.onNavigate,

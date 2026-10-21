@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/Screen/pending_work_page.dart';
 import 'package:homegenie/Screen/session_webview.dart';
@@ -19,7 +20,12 @@ void main() {
           final webview = tester.widget<SessionWebView>(
             find.byType(SessionWebView),
           );
-          expect(webview.url, 'https://16.itgenie.online/TGC');
+          expect(
+            webview.url,
+            kIsWeb
+                ? 'https://erp.homegeniegroup.in/TG'
+                : 'https://16.itgenie.online/TGC',
+          );
           expect(webview.embedded, isTrue);
           expect(find.text('My Tasks'), findsOneWidget);
           expect(find.byType(TextField), findsNothing);

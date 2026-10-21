@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
 import '../utils/api/opportunity_api.dart';
+import '../utils/api/session_auth.dart';
 import '../utils/api/smartflo_call_api.dart';
 import '../utils/widget/warning.dart';
 import '../utils/theme/brand_theme.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import '../utils/widget/home_back_button.dart';
 import '../utils/widget/crm_document_details.dart';
+import '../utils/widget/opportunity_edit_dialog.dart';
 
 class OpportunityDetailsPage extends StatefulWidget {
   const OpportunityDetailsPage({super.key, required this.opportunityId});
@@ -21,6 +23,47 @@ class _OpportunityDetailsPageState extends State<OpportunityDetailsPage> {
   bool _loading = false;
   String? _error;
   bool _calling = false;
+  bool _editing = false;
+  String? _creatorFullName;
+
+  Future<void> _edit() async {
+    if (_editing || _loading || _document == null) return;
+    setState(() => _editing = true);
+    try {
+      final original = _document!;
+      final options = await OpportunityApi.getEditOptions();
+      if (!mounted) return;
+      final changes = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder:
+            (_) => OpportunityEditDialog(
+              document: original,
+              options: options,
+              onSave: (changes) async {
+                final updated = await OpportunityApi.updateDetails(
+                  original: original,
+                  changes: changes,
+                );
+                if (mounted) setState(() => _document = updated);
+              },
+            ),
+      );
+      if (changes == null || changes.isEmpty || !mounted) return;
+      if (mounted) {
+        Warning.show(context, 'Opportunity updated.', 'Success');
+      }
+    } catch (error) {
+      if (mounted) {
+        Warning.show(
+          context,
+          error.toString().replaceFirst('Bad state: ', ''),
+          'Error',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _editing = false);
+    }
+  }
 
   Future<void> _callContact(String number) async {
     if (_calling || _loading || _document == null) return;
@@ -57,14 +100,27 @@ class _OpportunityDetailsPageState extends State<OpportunityDetailsPage> {
   }
 
   Future<void> _load() async {
-    if (_loading) return;
+    if (_loading || _editing) return;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
+      final sid = await SessionAuthApi.getSessionId();
       final document = await OpportunityApi.getDetails(widget.opportunityId);
-      if (mounted) setState(() => _document = document);
+      final creatorFullName = await SessionAuthApi.getUserFullName(
+        document['owner'].toString(),
+      );
+      if (await SessionAuthApi.getSessionId() != sid ||
+          await SessionAuthApi.getSavedSessionUser() != document['owner']) {
+        throw StateError('Your account changed. Reopen Opportunities.');
+      }
+      if (mounted) {
+        setState(() {
+          _document = document;
+          _creatorFullName = creatorFullName;
+        });
+      }
     } catch (error) {
       // Never keep previously displayed details after permission/owner changes.
       if (mounted) {
@@ -96,7 +152,7 @@ class _OpportunityDetailsPageState extends State<OpportunityDetailsPage> {
               (_) => [
                 PopupMenuItem(
                   value: 'refresh',
-                  enabled: !_loading,
+                  enabled: !_loading && !_editing,
                   child: const Text('Refresh'),
                 ),
               ],
@@ -110,7 +166,9 @@ class _OpportunityDetailsPageState extends State<OpportunityDetailsPage> {
               ? CrmDocumentDetails(
                 document: _document!,
                 documentType: 'Opportunity',
-                refreshing: _loading,
+                creatorFullName: _creatorFullName,
+                refreshing: _loading || _editing,
+                onEditOpportunity: _edit,
                 onCallContact: _callContact,
                 callInProgress: _calling || _loading,
               )

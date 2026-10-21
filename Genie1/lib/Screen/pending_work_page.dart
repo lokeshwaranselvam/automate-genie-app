@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 
 import '../utils/widget/home_back_button.dart';
@@ -12,7 +13,7 @@ class PendingWorkPage extends StatefulWidget {
 }
 
 class PendingWorkPageState extends State<PendingWorkPage> {
-  // Homescreen calls this when pending-work notifications arrive. TGC owns its
+  // Homescreen calls this when pending-work notifications arrive. The page owns its
   // task data now; don't reload the WebView and discard an in-progress form.
   Future<void> refresh() async {}
 
@@ -31,7 +32,10 @@ class PendingWorkPageState extends State<PendingWorkPage> {
         ),
       ),
       body: const SessionWebView(
-        url: 'https://16.itgenie.online/TGC',
+        url:
+            kIsWeb
+                ? 'https://erp.homegeniegroup.in/TG'
+                : 'https://16.itgenie.online/TGC',
         title: 'My Tasks',
         embedded: true,
       ),

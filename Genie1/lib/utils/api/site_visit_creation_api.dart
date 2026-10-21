@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 
@@ -210,21 +211,37 @@ class SiteVisitCreationApi {
 
   /// Server-side role decision for the signed-in session; no local role cache.
   static Future<bool> canCreateVisit() async {
+    return (await homeQuickActionAccess()).canCreateVisit;
+  }
+
+  static Future<({bool canAddLead, bool canCreateVisit, bool canViewPending})>
+  homeQuickActionAccess() async {
     final user = await SessionAuthApi.getSavedSessionUser();
     final sid = await SessionAuthApi.getSessionId();
-    if (user == null || sid == null || sid.isEmpty) return false;
+    if (user == null || sid == null || sid.isEmpty) {
+      return (canAddLead: false, canCreateVisit: false, canViewPending: false);
+    }
     final response = await http
         .get(
           _endpoint(query: const {'action': 'can_create'}),
           headers: {
             'Accept': 'application/json',
-            'Cookie': 'sid=$sid',
+            if (!kIsWeb) 'Cookie': 'sid=$sid',
             'Cache-Control': 'no-cache, no-store',
           },
         )
         .timeout(const Duration(seconds: 15));
     await _assertSession(sid);
-    return _decodeResponse(response, user)['can_create'] == true;
+    final permission = _decodeResponse(response, user);
+    final manager = permission['can_create'] == true;
+    return (
+      canAddLead: manager || permission['can_create_lead'] == true,
+      canCreateVisit: manager,
+      canViewPending:
+          manager ||
+          permission['can_create_lead'] == true ||
+          permission['can_view_pending'] == true,
+    );
   }
 
   static Future<Map<String, dynamic>> loadOptions() async {

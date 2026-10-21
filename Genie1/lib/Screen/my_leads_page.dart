@@ -1,6 +1,7 @@
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../utils/api/lead_api.dart';
 import '../utils/widget/home_back_button.dart';
@@ -15,9 +16,65 @@ class MyLeadsPage extends StatefulWidget {
 }
 
 class _MyLeadsPageState extends State<MyLeadsPage> {
+  static const _statuses = [
+    'Open',
+    'Lead',
+    'Junk',
+    'Followup',
+    'RNR',
+    'Hot Followup',
+    'Not Interested',
+    'Duplicate Lead',
+  ];
+  final _phone = TextEditingController();
+  String _status = '';
   List<Map<String, dynamic>> _leads = [];
   bool _loading = true;
   String? _error;
+
+  @override
+  void dispose() {
+    _phone.dispose();
+    super.dispose();
+  }
+
+  List<Map<String, dynamic>> get _filteredLeads =>
+      _leads.where((lead) {
+        if (_status.isNotEmpty &&
+            lead['status']?.toString().trim() != _status) {
+          return false;
+        }
+        final phone = _phone.text;
+        return phone.isEmpty ||
+            ['mobile_no', 'phone'].any(
+              (field) => (lead[field]?.toString() ?? '')
+                  .replaceAll(RegExp(r'\D'), '')
+                  .contains(phone),
+            );
+      }).toList();
+
+  Future<void> _chooseStatus() async {
+    final selected = await showDialog<String>(
+      context: context,
+      builder:
+          (context) => SimpleDialog(
+            title: const Text('Filter by status'),
+            children: [
+              for (final status in _statuses)
+                SimpleDialogOption(
+                  onPressed: () => Navigator.pop(context, status),
+                  child: Text(status),
+                ),
+              if (_status.isNotEmpty)
+                TextButton(
+                  onPressed: () => Navigator.pop(context, ''),
+                  child: const Text('Clear filter'),
+                ),
+            ],
+          ),
+    );
+    if (selected != null && mounted) setState(() => _status = selected);
+  }
 
   @override
   void initState() {
@@ -74,113 +131,163 @@ class _MyLeadsPageState extends State<MyLeadsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final leads = _filteredLeads;
     return Scaffold(
       appBar: brandAppBar(
         leading: const HomeBackButton(color: Colors.white),
         title: const Text('My Leads'),
       ),
-      body: RefreshIndicator(
-        color: BrandColors.ink,
-        onRefresh: () async {
-          if (!_loading) await _loadLeads();
-        },
-        child:
-            _loading && _leads.isEmpty
-                ? ListView(
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: ClampingScrollPhysics(),
-                  ),
-                  children: const [
-                    SizedBox(height: 180),
-                    Center(child: AgPathLoadingIndicator()),
-                  ],
-                )
-                : _error != null && _leads.isEmpty
-                ? ListView(
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: ClampingScrollPhysics(),
-                  ),
-                  padding: const EdgeInsets.all(24),
-                  children: [
-                    const SizedBox(height: 100),
-                    const Icon(
-                      Icons.error_outline_rounded,
-                      size: 42,
-                      color: Color(0xFFD95060),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(_error!, textAlign: TextAlign.center),
-                    const SizedBox(height: 12),
-                  ],
-                )
-                : _leads.isEmpty
-                ? ListView(
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: ClampingScrollPhysics(),
-                  ),
-                  children: const [
-                    SizedBox(height: 150),
-                    Icon(
-                      Icons.handshake_outlined,
-                      size: 44,
-                      color: Color(0xFF9AA5B3),
-                    ),
-                    SizedBox(height: 12),
-                    Center(
-                      child: Text(
-                        'You have not created any leads yet.',
-                        style: TextStyle(color: Color(0xFF7F8998)),
-                      ),
-                    ),
-                  ],
-                )
-                : ListView.separated(
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: ClampingScrollPhysics(),
-                  ),
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
-                  itemCount: _leads.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (context, index) {
-                    final lead = _leads[index];
-                    final title = _leadTitle(lead);
-                    final subtitle = _leadSubtitle(lead);
-                    return Card(
-                      elevation: 0,
-                      color: const Color(0xFFF6F8FB),
-                      child: ListTile(
-                        onTap:
-                            () => Navigator.of(context).push<void>(
-                              MaterialPageRoute<void>(
-                                builder: (_) => LeadDetailsPage(lead: lead),
-                              ),
-                            ),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        leading: const CircleAvatar(
-                          backgroundColor: Color(0xFFEAF3FF),
-                          child: Icon(
-                            Icons.person_outline_rounded,
-                            color: BrandColors.ink,
-                          ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: TextField(
+              controller: _phone,
+              keyboardType: TextInputType.phone,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(15),
+              ],
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                hintText: 'Search by phone number',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon:
+                    _phone.text.isEmpty
+                        ? null
+                        : IconButton(
+                          tooltip: 'Clear phone search',
+                          icon: const Icon(Icons.close_rounded),
+                          onPressed: () => setState(() => _phone.clear()),
                         ),
-                        title: Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        subtitle:
-                            subtitle.isEmpty
-                                ? null
-                                : Text(
-                                  subtitle,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                      ),
-                    );
-                  },
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
                 ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: _chooseStatus,
+                icon: const Icon(Icons.filter_list_rounded),
+                label: Text('Status: ${_status.isEmpty ? 'All' : _status}'),
+              ),
+            ),
+          ),
+          Expanded(
+            child: RefreshIndicator(
+              color: BrandColors.ink,
+              onRefresh: () async {
+                if (!_loading) await _loadLeads();
+              },
+              child:
+                  _loading && _leads.isEmpty
+                      ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: ClampingScrollPhysics(),
+                        ),
+                        children: const [
+                          SizedBox(height: 180),
+                          Center(child: AgPathLoadingIndicator()),
+                        ],
+                      )
+                      : _error != null && _leads.isEmpty
+                      ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: ClampingScrollPhysics(),
+                        ),
+                        padding: const EdgeInsets.all(24),
+                        children: [
+                          const SizedBox(height: 100),
+                          const Icon(
+                            Icons.error_outline_rounded,
+                            size: 42,
+                            color: Color(0xFFD95060),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(_error!, textAlign: TextAlign.center),
+                          const SizedBox(height: 12),
+                        ],
+                      )
+                      : leads.isEmpty
+                      ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: ClampingScrollPhysics(),
+                        ),
+                        children: [
+                          SizedBox(height: 150),
+                          Icon(
+                            Icons.handshake_outlined,
+                            size: 44,
+                            color: Color(0xFF9AA5B3),
+                          ),
+                          SizedBox(height: 12),
+                          Center(
+                            child: Text(
+                              _status.isNotEmpty || _phone.text.isNotEmpty
+                                  ? 'No leads match the selected filters.'
+                                  : 'You have not created any leads yet.',
+                              style: TextStyle(color: Color(0xFF7F8998)),
+                            ),
+                          ),
+                        ],
+                      )
+                      : ListView.separated(
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: ClampingScrollPhysics(),
+                        ),
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+                        itemCount: leads.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final lead = leads[index];
+                          final title = _leadTitle(lead);
+                          final subtitle = _leadSubtitle(lead);
+                          return Card(
+                            elevation: 0,
+                            color: const Color(0xFFF6F8FB),
+                            child: ListTile(
+                              onTap:
+                                  () => Navigator.of(context).push<void>(
+                                    MaterialPageRoute<void>(
+                                      builder:
+                                          (_) => LeadDetailsPage(lead: lead),
+                                    ),
+                                  ),
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              leading: const CircleAvatar(
+                                backgroundColor: Color(0xFFEAF3FF),
+                                child: Icon(
+                                  Icons.person_outline_rounded,
+                                  color: BrandColors.ink,
+                                ),
+                              ),
+                              title: Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              subtitle:
+                                  subtitle.isEmpty
+                                      ? null
+                                      : Text(
+                                        subtitle,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                            ),
+                          );
+                        },
+                      ),
+            ),
+          ),
+        ],
       ),
       floatingActionButton: brandFloatingActionButton(
         onPressed: _createLead,

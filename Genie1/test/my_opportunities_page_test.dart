@@ -10,11 +10,91 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  testWidgets(
+    'status selection requests filtered rows and clearing restores all',
+    (tester) async {
+      final filters = <List<dynamic>>[];
+      await http.runWithClient(
+        () async {
+          await tester.pumpWidget(
+            const MaterialApp(home: MyOpportunitiesPage()),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Status: All'));
+          await tester.pumpAndSettle();
+          final displayedStatuses =
+              tester
+                  .widgetList<SimpleDialogOption>(
+                    find.byType(SimpleDialogOption),
+                  )
+                  .map((option) => (option.child! as Text).data)
+                  .toList();
+          expect(displayedStatuses, [
+            'Open',
+            'Follow-up',
+            'Demo',
+            'VC',
+            'Duplicate Lead',
+            'Junk',
+            'Not Interested',
+            'Hot Followup',
+            'RNR',
+            'B2B Database',
+          ]);
+          await tester.tap(find.text('Follow-up'));
+          await tester.pumpAndSettle();
+          expect(filters.last, [
+            ['owner', '=', 'creator@example.test'],
+            ['status', '=', 'Follow-up'],
+          ]);
+          expect(find.text('Status: Follow-up'), findsOneWidget);
+          await tester.tap(find.text('Status: Follow-up'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Clear filter'));
+          await tester.pumpAndSettle();
+          expect(filters.last, [
+            ['owner', '=', 'creator@example.test'],
+          ]);
+          await tester.pumpWidget(const SizedBox.shrink());
+        },
+        () => MockClient((request) async {
+          if (request.url.path.endsWith('get_logged_user')) {
+            return http.Response('{"message":"creator@example.test"}', 200);
+          }
+          if (request.url.path.endsWith('getdoctype')) {
+            return http.Response(
+              jsonEncode({
+                'docs': [
+                  {
+                    'name': 'Opportunity',
+                    'fields': [
+                      {
+                        'fieldname': 'status',
+                        'fieldtype': 'Select',
+                        'options': 'Open\nFollow-up',
+                      },
+                    ],
+                  },
+                ],
+              }),
+              200,
+            );
+          }
+          filters.add(
+            jsonDecode(request.url.queryParameters['filters']!) as List,
+          );
+          expect(request.url.queryParameters['limit_start'], '0');
+          return http.Response('{"data":[]}', 200);
+        }),
+      );
+    },
+  );
   setUp(() {
     dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
     SharedPreferences.setMockInitialValues({
       'session_sid': 'sid',
       'session_username': 'creator@example.test',
+      'session_full_name': 'Creator Full Name',
     });
   });
   MockClient server({bool empty = false, int status = 200}) => MockClient((
@@ -52,6 +132,8 @@ void main() {
         await tester.tap(find.text('Customer One'));
         await tester.pumpAndSettle();
         expect(find.byType(OpportunityDetailsPage), findsOneWidget);
+        expect(find.text('Creator Full Name'), findsOneWidget);
+        expect(find.text('creator@example.test'), findsNothing);
         expect(find.text('Office doors'), findsOneWidget);
         await tester.scrollUntilVisible(
           find.text('Row 1'),

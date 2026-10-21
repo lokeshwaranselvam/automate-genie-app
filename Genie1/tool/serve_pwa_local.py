@@ -35,7 +35,8 @@ class LocalPwaServer(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", port), LocalPwaHandler)
         self.local_origin = f"http://localhost:{self.server_port}"
         local_values = dict(values, SITE_URL=self.local_origin + "/",
-                            URL=self.local_origin + api.path)
+                            URL=self.local_origin + api.path,
+                            WEB_PROXY_ERP_ORIGIN=self.erp_origin)
         self.environment = "".join(f"{key}={value}\n" for key, value in local_values.items()).encode()
 
 
