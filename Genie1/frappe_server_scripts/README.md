@@ -110,6 +110,15 @@ endpoint also enforces this role for form options, mobile search, location
 saving, and event creation. Visit lists, check-in/out, and visit reports keep
 their existing permissions. Deploy this updated Server Script before the app.
 
+The same `can_create` response includes `can_create_lead` for Sales User or
+Sales Manager, and `can_view_pending` for Production Manager, Production User,
+Sales User, or Sales Manager. Home uses these session-bound capabilities to
+show its sales and Pending cards. Create Lead in the drawer and All Visits
+under More use `can_create_lead`. An empty pending dashboard shows `00`;
+an unavailable pending count shows `—` and can be retried by refreshing Home.
+Update the existing `mobile_site_visit` Server Script with
+`frappe_server_scripts/mobile_site_visit_api.py`, then rebuild/reinstall the app.
+
 The app calls
 `GET /api/method/mobile_site_visit?action=get` to load Opportunities owned by
 `frappe.session.user` and enabled ERP users. Opportunity is searchable in the

@@ -83,6 +83,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   List<String> officeTypes = [];
   List<Map<String, String>> _sessionWebLinks = [];
   bool _showOpportunities = false;
+  bool _showHomeAddLead = false;
+  bool _showHomeNewVisit = false;
+  bool _showHomePending = false;
+  int _homeActionAccessRequest = 0;
   int _opportunityAccessRequest = 0;
   bool _webLinksLoading = false;
   String? _webLinksError;
@@ -115,6 +119,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   int? _homePendingCount;
   int? _homeLeadCount;
   int? _homeTaskTodayCount;
+  ({int pending, int inProgress, int completed})? _homeTaskSummary;
   final GlobalKey<PendingWorkPageState> _pendingWorkPageKey =
       GlobalKey<PendingWorkPageState>();
   StreamSubscription<String>? _pendingWorkUpdatesSubscription;
@@ -248,6 +253,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     unawaited(_loadHomePendingCount());
     unawaited(_loadHomeTaskTodayCount());
     unawaited(_loadHomeLeadCount());
+    unawaited(_loadHomeQuickActionAccess());
     _homeScheduleRefreshTimer = Timer.periodic(const Duration(seconds: 30), (
       _,
     ) {
@@ -269,6 +275,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
 
   void _returnToHome() {
     if (!mounted) return;
+    unawaited(_loadHomeQuickActionAccess());
     final shouldRefresh =
         _selectedTab != 0 || _attendancePageOpen || _leaveApplicationOpen;
     setState(() {
@@ -289,6 +296,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       PendingWorkMonitor.start();
       if (!_isActionLoading) unawaited(_getStatusFromServer(force: true));
       if (_selectedTab == 0) unawaited(_refreshHomeSchedule());
+      if (_selectedTab == 0) unawaited(_loadHomeQuickActionAccess());
       if (_selectedTab == 4) unawaited(_loadOpportunityVisibility());
     } else {
       _appIsResumed = false;
@@ -567,6 +575,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openMyLeads() async {
+    if (!_showHomeAddLead) return;
     await Navigator.of(
       context,
     ).push<void>(MaterialPageRoute<void>(builder: (_) => const MyLeadsPage()));
@@ -975,6 +984,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   void _selectBottomTab(int index) {
+    if (index == 2 && !_showHomeNewVisit) return;
+    if (index == 3 && !_showHomeAddLead) return;
+    if (index == 0) unawaited(_loadHomeQuickActionAccess());
     if (index == 4) unawaited(_loadOpportunityVisibility());
     if (index == 0) unawaited(_loadHomeTaskTodayCount());
     if (index == 0) unawaited(_loadHomeLeadCount());
@@ -1000,6 +1012,28 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       MaterialPageRoute<void>(builder: (_) => const PendingWorkOverviewPage()),
     );
     if (mounted) unawaited(_loadHomePendingCount());
+  }
+
+  Future<void> _loadHomeQuickActionAccess() async {
+    final request = ++_homeActionAccessRequest;
+    if (!mounted) return;
+    setState(() {
+      _showHomeAddLead = false;
+      _showHomeNewVisit = false;
+      _showHomePending = false;
+      if (_selectedTab == 2 || _selectedTab == 3) _selectedTab = 0;
+    });
+    try {
+      final access = await SiteVisitCreationApi.homeQuickActionAccess();
+      if (!mounted || request != _homeActionAccessRequest) return;
+      setState(() {
+        _showHomeAddLead = access.canAddLead;
+        _showHomeNewVisit = access.canCreateVisit;
+        _showHomePending = access.canViewPending;
+      });
+    } catch (_) {
+      // Hide sales actions until the active ERP session can verify its roles.
+    }
   }
 
   Future<void> _loadOpportunityVisibility() async {
@@ -1247,8 +1281,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             (value is num ? value.toInt() : int.tryParse('$value') ?? 0);
       });
       if (mounted) setState(() => _homePendingCount = count);
-    } catch (_) {
+    } catch (error) {
       if (mounted) setState(() => _homePendingCount = null);
+      debugPrint('Home pending count refresh failed: $error');
     }
   }
 
@@ -1270,9 +1305,30 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                 status != 'closed' &&
                 status != 'done';
           }).length;
-      if (mounted) setState(() => _homeTaskTodayCount = count);
+      final inProgress = tasks.where((task) {
+        final status = (task['task_status'] ?? task['todo_status'] ??
+                task['status'] ?? task['state'] ?? '')
+            .toString().toLowerCase();
+        return status == 'working' || status == 'in progress' ||
+            status == 'in_progress';
+      }).length;
+      if (mounted) {
+        setState(() {
+          _homeTaskTodayCount = count;
+          _homeTaskSummary = (
+            pending: count - inProgress,
+            inProgress: inProgress,
+            completed: tasks.length - count,
+          );
+        });
+      }
     } catch (_) {
-      if (mounted) setState(() => _homeTaskTodayCount = null);
+      if (mounted) {
+        setState(() {
+          _homeTaskTodayCount = null;
+          _homeTaskSummary = null;
+        });
+      }
     }
   }
 
@@ -1435,11 +1491,17 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       greeting: _greeting(),
       date: DateTime.now(),
       taskCount: _homeTaskTodayCount?.toString().padLeft(2, '0') ?? '?',
+      taskSummary: _homeTaskSummary,
       visitCount: _assignedIncompleteSiteVisitCount.toString().padLeft(2, '0'),
       leadCount: _homeLeadCount?.toString().padLeft(2, '0') ?? '?',
-      pendingCount: _homePendingCount?.toString().padLeft(2, '0') ?? '?',
+      pendingCount: _homePendingCount?.toString().padLeft(2, '0') ?? '—',
       loading: _isLoading,
       attendanceBusy: _isActionLoading,
+      showAddLead: _showHomeAddLead,
+      showNewVisit: _showHomeNewVisit,
+      showLeads: _showHomeAddLead,
+      showVisits: _showHomeAddLead,
+      showPending: _showHomePending,
       schedule: [
         for (var i = 0; i < milestones.length; i++)
           _buildScheduleRow(milestones[i], isLast: i == milestones.length - 1),
@@ -1450,13 +1512,25 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           _loadHomePendingCount(),
           _loadHomeTaskTodayCount(),
           _loadHomeLeadCount(),
+          _loadHomeQuickActionAccess(),
           _loadSessionWebLinks(forceRefresh: true),
         ]);
       },
       onMenu: _openNavigationDrawer,
       onNotifications: _openNotifications,
       onTasks: () => setState(() => _selectedTab = 1),
-      onVisits: () => setState(() => _selectedTab = 2),
+      onVisits: () {
+        if (_showHomeNewVisit) {
+          _selectBottomTab(2);
+        } else {
+          Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder:
+                  (_) => SiteVisitsPage(onVisitsUpdated: _onSiteVisitsUpdated),
+            ),
+          );
+        }
+      },
       onLeads: _openMyLeads,
       onPending: _openPendingWork,
       onAttendance: _openAttendance,
@@ -1742,7 +1816,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
               );
             },
           ),
-          _moreTile(
+          if (_showHomeAddLead) _moreTile(
             Icons.event_available_outlined,
             'All Visits',
             'Browse your schedule',
@@ -1881,7 +1955,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                         );
                       },
                     ),
-                    ListTile(
+                    if (_showHomeAddLead) ListTile(
                       leading: Icon(
                         Icons.person_add_alt_1_outlined,
                         color: BrandColors.ink,
@@ -1968,10 +2042,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                   children: [
                     _buildHomeDashboard(),
                     PendingWorkPage(key: _pendingWorkPageKey),
-                    _selectedTab == 2
+                    _selectedTab == 2 && _showHomeNewVisit
                         ? SiteVisitsPage(onVisitsUpdated: _onSiteVisitsUpdated)
                         : const SizedBox.shrink(),
-                    _selectedTab == 3
+                    _selectedTab == 3 && _showHomeAddLead
                         ? const MyLeadsPage()
                         : const SizedBox.shrink(),
                     _buildMoreTab(),
@@ -1980,6 +2054,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         bottomNavigationBar: HomeNavigationBar(
           currentIndex: _selectedTab,
           onTap: _selectBottomTab,
+          showVisits: _showHomeNewVisit,
+          showLeads: _showHomeAddLead,
         ),
       ),
     );
