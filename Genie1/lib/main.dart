@@ -2,6 +2,7 @@ import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 
 import 'Screen/splash.dart';
+import 'Screen/app_update_gate.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -149,7 +150,7 @@ class _MyappState extends State<Myapp> {
           ),
         ),
       ),
-      home: Splash(),
+      home: const AppUpdateGate(child: Splash()),
     );
   }
 }

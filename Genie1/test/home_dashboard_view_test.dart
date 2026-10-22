@@ -73,6 +73,7 @@ void main() {
               showLeads: showAddLead,
               showVisits: showAddLead,
               showPending: showPending,
+              showSchedule: showAddLead,
               taskSummary: taskSummary,
               schedule: schedule,
               onRefresh: () async => calls.add('refresh'),
@@ -183,6 +184,18 @@ void main() {
         expect(find.text('Leads'), access.$1 ? findsOneWidget : findsNothing);
         expect(find.text('Pending'), findsOneWidget);
         expect(
+          find.text("Today's Schedule"),
+          access.$1 ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.text('View All'),
+          access.$1 ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.text('No events scheduled for today.'),
+          access.$1 ? findsOneWidget : findsNothing,
+        );
+        expect(
           find.byKey(const ValueKey('tasks-overview')),
           access.$1 ? findsNothing : findsOneWidget,
         );
@@ -208,6 +221,8 @@ void main() {
       expect(find.text('Pending'), findsOneWidget);
       expect(find.text('My Leads'), findsNothing);
       expect(find.text('Site Visits'), findsNothing);
+      expect(find.text("Today's Schedule"), findsNothing);
+      expect(find.text('View All'), findsNothing);
       expect(tester.takeException(), isNull);
       for (final summary in [
         (pending: 4, inProgress: 2, completed: 3),

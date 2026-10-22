@@ -39,6 +39,7 @@ class HomeDashboardView extends StatelessWidget {
     this.showLeads = false,
     this.showVisits = false,
     this.showPending = false,
+    this.showSchedule = false,
     this.taskSummary,
   });
 
@@ -49,6 +50,7 @@ class HomeDashboardView extends StatelessWidget {
   final bool showAddLead, showNewVisit;
   final bool showLeads, showVisits;
   final bool showPending;
+  final bool showSchedule;
   final ({int pending, int inProgress, int completed})? taskSummary;
   final List<Widget> schedule;
   final Future<void> Function() onRefresh;
@@ -130,66 +132,68 @@ class HomeDashboardView extends StatelessWidget {
                   ],
                 ],
               ),
-            const SizedBox(height: 22),
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    "Today's Schedule",
-                    style: TextStyle(
-                      color: _homeInk,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
+            if (showSchedule) ...[
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      "Today's Schedule",
+                      style: TextStyle(
+                        color: _homeInk,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
-                ),
-                if (onClearSchedule != null)
+                  if (onClearSchedule != null)
+                    TextButton(
+                      onPressed: onClearSchedule,
+                      child: const Text('Clear'),
+                    ),
                   TextButton(
-                    onPressed: onClearSchedule,
-                    child: const Text('Clear'),
-                  ),
-                TextButton(
-                  onPressed: onVisits,
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.only(left: 4),
-                    minimumSize: Size.zero,
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'View All',
-                        style: TextStyle(
-                          color: Color(0xFF4514EE),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                    onPressed: onVisits,
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.only(left: 4),
+                      minimumSize: Size.zero,
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'View All',
+                          style: TextStyle(
+                            color: Color(0xFF4514EE),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      Icon(
-                        Icons.chevron_right,
-                        size: 20,
-                        color: Color(0xFF4514EE),
-                      ),
-                    ],
+                        Icon(
+                          Icons.chevron_right,
+                          size: 20,
+                          color: Color(0xFF4514EE),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (loading)
+                const LinearProgressIndicator(
+                  color: BrandColors.indigo,
+                  minHeight: 2,
+                )
+              else if (schedule.isEmpty)
+                _emptySchedule()
+              else
+                _surface(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(children: schedule),
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            if (loading)
-              const LinearProgressIndicator(
-                color: BrandColors.indigo,
-                minHeight: 2,
-              )
-            else if (schedule.isEmpty)
-              _emptySchedule()
-            else
-              _surface(
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(children: schedule),
-                ),
-              ),
+            ],
             const SizedBox(height: 22),
             const Text(
               'Quick Actions',

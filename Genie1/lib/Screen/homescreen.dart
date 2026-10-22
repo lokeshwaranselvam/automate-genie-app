@@ -1502,6 +1502,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       showLeads: _showHomeAddLead,
       showVisits: _showHomeAddLead,
       showPending: _showHomePending,
+      showSchedule: _showHomeAddLead,
       schedule: [
         for (var i = 0; i < milestones.length; i++)
           _buildScheduleRow(milestones[i], isLast: i == milestones.length - 1),
@@ -1940,7 +1941,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                       title: Text('Home'),
                       onTap: () => Navigator.pop(context),
                     ),
-                    ListTile(
+                    // The existing session check allows Sales User or Sales Manager.
+                    if (_showHomeAddLead) ListTile(
                       leading: Icon(Icons.event, color: BrandColors.ink),
                       title: Text('Events'),
                       onTap: () {

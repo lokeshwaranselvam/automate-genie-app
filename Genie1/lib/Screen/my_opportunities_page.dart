@@ -16,6 +16,18 @@ class MyOpportunitiesPage extends StatefulWidget {
 }
 
 class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
+  static const _filterStatuses = [
+    'Open',
+    'Follow-up',
+    'Demo',
+    'VC',
+    'Duplicate Lead',
+    'Junk',
+    'Not Interested',
+    'Hot Followup',
+    'RNR',
+    'B2B Database',
+  ];
   List<Map<String, dynamic>> _items = [];
   bool _loading = false;
   bool _hasMore = false;
@@ -24,6 +36,54 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
   final _search = TextEditingController();
   Timer? _searchDebounce;
   int _request = 0;
+  String _status = '';
+  bool _filterLoading = false;
+
+  Future<void> _chooseStatus() async {
+    if (_filterLoading) return;
+    setState(() => _filterLoading = true);
+    try {
+      final selected = await showDialog<String>(
+        context: context,
+        builder:
+            (context) => SimpleDialog(
+              title: const Text('Filter by status'),
+              children: [
+                for (final status in _filterStatuses)
+                  SimpleDialogOption(
+                    onPressed: () => Navigator.pop(context, status),
+                    child: Text(status),
+                  ),
+                if (_status.isNotEmpty)
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, ''),
+                    child: const Text('Clear filter'),
+                  ),
+              ],
+            ),
+      );
+      if (selected == null || selected == _status || !mounted) return;
+      _searchDebounce?.cancel();
+      _request++;
+      setState(() {
+        _status = selected;
+        _items = [];
+        _offset = 0;
+        _hasMore = false;
+      });
+      await _load();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error.toString().replaceFirst('Bad state: ', '')),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _filterLoading = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -64,6 +124,7 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
       final page = await OpportunityApi.getMyOpportunities(
         offset: more ? _offset : 0,
         phone: _search.text,
+        status: _status,
       );
       if (!mounted || request != _request) return;
       setState(() {
@@ -132,6 +193,21 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
             ),
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _filterLoading ? null : _chooseStatus,
+              icon: const Icon(Icons.filter_list_rounded),
+              label: Text(
+                _filterLoading
+                    ? 'Loading statuses…'
+                    : 'Status: ${_status.isEmpty ? 'All' : _status}',
+              ),
+            ),
+          ),
+        ),
         Expanded(
           child: RefreshIndicator(
             color: BrandColors.ink,
@@ -174,7 +250,9 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
                       padding: EdgeInsets.symmetric(vertical: 90),
                       child: Center(
                         child: Text(
-                          _search.text.isEmpty
+                          _status.isNotEmpty
+                              ? 'No opportunities match the selected status and phone filters.'
+                              : _search.text.isEmpty
                               ? 'You have not created any opportunities yet.'
                               : 'No opportunities match this phone number.',
                         ),
@@ -210,14 +288,16 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
                     ),
                     subtitle: Text('$name\n${item['status'] ?? ''}'),
                     trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap:
-                        () => Navigator.of(context).push<void>(
-                          MaterialPageRoute<void>(
-                            builder:
-                                (_) =>
-                                    OpportunityDetailsPage(opportunityId: name),
-                          ),
+                    onTap: () async {
+                      await Navigator.of(context).push<void>(
+                        MaterialPageRoute<void>(
+                          builder:
+                              (_) =>
+                                  OpportunityDetailsPage(opportunityId: name),
                         ),
+                      );
+                      if (mounted) await _load();
+                    },
                   ),
                 );
               },

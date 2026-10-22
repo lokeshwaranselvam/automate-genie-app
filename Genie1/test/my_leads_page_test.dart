@@ -10,6 +10,98 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  testWidgets(
+    'phone and exact Lead status filters combine and clear without refetching',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({'session_sid': 'filter-session'});
+      dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
+      var loads = 0;
+      await http.runWithClient(
+        () async {
+          await tester.pumpWidget(const MaterialApp(home: MyLeadsPage()));
+          await tester.pumpAndSettle();
+          await tester.enterText(find.byType(TextField), '98765');
+          await tester.pumpAndSettle();
+          expect(find.text('Customer A'), findsOneWidget);
+          expect(find.text('Customer B'), findsOneWidget);
+          expect(find.text('Customer C'), findsNothing);
+          await tester.tap(find.text('Status: All'));
+          await tester.pumpAndSettle();
+          expect(
+            tester
+                .widgetList<SimpleDialogOption>(find.byType(SimpleDialogOption))
+                .map((option) => (option.child! as Text).data)
+                .toList(),
+            [
+              'Open',
+              'Lead',
+              'Junk',
+              'Followup',
+              'RNR',
+              'Hot Followup',
+              'Not Interested',
+              'Duplicate Lead',
+            ],
+          );
+          await tester.tap(find.widgetWithText(SimpleDialogOption, 'Junk'));
+          await tester.pumpAndSettle();
+          expect(find.text('Customer A'), findsNothing);
+          expect(find.text('Customer B'), findsOneWidget);
+          await tester.enterText(find.byType(TextField), '00000');
+          await tester.pumpAndSettle();
+          expect(
+            find.text('No leads match the selected filters.'),
+            findsOneWidget,
+          );
+          await tester.tap(find.byTooltip('Clear phone search'));
+          await tester.pumpAndSettle();
+          expect(find.text('Customer B'), findsOneWidget);
+          expect(find.text('Customer A'), findsNothing);
+          await tester.tap(find.text('Status: Junk'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Clear filter'));
+          await tester.pumpAndSettle();
+          expect(find.text('Customer A'), findsOneWidget);
+          expect(find.text('Customer B'), findsOneWidget);
+          expect(find.text('Customer C'), findsOneWidget);
+          expect(loads, 1);
+          await tester.pumpWidget(const SizedBox.shrink());
+        },
+        () => MockClient((request) async {
+          expect(request.url.queryParameters, {'view': 'list'});
+          loads++;
+          return http.Response(
+            jsonEncode({
+              'message': {
+                'leads': [
+                  {
+                    'name': 'A',
+                    'lead_name': 'Customer A',
+                    'mobile_no': '+91 (98765) 43210',
+                    'status': 'Lead',
+                  },
+                  {
+                    'name': 'B',
+                    'lead_name': 'Customer B',
+                    'phone': '+91-98765-11111',
+                    'status': 'Junk',
+                  },
+                  {
+                    'name': 'C',
+                    'lead_name': 'Customer C',
+                    'mobile_no': '1234567890',
+                    'whatsapp_no': '9876543210',
+                    'status': 'Lead',
+                  },
+                ],
+              },
+            }),
+            200,
+          );
+        }),
+      );
+    },
+  );
   testWidgets('lead content stays bounded while pulling at either list edge', (
     tester,
   ) async {
@@ -20,10 +112,14 @@ void main() {
       () async {
         await tester.pumpWidget(const MaterialApp(home: MyLeadsPage()));
         await tester.pumpAndSettle();
-        expect(find.byType(Scrollable), findsOneWidget);
-        final scroll = tester.state<ScrollableState>(find.byType(Scrollable));
+        final listScrollable = find.descendant(
+          of: find.byType(ListView),
+          matching: find.byType(Scrollable),
+        );
+        expect(listScrollable, findsOneWidget);
+        final scroll = tester.state<ScrollableState>(listScrollable);
         final initialTop = tester.getTopLeft(find.text('Customer 0')).dy;
-        final pull = await tester.startGesture(const Offset(150, 200));
+        final pull = await tester.startGesture(const Offset(150, 320));
         await pull.moveBy(const Offset(0, 40));
         await tester.pump();
         await pull.moveBy(const Offset(0, 450));
@@ -71,7 +167,11 @@ void main() {
   testWidgets(
     'Lead list opens details and existing creation form, then reloads',
     (tester) async {
-      SharedPreferences.setMockInitialValues({'session_sid': 'test-session'});
+      SharedPreferences.setMockInitialValues({
+        'session_sid': 'test-session',
+        'session_username': 'sales@example.test',
+        'session_full_name': 'Sales User',
+      });
       dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
       var listCalls = 0;
       await http.runWithClient(
@@ -83,10 +183,20 @@ void main() {
           await tester.tap(find.text('Customer One'));
           await tester.pumpAndSettle();
           expect(find.text('Lead Details'), findsOneWidget);
+          expect(find.text('Sales User'), findsOneWidget);
+          expect(find.text('sales@example.test'), findsNothing);
+          expect(find.text('Document Information'), findsNothing);
+          expect(find.text('Creation'), findsNothing);
+          expect(find.text('Modified By'), findsNothing);
           expect(find.text('Doors'), findsOneWidget);
-          expect(find.text('Chennai'), findsOneWidget);
           expect(find.text('WhatsApp Number'), findsOneWidget);
           expect(find.text('+919876543210'), findsOneWidget);
+          await tester.scrollUntilVisible(
+            find.text('Chennai'),
+            100,
+            scrollable: find.byType(Scrollable).first,
+          );
+          expect(find.text('Chennai'), findsOneWidget);
           await tester
               .widget<RefreshIndicator>(find.byType(RefreshIndicator))
               .onRefresh();
@@ -127,6 +237,11 @@ void main() {
                   'leads': [
                     {
                       'name': 'LEAD-1',
+                      'owner': 'sales@example.test',
+                      'creation': '2026-10-21',
+                      'modified_by': 'sales@example.test',
+                      'docstatus': 0,
+                      'naming_series': 'CRM-LEAD-.YYYY.-',
                       'first_name': 'Customer One',
                       'mobile_no': '9876543210',
                       'whatsapp_no': '+919876543210',

@@ -76,6 +76,179 @@ Widget screen(String type, {GlobalKey? previewKey, double scale = 1}) {
 }
 
 void main() {
+  for (final dated in [true, false]) {
+    for (final type in ['Opportunity', 'Lead']) {
+      testWidgets(
+        '$type notes ${dated ? 'sort by date' : 'use row order'} without changing saved rows',
+        (tester) async {
+          tester.view.physicalSize = const Size(600, 4000);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final notes = [
+            for (final day in [2, 5, 1, 4, 3])
+              {
+                'note': 'Note day $day',
+                if (dated && day != 4)
+                  'added_on':
+                      '2026-10-${day.toString().padLeft(2, '0')} 10:00:00',
+                if (dated && day == 4) 'creation': '2026-10-04 10:00:00',
+              },
+          ];
+          final snapshot =
+              notes.map((row) => Map<String, String>.from(row)).toList();
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: CrmDocumentDetails(
+                  documentType: type,
+                  document: {'name': 'DOC-1', 'notes': notes},
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final visible =
+              type == 'Lead'
+                  ? [2, 5, 1, 4, 3]
+                  : dated
+                  ? [5, 4, 3]
+                  : [3, 4, 1];
+          for (var i = 1; i <= visible.length; i++) {
+            await tester.tap(find.text('Row $i'));
+            await tester.pumpAndSettle();
+          }
+          for (var day = 1; day <= 5; day++) {
+            expect(
+              find.text('Note day $day'),
+              visible.contains(day) ? findsOneWidget : findsNothing,
+            );
+          }
+          final rendered =
+              tester
+                  .widgetList<SelectableText>(find.byType(SelectableText))
+                  .map((widget) => widget.data)
+                  .where((text) => text?.startsWith('Note day') == true)
+                  .toList();
+          expect(rendered, visible.map((day) => 'Note day $day').toList());
+          expect(notes, snapshot);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
+  testWidgets(
+    'Opportunity audit and additional sections show only requested fields',
+    (tester) async {
+      tester.view.physicalSize = const Size(600, 1800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CrmDocumentDetails(
+              documentType: 'Opportunity',
+              creatorFullName: 'Arun Digital',
+              document: const {
+                'name': 'OPP-1',
+                'owner': 'arun@example.test',
+                'creation': '2026-08-18',
+                'modified': '2026-10-21',
+                'modified_by': 'editor@example.test',
+                'custom_next_followup_date': '2026-10-25',
+                'custom_customer_type': 'Consumer',
+                'custom_citytown': 'Chennai',
+                'custom_district': 'Chennai - TN',
+                'transaction_date': '2026-08-18',
+                'language': 'en',
+                'approve': 0,
+                'custom_agent_status': 'Not Sent',
+                'custom_extra_detail': 'Hidden additional value',
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Arun Digital'), findsOneWidget);
+      expect(find.text('arun@example.test'), findsNothing);
+      for (final label in [
+        'Creation',
+        'Modified',
+        'Modified By',
+        'Transaction Date',
+        'Language',
+        'Approve',
+        'Agent Status',
+        'Hidden additional value',
+      ]) {
+        expect(find.text(label), findsNothing);
+      }
+      final opportunitySection = find.ancestor(
+        of: find.text('2026-10-25'),
+        matching: find.byType(ExpansionTile),
+      );
+      expect(
+        (tester.widget<ExpansionTile>(opportunitySection).title as Text).data,
+        'Opportunity Information',
+      );
+      for (final value in ['Consumer', 'Chennai', 'Chennai - TN']) {
+        final section = find.ancestor(
+          of: find.text(value),
+          matching: find.byType(ExpansionTile),
+        );
+        expect(
+          (tester.widget<ExpansionTile>(section).title as Text).data,
+          'Additional Information',
+        );
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+  for (final type in ['Opportunity', 'Lead']) {
+    testWidgets('$type keeps the requested Value & Company fields', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CrmDocumentDetails(
+              documentType: type,
+              document: const {
+                'name': 'DOC-1',
+                'company': 'Test Company',
+                'currency': 'INR',
+                'conversion_rate': 1,
+                'opportunity_amount': 100,
+                'base_opportunity_amount': 100,
+                'base_total': 100,
+                'total': 100,
+                'annual_revenue': 100,
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Test Company'), findsOneWidget);
+      expect(find.text('INR'), findsOneWidget);
+      for (final label in [
+        'Conversion Rate',
+        'Opportunity Amount',
+        'Base Opportunity Amount',
+        'Base Total',
+        'Total',
+        'Annual Revenue',
+      ]) {
+        expect(
+          find.text(label),
+          type == 'Opportunity' ? findsNothing : findsOneWidget,
+        );
+      }
+    });
+  }
   testWidgets('WhatsApp displays a chat icon without a call action', (
     tester,
   ) async {
@@ -198,24 +371,28 @@ void main() {
         await tester.tap(find.text('Audit Information'));
         await tester.pumpAndSettle();
         expect(find.text('Created By'), findsNothing);
-        await tester.scrollUntilVisible(
-          find.text('Document Information'),
-          150,
-          scrollable: find.byType(Scrollable).first,
-        );
-        expect(find.text('Naming Series'), findsOneWidget);
+        expect(find.text('Document Information'), findsNothing);
+        expect(find.text('Naming Series'), findsNothing);
+        expect(find.text('Creation'), findsNothing);
+        expect(find.text('Modified By'), findsNothing);
         await tester.scrollUntilVisible(
           find.text('$type Information'),
           180,
           scrollable: find.byType(Scrollable).first,
         );
         expect(find.text('Office doors'), findsOneWidget);
-        await tester.scrollUntilVisible(
-          find.text('Real custom value'),
-          180,
-          scrollable: find.byType(Scrollable).first,
-        );
-        expect(find.text('Real custom value'), findsOneWidget);
+        if (type == 'Lead') {
+          await tester.scrollUntilVisible(
+            find.text('Real custom value'),
+            180,
+            scrollable: find.byType(Scrollable).first,
+          );
+          expect(find.text('Real custom value'), findsOneWidget);
+        } else {
+          expect(find.text('Real custom value'), findsNothing);
+          expect(find.text('Creation'), findsNothing);
+          expect(find.text('Modified By'), findsNothing);
+        }
         expect(tester.takeException(), isNull);
       });
     }

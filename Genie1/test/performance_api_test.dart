@@ -81,15 +81,18 @@ void main() {
       );
 
   test('sales access comes from the current authenticated session', () async {
-    for (final allowed in [false, true]) {
+    // Neither role, Sales User, Sales Manager, and both roles.
+    for (final access in [
+      (false, false),
+      (true, false),
+      (false, true),
+      (true, true),
+    ]) {
       final result =
           await api(
             MockClient((request) async {
-              expect(
-                request.url.path,
-                '/api/method/mobile_employee_performance',
-              );
-              expect(request.url.queryParameters, {'action': 'can_view_sales'});
+              expect(request.url.path, '/api/method/mobile_site_visit');
+              expect(request.url.queryParameters, {'action': 'can_create'});
               expect(request.headers['Cookie'], 'sid=test-sid');
               expect(request.headers['Cache-Control'], 'no-cache, no-store');
               expect(request.followRedirects, isFalse);
@@ -97,14 +100,15 @@ void main() {
                 jsonEncode({
                   'message': {
                     'current_user': 'staff@example.test',
-                    'can_view_sales': allowed,
+                    'can_create_lead': access.$1,
+                    'can_create': access.$2,
                   },
                 }),
                 200,
               );
             }),
           ).canViewSales();
-      expect(result, allowed);
+      expect(result, access.$1 || access.$2);
     }
   });
 
@@ -112,9 +116,17 @@ void main() {
     'sales access rejects unknown permissions and another account',
     () async {
       for (final message in [
-        {'current_user': 'other@example.test', 'can_view_sales': true},
+        {
+          'current_user': 'other@example.test',
+          'can_create_lead': true,
+          'can_create': true,
+        },
         {'current_user': 'staff@example.test'},
-        {'current_user': 'staff@example.test', 'can_view_sales': 'true'},
+        {
+          'current_user': 'staff@example.test',
+          'can_create_lead': 'true',
+          'can_create': false,
+        },
       ]) {
         await expectLater(
           api(
@@ -133,7 +145,8 @@ void main() {
               jsonEncode({
                 'message': {
                   'current_user': 'staff@example.test',
-                  'can_view_sales': true,
+                  'can_create_lead': true,
+                  'can_create': false,
                 },
               }),
               200,
