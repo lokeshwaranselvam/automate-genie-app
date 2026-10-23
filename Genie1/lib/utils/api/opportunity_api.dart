@@ -70,13 +70,14 @@ class OpportunityApi {
                 'fields': jsonEncode([
                   'name',
                   'owner',
+                  'opportunity_owner',
                   'customer_name',
                   'party_name',
                   'status',
                   'creation',
                 ]),
                 'filters': jsonEncode([
-                  ['owner', '=', user],
+                  ['opportunity_owner', '=', user],
                   if (status.isNotEmpty) ['status', '=', status],
                 ]),
                 if (phone.isNotEmpty)
@@ -131,9 +132,10 @@ class OpportunityApi {
       );
     }
     for (final row in rows) {
-      if (row['owner'] != user || (name != null && row['name'] != name)) {
+      if (row['opportunity_owner'] != user ||
+          (name != null && row['name'] != name)) {
         throw StateError(
-          'Only opportunities created by your user can be displayed here.',
+          'Only opportunities where you are the Opportunity Owner can be displayed here.',
         );
       }
     }
@@ -230,7 +232,7 @@ class OpportunityApi {
     );
   }
 
-  /// Sends only the three requested fields. Frappe enforces write permissions,
+  /// Synchronizes sales stage when status changes. Frappe enforces write permissions,
   /// field permissions, workflow rules and document validation on PUT.
   static Future<Map<String, dynamic>> updateDetails({
     required Map<String, dynamic> original,
@@ -277,13 +279,20 @@ class OpportunityApi {
     }
     final body = await _request(
       '/api/resource/Opportunity/${Uri.encodeComponent(name)}',
-      changes: {...changes, 'modified': original['modified']},
-      expectedOwner: original['owner']?.toString(),
+      changes: {
+        ...changes,
+        if (changes.containsKey('status') &&
+            changes['status'] != original['status'])
+          'sales_stage': changes['status'],
+        'modified': original['modified'],
+      },
+      expectedOpportunityOwner: original['opportunity_owner']?.toString(),
     );
     final data = body['data'];
     if (data is! Map ||
         data['name'] != name ||
-        data['owner'] != original['owner']) {
+        data['owner'] != original['owner'] ||
+        data['opportunity_owner'] != original['opportunity_owner']) {
       throw const FormatException(
         'ERP did not confirm the Opportunity update. Refresh before retrying.',
       );
@@ -295,7 +304,7 @@ class OpportunityApi {
     String path, {
     Map<String, String>? query,
     Map<String, dynamic>? changes,
-    String? expectedOwner,
+    String? expectedOpportunityOwner,
   }) async {
     final site = dotenv.env['SITE_URL']?.trim() ?? '';
     final base = Uri.tryParse(site);
@@ -310,7 +319,7 @@ class OpportunityApi {
     if (sid == null || sid.isEmpty || user == null || user == 'Guest') {
       throw StateError('Your session expired. Please sign in again.');
     }
-    if (changes != null && user != expectedOwner) {
+    if (changes != null && user != expectedOpportunityOwner) {
       throw StateError('Your account changed. Reopen Opportunities.');
     }
     Future<void> assertSession() async {

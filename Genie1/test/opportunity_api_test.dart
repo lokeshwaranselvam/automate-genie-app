@@ -8,9 +8,13 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const opportunityUser = 'creator@example.test';
-Map<String, dynamic> opportunity({String owner = opportunityUser}) => {
+Map<String, dynamic> opportunity({
+  String owner = 'other.creator@example.test',
+  String? opportunityOwner = opportunityUser,
+}) => {
   'name': 'OPP-1',
   'owner': owner,
+  'opportunity_owner': opportunityOwner,
   'customer_name': 'Customer One',
   'status': 'Open',
   'custom_requirement': 'Office doors',
@@ -40,7 +44,7 @@ void main() {
       });
 
   test(
-    'list filters by creator and paginates without full documents',
+    'list filters by Opportunity Owner and includes records created by others',
     () async {
       await http.runWithClient(
         () async {
@@ -52,7 +56,7 @@ void main() {
         () => client((request) async {
           expect(request.url.path, '/api/resource/Opportunity');
           expect(jsonDecode(request.url.queryParameters['filters']!), [
-            ['owner', '=', opportunityUser],
+            ['opportunity_owner', '=', opportunityUser],
           ]);
           expect(request.url.queryParameters['limit_start'], '50');
           expect(request.url.queryParameters['limit_page_length'], '50');
@@ -77,6 +81,8 @@ void main() {
         final result = await OpportunityApi.getDetails('OPP-1');
         expect(result['custom_requirement'], 'Office doors');
         expect(result['items'][0]['qty'], 2);
+        expect(result['owner'], 'other.creator@example.test');
+        expect(result['opportunity_owner'], opportunityUser);
       },
       () => client((request) async {
         expect(request.url.path, '/api/resource/Opportunity/OPP-1');
@@ -86,30 +92,35 @@ void main() {
   });
 
   for (final details in [false, true]) {
-    test(
-      'rejects another creator in ${details ? 'details' : 'list'}',
-      () async {
-        await http.runWithClient(
-          () async {
-            await expectLater(
-              details
-                  ? OpportunityApi.getDetails('OPP-1')
-                  : OpportunityApi.getMyOpportunities(),
-              throwsStateError,
-            );
-          },
-          () => client((request) async {
-            final row = opportunity(owner: 'other@example.test');
-            return http.Response(
-              jsonEncode({
-                'data': details ? row : [row],
-              }),
-              200,
-            );
-          }),
-        );
-      },
-    );
+    for (final assignedUser in ['other@example.test', '', null]) {
+      test(
+        'rejects Opportunity Owner $assignedUser in ${details ? 'details' : 'list'} even for the creator',
+        () async {
+          await http.runWithClient(
+            () async {
+              await expectLater(
+                details
+                    ? OpportunityApi.getDetails('OPP-1')
+                    : OpportunityApi.getMyOpportunities(),
+                throwsStateError,
+              );
+            },
+            () => client((request) async {
+              final row = opportunity(
+                owner: opportunityUser,
+                opportunityOwner: assignedUser,
+              );
+              return http.Response(
+                jsonEncode({
+                  'data': details ? row : [row],
+                }),
+                200,
+              );
+            }),
+          );
+        },
+      );
+    }
   }
 
   test('account switch during request discards response', () async {

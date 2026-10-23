@@ -13,7 +13,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 const user = 'creator@example.test';
 const original = <String, dynamic>{
   'name': 'OPP-1',
-  'owner': user,
+  'owner': 'other.creator@example.test',
+  'opportunity_owner': user,
   'modified': '2026-10-21 10:00:00',
   'status': 'Open',
   'custom_next_followup_date': '2026-10-22',
@@ -358,7 +359,7 @@ void main() {
   });
 
   test(
-    'status filter combines with owner, phone search and pagination',
+    'status filter combines with Opportunity Owner, phone search and pagination',
     () async {
       await http.runWithClient(
         () async {
@@ -370,7 +371,7 @@ void main() {
         },
         () => server((request) async {
           expect(jsonDecode(request.url.queryParameters['filters']!), [
-            ['owner', '=', user],
+            ['opportunity_owner', '=', user],
             ['status', '=', 'Follow-up'],
           ]);
           expect(request.url.queryParameters['limit_start'], '50');
@@ -395,6 +396,7 @@ void main() {
             changes: {'status': 'Follow-up'},
           );
           expect(updated['status'], 'Follow-up');
+          expect(updated['sales_stage'], 'Follow-up');
         },
         () => server((request) async {
           expect(request.followRedirects, false);
@@ -411,6 +413,7 @@ void main() {
           expect(request.headers['X-Frappe-CSRF-Token'], 'token$tokens');
           expect(jsonDecode(request.body), {
             'status': 'Follow-up',
+            'sales_stage': 'Follow-up',
             'modified': original['modified'],
             'csrf_token': 'token$tokens',
           });
@@ -419,7 +422,11 @@ void main() {
           }
           return http.Response(
             jsonEncode({
-              'data': {...original, 'status': 'Follow-up'},
+              'data': {
+                ...original,
+                'status': 'Follow-up',
+                'sales_stage': 'Follow-up',
+              },
             }),
             200,
           );
@@ -427,6 +434,54 @@ void main() {
       );
       expect(writes, csrfRetry ? 2 : 1);
       expect(tokens, writes);
+    });
+  }
+
+  for (final change in ['notes', 'date', 'unchanged status']) {
+    test('$change edit leaves sales stage untouched', () async {
+      final today = DateTime.now().toIso8601String().substring(0, 10);
+      final source = {
+        ...original,
+        'custom_next_followup_date': today,
+        'sales_stage': 'Existing stage',
+      };
+      final changes = switch (change) {
+        'notes' => <String, dynamic>{'notes': original['notes']},
+        'date' => <String, dynamic>{'custom_next_followup_date': today},
+        _ => <String, dynamic>{'status': 'Open'},
+      };
+      var writes = 0;
+      await http.runWithClient(
+        () async {
+          final updated = await OpportunityApi.updateDetails(
+            original: source,
+            changes: changes,
+          );
+          expect(updated['sales_stage'], 'Existing stage');
+          expect(changes.containsKey('sales_stage'), false);
+        },
+        () => server((request) async {
+          if (request.url.path == '/app') {
+            return http.Response('frappe.csrf_token = "token";', 200);
+          }
+          if (request.method == 'GET') {
+            return http.Response(jsonEncode({'data': source}), 200);
+          }
+          writes++;
+          expect(jsonDecode(request.body), {
+            ...changes,
+            'modified': original['modified'],
+            'csrf_token': 'token',
+          });
+          return http.Response(
+            jsonEncode({
+              'data': {...source, ...changes},
+            }),
+            200,
+          );
+        }),
+      );
+      expect(writes, 1);
     });
   }
 

@@ -69,6 +69,7 @@ def history_list(user, from_date=None, to_date=None):
     return assigned_events
 
 
+
 @frappe.whitelist(allow_guest = False)
 def event_details(id):
     doc = frappe.get_doc("Event",id)

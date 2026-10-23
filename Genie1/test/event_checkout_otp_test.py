@@ -74,7 +74,7 @@ class EventCheckoutAttachmentTest(unittest.TestCase):
 
 class EventVisitReportWithoutOtpTest(unittest.TestCase):
     def report(self, params=None, owner='sales@example.test', description='', otp='0123', clear_on_save=False, expected_otp='0123'):
-        event = Row(name='EVENT-1', owner=owner, description=description, custom_otp=otp, custom_whats_app=expected_otp)
+        event = Row(name='EVENT-1', owner=owner, description=description, custom_otp=otp, custom_whats_app=expected_otp, event_category='Site Visit')
         self.last_event = event
         event.save = Mock()
         if clear_on_save:
@@ -84,11 +84,22 @@ class EventVisitReportWithoutOtpTest(unittest.TestCase):
             session=SimpleNamespace(user='sales@example.test'),
             form_dict=dict(event_id='EVENT-1', **(params or {})),
             get_doc=Mock(return_value=event), response=response,
+            get_all=Mock(return_value=[dict(name='FILE-1', file_name='visit.jpg', file_url='/private/files/visit.jpg', is_private=1)]),
             db=SimpleNamespace(get_value=Mock(side_effect=lambda *args: event.get('custom_otp'))),
             throw=Mock(side_effect=lambda message: (_ for _ in ()).throw(ValueError(message))),
         )
+        self.last_frappe = frappe
         script = (ROOT / 'frappe_server_scripts/event_visit_report_api.py').read_text()
         exec(compile(script, 'event_visit_report_api.py', 'exec'), {'frappe': frappe})
+        if (params or {}).get('action', 'get') == 'get':
+            frappe.get_all.assert_called_once_with(
+                'File', filters={'attached_to_doctype': 'Event', 'attached_to_name': 'EVENT-1',
+                                 'is_folder': 0, 'file_url': ['is', 'set']},
+                fields=['name', 'file_name', 'file_url', 'is_private', 'creation'],
+                order_by='creation asc, name asc', limit_page_length=100,
+            )
+        else:
+            frappe.get_all.assert_not_called()
         return response['message'], event
 
 
@@ -98,6 +109,8 @@ class EventVisitReportWithoutOtpTest(unittest.TestCase):
         self.assertEqual(result['observation'], 'Visited')
         self.assertEqual(result['outcome'], 'Interested')
         self.assertEqual(result['custom_otp'], '0123')
+        self.assertEqual(result['event_category'], 'Site Visit')
+        self.assertEqual(result['attachments'][0]['file_name'], 'visit.jpg')
         event.save.assert_not_called()
 
     def test_report_saves_without_otp_and_ignores_legacy_otp_parameter(self):
@@ -112,6 +125,7 @@ class EventVisitReportWithoutOtpTest(unittest.TestCase):
     def test_assignment_and_submitted_report_locks_are_preserved(self):
         with self.assertRaisesRegex(ValueError, 'not assigned'):
             self.report(owner='other@example.test')
+        self.last_frappe.get_all.assert_not_called()
         with self.assertRaisesRegex(ValueError, 'already been submitted'):
             self.report(dict(action='save', observation='Changed', outcome='Interested'),
                         description='observation : Visited\nOutcome: Interested')

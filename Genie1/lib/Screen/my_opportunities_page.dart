@@ -253,7 +253,7 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
                           _status.isNotEmpty
                               ? 'No opportunities match the selected status and phone filters.'
                               : _search.text.isEmpty
-                              ? 'You have not created any opportunities yet.'
+                              ? 'No opportunities list you as Opportunity Owner.'
                               : 'No opportunities match this phone number.',
                         ),
                       ),

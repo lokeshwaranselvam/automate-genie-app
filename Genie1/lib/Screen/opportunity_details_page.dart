@@ -112,7 +112,8 @@ class _OpportunityDetailsPageState extends State<OpportunityDetailsPage> {
         document['owner'].toString(),
       );
       if (await SessionAuthApi.getSessionId() != sid ||
-          await SessionAuthApi.getSavedSessionUser() != document['owner']) {
+          await SessionAuthApi.getSavedSessionUser() !=
+              document['opportunity_owner']) {
         throw StateError('Your account changed. Reopen Opportunities.');
       }
       if (mounted) {

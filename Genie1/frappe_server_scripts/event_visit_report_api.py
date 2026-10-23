@@ -72,6 +72,19 @@ allowed_outcomes = ["Interested", "Not Interested", "Follow-up Required"]
 is_submitted = bool(observation and outcome in allowed_outcomes)
 
 if action == "get":
+    # Assignment was verified above. Return only files attached to this Event.
+    attachments = frappe.get_all(
+        "File",
+        filters={
+            "attached_to_doctype": "Event",
+            "attached_to_name": event_id,
+            "is_folder": 0,
+            "file_url": ["is", "set"],
+        },
+        fields=["name", "file_name", "file_url", "is_private", "creation"],
+        order_by="creation asc, name asc",
+        limit_page_length=100,
+    )
     frappe.response["message"] = {
         "status": "success",
         "action": "get",
@@ -82,6 +95,8 @@ if action == "get":
         "is_submitted": is_submitted,
         "description": description,
         "outcomes": allowed_outcomes,
+        "event_category": event.get("event_category") or event.get("custom_event_category") or "",
+        "attachments": attachments,
     }
 
 elif action == "save":

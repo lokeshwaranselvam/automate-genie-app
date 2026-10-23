@@ -38,6 +38,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:homegenie/utils/widget/audio_recording_service.dart';
 import 'package:homegenie/utils/widget/live_location_service.dart';
 import '../utils/widget/home_back_button.dart';
+import '../utils/widget/completed_visit_attachments.dart';
 
 class EventDetails extends StatefulWidget {
   final String eventid;
@@ -1967,8 +1968,17 @@ class _EventDetailsState extends State<EventDetails> {
                                 const SizedBox(width: 14),
                                 Expanded(
                                   child: _visitInfoPair(
-                                    'Department',
-                                    department,
+                                    checkedOut
+                                        ? 'Visit Category'
+                                        : 'Department',
+                                    checkedOut
+                                        ? _visitField(
+                                          'event_category',
+                                          fallback: _visitField(
+                                            'custom_event_category',
+                                          ),
+                                        )
+                                        : department,
                                   ),
                                 ),
                               ],
@@ -2043,71 +2053,78 @@ class _EventDetailsState extends State<EventDetails> {
                     _visitChecklistRow('Customer location verified', checkedIn),
                     _visitChecklistRow('Site visit completed', checkedOut),
                     const Divider(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Attachments (${_capturedPhotos.length})',
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFF202B3C),
-                            ),
-                          ),
-                        ),
-                        if (_isUploadingPhoto)
-                          const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      height: 82,
-                      child: ListView(
-                        scrollDirection: Axis.horizontal,
+                    if (checkedOut)
+                      CompletedVisitAttachments(
+                        key: ValueKey(widget.eventid),
+                        eventId: widget.eventid,
+                      )
+                    else ...[
+                      Row(
                         children: [
-                          for (var i = 0; i < _capturedPhotos.length; i++)
-                            _capturedPhotoTile(i),
-                          if (checkedIn && !checkedOut)
-                            SizedBox(
-                              width: 82,
-                              height: 82,
-                              child: OutlinedButton(
-                                onPressed:
-                                    _isUploadingPhoto
-                                        ? null
-                                        : _capturePhotoForCheckout,
-                                style: OutlinedButton.styleFrom(
-                                  side: const BorderSide(
-                                    color: Color(0xFFDCE2E8),
-                                  ),
-                                  shape: const StadiumBorder(),
-                                ),
-                                child: const Icon(
-                                  Icons.add_rounded,
-                                  color: BrandColors.ink,
-                                  size: 28,
-                                ),
+                          Expanded(
+                            child: Text(
+                              'Attachments (${_capturedPhotos.length})',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF202B3C),
                               ),
                             ),
-                          if (_capturedPhotos.isEmpty &&
-                              (!checkedIn || checkedOut))
-                            const Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                'No attachments yet',
-                                style: TextStyle(
-                                  color: Color(0xFF7B8492),
-                                  fontSize: 12,
-                                ),
-                              ),
+                          ),
+                          if (_isUploadingPhoto)
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             ),
                         ],
                       ),
-                    ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 82,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            for (var i = 0; i < _capturedPhotos.length; i++)
+                              _capturedPhotoTile(i),
+                            if (checkedIn && !checkedOut)
+                              SizedBox(
+                                width: 82,
+                                height: 82,
+                                child: OutlinedButton(
+                                  onPressed:
+                                      _isUploadingPhoto
+                                          ? null
+                                          : _capturePhotoForCheckout,
+                                  style: OutlinedButton.styleFrom(
+                                    side: const BorderSide(
+                                      color: Color(0xFFDCE2E8),
+                                    ),
+                                    shape: const StadiumBorder(),
+                                  ),
+                                  child: const Icon(
+                                    Icons.add_rounded,
+                                    color: BrandColors.ink,
+                                    size: 28,
+                                  ),
+                                ),
+                              ),
+                            if (_capturedPhotos.isEmpty &&
+                                (!checkedIn || checkedOut))
+                              const Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  'No attachments yet',
+                                  style: TextStyle(
+                                    color: Color(0xFF7B8492),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
                     if (checkedIn &&
                         !checkedOut &&
                         _requiresPhotoBeforeCheckout()) ...[

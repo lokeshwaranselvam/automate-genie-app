@@ -10,12 +10,6 @@
 # Methods using direct DB writes must call equivalent validation themselves.
 # The receipt verifies submission/audit linkage, not a client AI assertion.
 
-# Temporary rollout: require face receipts only for these authenticated users.
-face_required_users = [
-    "lokeshwaran.trainee@homegeniegroup.com",
-    "arun.itdigital@homegeniegroup.com",
-]
-
 command = str(frappe.form_dict.get("cmd") or "")
 expected_action = None
 expected_log_type = None
@@ -32,10 +26,20 @@ if expected_action:
     current_user = frappe.session.user
     if not current_user or current_user == "Guest":
         frappe.throw("Sign in before checking in or out.")
-    employee_user = frappe.db.get_value("Employee", doc.employee, "user_id")
-    if employee_user != current_user or doc.log_type != expected_log_type:
+    employee_record = frappe.db.get_value(
+        "Employee", doc.employee, ["user_id", "department"], as_dict=True,
+    )
+    if not employee_record or employee_record.user_id != current_user or doc.log_type != expected_log_type:
         frappe.throw("The attendance employee or action does not match your face scan.")
-    if current_user in face_required_users:
+    # Read the authenticated User's email and this check-in's linked Employee.
+    # Match markers only before @, never in the email domain.
+    user_email = str(frappe.db.get_value("User", current_user, "email") or "").strip().lower()
+    email_local_part = user_email.split("@", 1)[0] if "@" in user_email else ""
+    face_required = (
+        (".trainee" in email_local_part or ".itdigital" in email_local_part)
+        and employee_record.department == "IT And Digital - HBPPL"
+    )
+    if face_required:
         record_id = frappe.form_dict.get("face_verification")
         if not isinstance(record_id, str):
             frappe.throw("Complete face verification before checking in or out.")

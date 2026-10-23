@@ -345,10 +345,25 @@ class MobileFaceGuardTest(unittest.TestCase):
         MobileFaceAuthTest.setUp(self)
         self.user = "lokeshwaran.trainee@homegeniegroup.com"
         self.frappe.session.user = self.user
+        self.department = "IT And Digital - HBPPL"
 
     log_error = MobileFaceAuthTest.log_error
     get_doc = MobileFaceAuthTest.get_doc
-    get_value = MobileFaceAuthTest.get_value
+    def get_value(self, doctype, name, fields, as_dict=False):
+        if doctype == "User":
+            self.assertEqual(name, self.frappe.session.user)
+            self.assertEqual(fields, "email")
+            return getattr(self, "email", self.user)
+        if doctype == "Employee":
+            self.assertEqual(fields, ["user_id", "department"])
+            self.assertTrue(as_dict)
+            if name == "EMP-MISSING":
+                return None
+            return Row(
+                user_id=self.user if name == "EMP-1" else "other@example.test",
+                department=self.department,
+            )
+        return MobileFaceAuthTest.get_value(self, doctype, name, fields, as_dict)
     exists = MobileFaceAuthTest.exists
     set_value = MobileFaceAuthTest.set_value
     run_api = MobileFaceAuthTest.run_api
@@ -373,11 +388,11 @@ class MobileFaceGuardTest(unittest.TestCase):
         values.update(params)
         self.run_guard(
             "mobile_face_employee_checkin_attach",
-            Document(name="CHECKIN-1"),
+            Document(name="CHECKIN-1", employee="EMP-1"),
             **values,
         )
 
-    def test_both_rollout_users_require_receipts_for_checkin_and_checkout(self):
+    def test_both_original_users_require_receipts_for_checkin_and_checkout(self):
         for user in ("lokeshwaran.trainee@homegeniegroup.com",
                      "arun.itdigital@homegeniegroup.com"):
             self.user = user
@@ -390,7 +405,41 @@ class MobileFaceGuardTest(unittest.TestCase):
                                        Document(employee="EMP-1", log_type=log_type), cmd=command)
                     with self.assertRaisesRegex(ValueError, "receipt is missing"):
                         self.run_guard("mobile_face_employee_checkin_attach",
-                                       Document(name="CHECKIN-1"), cmd=command)
+                                       Document(name="CHECKIN-1", employee="EMP-1"), cmd=command)
+
+    def test_email_and_department_policy_in_both_hooks(self):
+        cases = [
+            ("new.trainee@homegeniegroup.com", "IT And Digital - HBPPL", True),
+            ("new.itdigital@homegeniegroup.com", "IT And Digital - HBPPL", True),
+            (" NEW.TRAINEE@homegeniegroup.com ", "IT And Digital - HBPPL", True),
+            ("new.trainee.sales@example.test", "IT And Digital - HBPPL", True),
+            ("new.trainee@homegeniegroup.com", "Sales - HBPPL", False),
+            ("new.itdigital@homegeniegroup.com", "Sales - HBPPL", False),
+            ("new.trainee@homegeniegroup.com", None, False),
+            ("new.employee@homegeniegroup.com", "IT And Digital - HBPPL", False),
+            ("new@team.trainee.itdigital.com", "IT And Digital - HBPPL", False),
+            ("trainee@example.test", "IT And Digital - HBPPL", False),
+            ("new.trainee", "IT And Digital - HBPPL", False),
+            (None, "IT And Digital - HBPPL", False),
+        ]
+        # Keep the session ID unchanged: eligibility must use User.email.
+        for email, department, required in cases:
+            self.email = email
+            self.department = department
+            for command, log_type in (("itgenie.api.checkin", "IN"),
+                                      ("itgenie.api.checkout", "OUT")):
+                for script, error in (
+                    ("mobile_face_employee_checkin_guard", "Complete face verification"),
+                    ("mobile_face_employee_checkin_attach", "receipt is missing"),
+                ):
+                    with self.subTest(email=email, department=department, command=command, script=script):
+                        doc = Document(name="CHECKIN-1", employee="EMP-1", log_type=log_type)
+                        if required:
+                            with self.assertRaisesRegex(ValueError, error):
+                                self.run_guard(script, doc, cmd=command)
+                        else:
+                            self.run_guard(script, doc, cmd=command)
+        self.assertEqual(self.store, {})
 
     def test_other_users_skip_both_receipt_hooks_without_modifying_records(self):
         self.user = "employee@example.test"
@@ -400,7 +449,7 @@ class MobileFaceGuardTest(unittest.TestCase):
             self.run_guard("mobile_face_employee_checkin_guard",
                            Document(employee="EMP-1", log_type=log_type), cmd=command)
             self.run_guard("mobile_face_employee_checkin_attach",
-                           Document(name="CHECKIN-1"), cmd=command)
+                           Document(name="CHECKIN-1", employee="EMP-1"), cmd=command)
         self.assertEqual(self.store, {})
 
     def test_other_users_still_cannot_submit_for_another_employee_or_wrong_action(self):
@@ -472,7 +521,7 @@ class MobileFaceGuardTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "face verification receipt is missing"):
             self.run_guard(
                 "mobile_face_employee_checkin_attach",
-                Document(name="CHECKIN-1"),
+                Document(name="CHECKIN-1", employee="EMP-1"),
                 cmd="company.api.checkin",
                 face_verification=123,
             )

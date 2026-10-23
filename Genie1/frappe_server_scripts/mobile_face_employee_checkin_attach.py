@@ -6,12 +6,6 @@
 # Install together with mobile_face_employee_checkin_guard. It attaches the
 # consumed receipt to the Checkin name. No attendance image is stored or attached.
 
-# Temporary rollout: require face receipts only for these authenticated users.
-face_required_users = [
-    "lokeshwaran.trainee@homegeniegroup.com",
-    "arun.itdigital@homegeniegroup.com",
-]
-
 command = str(frappe.form_dict.get("cmd") or "")
 if command.endswith(".checkin") or command.endswith(".checkout"):
     include_timings = frappe.form_dict.get("include_timings") in [True, 1, "1", "true"]
@@ -19,7 +13,19 @@ if command.endswith(".checkin") or command.endswith(".checkout"):
     current_user = frappe.session.user
     if not current_user or current_user == "Guest":
         frappe.throw("Sign in before checking in or out.")
-    if current_user in face_required_users:
+    # Use the same server-side policy as the Before Insert guard.
+    employee_record = frappe.db.get_value(
+        "Employee", doc.employee, ["user_id", "department"], as_dict=True,
+    )
+    user_email = str(frappe.db.get_value("User", current_user, "email") or "").strip().lower()
+    email_local_part = user_email.split("@", 1)[0] if "@" in user_email else ""
+    face_required = (
+        employee_record
+        and employee_record.user_id == current_user
+        and (".trainee" in email_local_part or ".itdigital" in email_local_part)
+        and employee_record.department == "IT And Digital - HBPPL"
+    )
+    if face_required:
         record_id = frappe.form_dict.get("face_verification")
         if not isinstance(record_id, str):
             frappe.throw("The face verification receipt is missing.")
