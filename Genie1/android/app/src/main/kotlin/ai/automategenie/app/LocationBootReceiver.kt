@@ -1,4 +1,4 @@
-package com.thirvusoft.homegeniecom
+package ai.automategenie.app
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -37,7 +37,7 @@ class LocationBootReceiver : BroadcastReceiver() {
         }
 
         try {
-            LocationTrackingManager.startTracking(context, userId, authToken, siteUrl)
+            LocationTrackingManager.startTracking(context, userId, authToken, siteUrl, trackingAllowed = true)
             Log.i(TAG, "Resumed live tracking after $action")
         } catch (error: Exception) {
             Log.e(TAG, "Could not resume live tracking after $action", error)

@@ -85,7 +85,13 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   bool _showOpportunities = false;
   bool _showHomeAddLead = false;
   bool _showHomeNewVisit = false;
+  // Visits navigation is available to every signed-in user.
+  Map<String, bool> _featureVisibility = {};
+  bool _featureVisible(String name, [bool fallback = true]) => _featureVisibility[name] ?? fallback;
+  bool get _showBottomVisits => _featureVisible('visits');
+  bool get _showLeads => _featureVisible('leads', _showHomeAddLead);
   bool _showHomePending = false;
+  bool _showPendingDrawer = false;
   int _homeActionAccessRequest = 0;
   int _opportunityAccessRequest = 0;
   bool _webLinksLoading = false;
@@ -127,6 +133,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   Timer? _homeScheduleRefreshTimer;
   bool _appIsResumed = true;
   bool _refreshingHomeSchedule = false;
+  bool _openingScheduleVisit = false;
   Set<String> _clearedHomeScheduleIds = {};
   List<Map<String, dynamic>> _cachedHomeScheduleEvents = [];
 
@@ -575,7 +582,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openMyLeads() async {
-    if (!_showHomeAddLead) return;
+    if (!_showLeads) return;
     await Navigator.of(
       context,
     ).push<void>(MaterialPageRoute<void>(builder: (_) => const MyLeadsPage()));
@@ -984,8 +991,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   void _selectBottomTab(int index) {
-    if (index == 2 && !_showHomeNewVisit) return;
-    if (index == 3 && !_showHomeAddLead) return;
+    if (index == 1 && !_featureVisible('tasks')) return;
+    if (index == 2 && !_showBottomVisits) return;
+    if (index == 3 && !_showLeads) return;
     if (index == 0) unawaited(_loadHomeQuickActionAccess());
     if (index == 4) unawaited(_loadOpportunityVisibility());
     if (index == 0) unawaited(_loadHomeTaskTodayCount());
@@ -1008,6 +1016,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openPendingWork() async {
+    if (!_showHomePending) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => const PendingWorkOverviewPage()),
     );
@@ -1021,7 +1030,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       _showHomeAddLead = false;
       _showHomeNewVisit = false;
       _showHomePending = false;
-      if (_selectedTab == 2 || _selectedTab == 3) _selectedTab = 0;
+      _showPendingDrawer = false;
+      if (_selectedTab == 2 || _selectedTab == 3) {
+        _selectedTab = 0;
+      }
     });
     try {
       final access = await SiteVisitCreationApi.homeQuickActionAccess();
@@ -1030,9 +1042,22 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         _showHomeAddLead = access.canAddLead;
         _showHomeNewVisit = access.canCreateVisit;
         _showHomePending = access.canViewPending;
+        _featureVisibility = access.featureVisibility;
+        if (_selectedTab == 1 && !_featureVisible('tasks')) _selectedTab = 0;
       });
+      unawaited(_loadPendingDrawerVisibility(request));
     } catch (_) {
       // Hide sales actions until the active ERP session can verify its roles.
+    }
+  }
+
+  Future<void> _loadPendingDrawerVisibility(int request) async {
+    try {
+      final policy = await Event.getBusinessPolicy('navigation');
+      if (!mounted || request != _homeActionAccessRequest) return;
+      setState(() => _showPendingDrawer = policy.rules['pending_drawer'] == true);
+    } catch (_) {
+      // A missing/unavailable drawer policy leaves only this entry hidden.
     }
   }
 
@@ -1041,9 +1066,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     if (!mounted) return;
     setState(() => _showOpportunities = false);
     try {
-      // This existing server check requires the exact Sales Manager role.
-      // It is scoped to the authenticated session, not locally saved roles.
-      final allowed = await SiteVisitCreationApi.canCreateVisit();
+      // Preserve Sales Manager access independently of New Visit creation.
+      final allowed =
+          (await SiteVisitCreationApi.homeQuickActionAccess())
+              .canViewOpportunities;
       if (mounted && request == _opportunityAccessRequest) {
         setState(() => _showOpportunities = allowed);
       }
@@ -1059,7 +1085,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       if (!allowed) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Only Sales Managers can create site visits.'),
+            content: Text(
+              'Only Sales Managers, Accounts Users, SCM Managers, or Delivery Managers can create site visits.',
+            ),
           ),
         );
         return;
@@ -1082,7 +1110,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => const SessionWebView(
-          url: 'https://16.itgenie.online/TGC',
+          url: 'https://erp.homegeniegroup.in/TG',
           title: 'New Task',
         ),
       ),
@@ -1109,7 +1137,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             style: TextStyle(color: Colors.black54),
           ),
           const SizedBox(height: 14),
-          GlassCard(
+          if (_featureVisible('canteen')) GlassCard(
             margin: const EdgeInsets.only(bottom: 10),
             child: ListTile(
               leading: const Icon(
@@ -1497,12 +1525,15 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       pendingCount: _homePendingCount?.toString().padLeft(2, '0') ?? '—',
       loading: _isLoading,
       attendanceBusy: _isActionLoading,
-      showAddLead: _showHomeAddLead,
-      showNewVisit: _showHomeNewVisit,
-      showLeads: _showHomeAddLead,
-      showVisits: _showHomeAddLead,
-      showPending: _showHomePending,
-      showSchedule: _showHomeAddLead,
+      showAddLead: _featureVisible('add_lead', _showHomeAddLead),
+      showNewVisit: _featureVisible('new_visit', _showHomeNewVisit),
+      showLeads: _showLeads,
+      showVisits: _showBottomVisits,
+      showPending: _featureVisible('pending', _showHomePending),
+      showSchedule: _featureVisible('schedule', _showHomeAddLead),
+      showTasks: _featureVisible('tasks'),
+      showAttendance: _featureVisible('attendance'),
+      showNewTask: _featureVisible('new_task'),
       schedule: [
         for (var i = 0; i < milestones.length; i++)
           _buildScheduleRow(milestones[i], isLast: i == milestones.length - 1),
@@ -1566,7 +1597,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     required bool isLast,
   }) {
     const rowHeight = 56.0;
-    return SizedBox(
+    final row = SizedBox(
       height: rowHeight,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1652,6 +1683,32 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         ],
       ),
     );
+    return InkWell(
+      onTap:
+          milestone.eventId.isEmpty
+              ? null
+              : () => _openScheduleVisit(milestone.eventId),
+      child: row,
+    );
+  }
+
+  Future<void> _openScheduleVisit(String eventId) async {
+    if (_openingScheduleVisit) return;
+    _openingScheduleVisit = true;
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder:
+              (_) => SiteVisitsPage(
+                initialEventId: eventId,
+                onVisitsUpdated: _onSiteVisitsUpdated,
+              ),
+        ),
+      );
+      if (mounted) await _refreshHomeSchedule();
+    } finally {
+      _openingScheduleVisit = false;
+    }
   }
 
   Future<void> _openAttendance() async {
@@ -1776,7 +1833,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       body: ListView(
         padding: const EdgeInsets.all(14),
         children: [
-          _moreTile(
+          if (_featureVisible('performance')) _moreTile(
             Icons.bar_chart_rounded,
             'My Performance',
             'View your sales performance and attendance',
@@ -1786,7 +1843,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
               ),
             ),
           ),
-          _moreTile(
+          if (_featureVisible('dashboards')) _moreTile(
             Icons.space_dashboard_outlined,
             'Dashboards',
             'Open assigned dashboards',
@@ -1806,7 +1863,13 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
               );
             },
           ),
-          _moreTile(
+          if (_featureVisible('leave')) _moreTile(
+            Icons.event_available_outlined,
+            'Leave Application',
+            'Apply for leave',
+            () => setState(() => _leaveApplicationOpen = true),
+          ),
+          if (_featureVisible('expenses')) _moreTile(
             Icons.receipt_long_outlined,
             'Expense Claim',
             'Submit an expense with its bill photo',
@@ -1817,23 +1880,24 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
               );
             },
           ),
-          if (_showHomeAddLead) _moreTile(
-            Icons.event_available_outlined,
-            'All Visits',
-            'Browse your schedule',
-            () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder:
-                      (_) => SiteVisitsPage(
-                        onVisitsUpdated: _onSiteVisitsUpdated,
-                      ),
-                ),
-              );
-            },
-          ),
-          if (_showOpportunities)
+          if (_showBottomVisits)
+            _moreTile(
+              Icons.event_available_outlined,
+              'All Visits',
+              'Browse your schedule',
+              () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder:
+                        (_) => SiteVisitsPage(
+                          onVisitsUpdated: _onSiteVisitsUpdated,
+                        ),
+                  ),
+                );
+              },
+            ),
+          if (_featureVisible('opportunities', _showOpportunities))
             _moreTile(
               Icons.handshake_outlined,
               'Opportunities',
@@ -1941,38 +2005,67 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                       title: Text('Home'),
                       onTap: () => Navigator.pop(context),
                     ),
-                    // The existing session check allows Sales User or Sales Manager.
-                    if (_showHomeAddLead) ListTile(
-                      leading: Icon(Icons.event, color: BrandColors.ink),
-                      title: Text('Events'),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder:
-                                (context) => SiteVisitsPage(
-                                  onVisitsUpdated: _onSiteVisitsUpdated,
-                                ),
-                          ),
-                        );
-                      },
-                    ),
-                    if (_showHomeAddLead) ListTile(
-                      leading: Icon(
-                        Icons.person_add_alt_1_outlined,
+                    if (_featureVisible('canteen')) ListTile(
+                      leading: const Icon(
+                        Icons.restaurant_outlined,
                         color: BrandColors.ink,
                       ),
-                      title: Text('Create Lead'),
+                      title: const Text('Genieone Canteen'),
+                      trailing: const Icon(Icons.open_in_new, size: 18),
                       onTap: () {
                         Navigator.pop(context);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const LeadCreationPage(),
-                          ),
-                        );
+                        _openSessionWebLink(const {
+                          'title': 'Genieone Canteen',
+                          'url': 'https://erp.homegeniegroup.in/Genieone-Canteen',
+                        });
                       },
                     ),
+                    if (_featureVisible('pending', _showHomePending) &&
+                        _showPendingDrawer)
+                      ListTile(
+                        leading: Icon(
+                          Icons.work_outline,
+                          color: BrandColors.ink,
+                        ),
+                        title: Text('Pending Work'),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _openPendingWork();
+                        },
+                      ),
+                    if (_showBottomVisits)
+                      ListTile(
+                        leading: Icon(Icons.event, color: BrandColors.ink),
+                        title: Text('Events'),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder:
+                                  (context) => SiteVisitsPage(
+                                    onVisitsUpdated: _onSiteVisitsUpdated,
+                                  ),
+                            ),
+                          );
+                        },
+                      ),
+                    if (_featureVisible('add_lead', _showHomeAddLead))
+                      ListTile(
+                        leading: Icon(
+                          Icons.person_add_alt_1_outlined,
+                          color: BrandColors.ink,
+                        ),
+                        title: Text('Create Lead'),
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const LeadCreationPage(),
+                            ),
+                          );
+                        },
+                      ),
                     if (_webLinksLoading)
                       const ListTile(
                         leading: SizedBox(
@@ -2044,10 +2137,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                   children: [
                     _buildHomeDashboard(),
                     PendingWorkPage(key: _pendingWorkPageKey),
-                    _selectedTab == 2 && _showHomeNewVisit
+                    _selectedTab == 2 && _showBottomVisits
                         ? SiteVisitsPage(onVisitsUpdated: _onSiteVisitsUpdated)
                         : const SizedBox.shrink(),
-                    _selectedTab == 3 && _showHomeAddLead
+                    _selectedTab == 3 && _showLeads
                         ? const MyLeadsPage()
                         : const SizedBox.shrink(),
                     _buildMoreTab(),
@@ -2056,8 +2149,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         bottomNavigationBar: HomeNavigationBar(
           currentIndex: _selectedTab,
           onTap: _selectBottomTab,
-          showVisits: _showHomeNewVisit,
-          showLeads: _showHomeAddLead,
+          showVisits: _showBottomVisits,
+          showLeads: _showLeads,
+          showTasks: _featureVisible('tasks'),
         ),
       ),
     );

@@ -42,7 +42,7 @@ Future<Map<String, dynamic>> createEvent() => SiteVisitCreationApi.createEvent(
   startsOn: '2026-10-14 10:00:00',
   endsOn: '2026-10-14 10:30:00',
   assignedTo: user,
-  category: 'Installation',
+  category: 'Site Visit',
   productEnquired: "D'sign Doors",
 );
 
@@ -56,6 +56,65 @@ void main() {
     });
     dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
   });
+
+  test(
+    'Opportunity ID search sends authenticated query and preserves Opportunity identity',
+    () async {
+      await http.runWithClient(
+        () async {
+          final rows = await SiteVisitCreationApi.searchOpportunities(
+            ' 28718 ',
+          );
+          expect(rows.single['name'], 'CRM-OPP-2026-28718');
+          expect(rows.single['contact_mobile'], '9873823617');
+        },
+        () => MockClient((request) async {
+          expect(request.url.path, '/api/method/mobile_site_visit');
+          expect(request.url.queryParameters, {
+            'action': 'search_opportunities',
+            'query': '28718',
+          });
+          expect(request.headers['cookie'], 'sid=visit-session-$sessionNumber');
+          return success({
+            'opportunities': [
+              {
+                'name': 'CRM-OPP-2026-28718',
+                'title': 'Ankit',
+                'party_name': 'CRM-LEAD-2026-50209',
+                'contact_mobile': '9873823617',
+              },
+            ],
+          });
+        }),
+      );
+    },
+  );
+
+  test(
+    'Opportunity search rejects responses from another session user',
+    () async {
+      await http.runWithClient(
+        () async {
+          await expectLater(
+            SiteVisitCreationApi.searchOpportunities('28718'),
+            throwsA(isA<FormatException>()),
+          );
+        },
+        () => MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'message': {
+                'status': 'success',
+                'current_user': 'another@example.test',
+                'opportunities': [],
+              },
+            }),
+            200,
+          ),
+        ),
+      );
+    },
+  );
 
   test(
     'creation capability is session-bound and requires explicit server approval',
@@ -145,7 +204,7 @@ void main() {
         'starts_on': '2026-10-14 10:00:00',
         'ends_on': '2026-10-14 10:30:00',
         'assigned_to': user,
-        'category': 'Installation',
+        'category': 'Site Visit',
         'product_enquired': "D'sign Doors",
         'csrf_token': 'desk-token',
       });
@@ -246,6 +305,43 @@ void main() {
       }),
     );
     expect(posts, 1);
+  });
+
+  test('direct Event sends no destination fields', () async {
+    await http.runWithClient(
+      () async {
+        await SiteVisitCreationApi.loadOptions();
+        await SiteVisitCreationApi.createEvent(
+          opportunity: '',
+          locationRow: '',
+          summary: 'Bank visit',
+          startsOn: '2026-10-24 10:00:00',
+          endsOn: '2026-10-24 10:30:00',
+          assignedTo: user,
+          category: 'Bank',
+        );
+      },
+      () => MockClient((request) async {
+        if (request.url.path.endsWith('get_logged_user')) {
+          return http.Response(jsonEncode({'message': user}), 200);
+        }
+        if (request.method == 'GET') return options(token: 'form-token');
+        expect(request.bodyFields, containsPair('action', 'create_event'));
+        expect(request.bodyFields, containsPair('opportunity', ''));
+        expect(request.bodyFields, containsPair('location_row', ''));
+        expect(request.bodyFields, containsPair('category', 'Bank'));
+        for (final key in [
+          'latitude',
+          'longitude',
+          'location_type',
+          'map_link',
+        ]) {
+          expect(request.bodyFields, isNot(contains(key)));
+        }
+        expect(request.bodyFields, isNot(contains('product_enquired')));
+        return success({'event': 'EVENT-1'});
+      }),
+    );
   });
 
   test('session change discards the previous session token', () async {

@@ -16,18 +16,6 @@ class MyOpportunitiesPage extends StatefulWidget {
 }
 
 class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
-  static const _filterStatuses = [
-    'Open',
-    'Follow-up',
-    'Demo',
-    'VC',
-    'Duplicate Lead',
-    'Junk',
-    'Not Interested',
-    'Hot Followup',
-    'RNR',
-    'B2B Database',
-  ];
   List<Map<String, dynamic>> _items = [];
   bool _loading = false;
   bool _hasMore = false;
@@ -43,13 +31,16 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
     if (_filterLoading) return;
     setState(() => _filterLoading = true);
     try {
+      final options = await OpportunityApi.getEditOptions();
+      if (!mounted) return;
+      final filterStatuses = options.allowedStatuses ?? options.statuses;
       final selected = await showDialog<String>(
         context: context,
         builder:
             (context) => SimpleDialog(
               title: const Text('Filter by status'),
               children: [
-                for (final status in _filterStatuses)
+                for (final status in filterStatuses)
                   SimpleDialogOption(
                     onPressed: () => Navigator.pop(context, status),
                     child: Text(status),

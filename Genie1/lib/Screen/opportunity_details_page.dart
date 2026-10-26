@@ -31,7 +31,7 @@ class _OpportunityDetailsPageState extends State<OpportunityDetailsPage> {
     setState(() => _editing = true);
     try {
       final original = _document!;
-      final options = await OpportunityApi.getEditOptions();
+      final options = await OpportunityApi.getEditOptions(name: original['name']?.toString());
       if (!mounted) return;
       final changes = await showDialog<Map<String, dynamic>>(
         context: context,

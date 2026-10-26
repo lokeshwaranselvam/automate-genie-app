@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'warning.dart';
+import '../live_tracking_access.dart';
 
 /// Helper class to manage battery optimization on Android
 /// Provides UI prompts and settings navigation
@@ -74,6 +75,7 @@ class BatteryOptimizationHelper {
     BuildContext context,
   ) async {
     if (!Platform.isAndroid) return;
+    if (!await LiveTrackingAccess.canTrack()) return;
     Map<String, dynamic> status;
     try {
       final result = await platform.invokeMethod<Map<dynamic, dynamic>>(
@@ -144,6 +146,7 @@ class BatteryOptimizationHelper {
 
   /// Show a banner/snackbar warning about battery optimization
   static void showBatteryOptimizationBanner(BuildContext context) async {
+    if (!await LiveTrackingAccess.canTrack()) return;
     final isOptimized = await isBatteryOptimized();
     if (!isOptimized) return;
 

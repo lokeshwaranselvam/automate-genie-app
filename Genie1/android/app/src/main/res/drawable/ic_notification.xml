@@ -4,7 +4,19 @@
     android:viewportWidth="24"
     android:viewportHeight="24">
 
+    <!-- Monochrome AG brand mark for Android's notification icon mask. -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M12,22c1.1,0 1.99,-0.9 1.99,-2h-3.98c0,1.1 0.89,2 1.99,2zM18,16v-5c0,-3.07 -1.63,-5.64 -4.5,-6.32V4c0,-0.83 -0.67,-1.5 -1.5,-1.5S10.5,3.17 10.5,4v0.68C7.64,5.36 6,7.92 6,11v5l-2,2v1h16v-1z" />
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M10.2,17.8 H3.2 Q1.1,17.8 2.3,15.9 L7.1,7.7 Q8,6.2 9,7.7 L13.6,15" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M20.9,8.5 C19.7,7.3 18.2,6.5 16.6,6.5 C13.4,6.5 11,9.1 11,12.3 C11,15.6 13.6,18.1 16.8,18.1 C20,18.1 22.4,15.8 22.4,12.4 H16.9" />
 </vector>

@@ -10,7 +10,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'utils/api/fcm_device_api.dart';
 import 'utils/api/fcm_notification_service.dart';
-import 'utils/widget/location_permission_helper.dart';
 import 'package:overlay_support/overlay_support.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -74,11 +73,6 @@ class _MyappState extends State<Myapp> {
     debugPrint(
       "Location (While Using App) permission: ${locationWhenInUse.name}",
     );
-
-    if (locationWhenInUse.isGranted) {
-      // Asked once per install; "While using the app" is enough for tracking.
-      await LocationPermissionHelper.requestBackgroundOnce();
-    }
 
     debugPrint("Microphone permission: ${microphoneStatus.name}");
     debugPrint("Phone permission: ${phoneStatus.name}");

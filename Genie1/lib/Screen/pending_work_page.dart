@@ -31,7 +31,7 @@ class PendingWorkPageState extends State<PendingWorkPage> {
         ),
       ),
       body: const SessionWebView(
-        url: 'https://16.itgenie.online/TGC',
+        url: 'https://erp.homegeniegroup.in/TG',
         title: 'My Tasks',
         embedded: true,
       ),

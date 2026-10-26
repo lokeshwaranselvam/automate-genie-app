@@ -1,4 +1,4 @@
-package com.thirvusoft.homegeniecom
+package ai.automategenie.app
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -90,6 +90,13 @@ class LocationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Older installs have no verified role marker. Wait for the app's
+        // authenticated attendance/role check before resuming that service.
+        if (!LocationTrackingManager.isTrackingActive(this)) {
+            LocationTrackingManager.stopTracking(this)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         try {
             startForeground(LocationTrackingManager.NOTIFICATION_ID, buildNotification())
         } catch (error: Exception) {

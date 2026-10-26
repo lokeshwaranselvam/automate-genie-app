@@ -1,4 +1,4 @@
-package com.thirvusoft.homegeniecom
+package ai.automategenie.app
 
 import android.Manifest
 import android.content.Context
@@ -28,6 +28,8 @@ object LocationTrackingManager {
 
     const val PREFS_NAME = "live_location_tracking"
     const val KEY_TRACKING_ACTIVE = "tracking_active"
+    // Recheck eligibility after upgrading from the former broader role policy.
+    const val KEY_ROLE_ALLOWED = "tracking_role_allowed_v2"
     const val KEY_USER_ID = "tracking_user_id"
     const val KEY_AUTH_TOKEN = "tracking_auth_token"
     const val KEY_SITE_URL = "tracking_site_url"
@@ -54,8 +56,14 @@ object LocationTrackingManager {
         context: Context,
         userId: String,
         authToken: String,
-        siteUrl: String
+        siteUrl: String,
+        trackingAllowed: Boolean = false
     ) {
+        if (!trackingAllowed) {
+            stopTracking(context)
+            return
+        }
+        prefs(context).edit().putBoolean(KEY_ROLE_ALLOWED, true).apply()
         persistTrackingState(context, true, userId, authToken, siteUrl)
         ContextCompat.startForegroundService(
             context,
@@ -67,6 +75,7 @@ object LocationTrackingManager {
     fun stopTracking(context: Context) {
         prefs(context).edit()
             .putBoolean(KEY_TRACKING_ACTIVE, false)
+            .remove(KEY_ROLE_ALLOWED)
             .remove(KEY_USER_ID)
             .remove(KEY_AUTH_TOKEN)
             .remove(KEY_SITE_URL)
@@ -138,7 +147,9 @@ object LocationTrackingManager {
     }
 
     fun isTrackingActive(context: Context): Boolean {
-        return prefs(context).getBoolean(KEY_TRACKING_ACTIVE, false)
+        val saved = prefs(context)
+        return saved.getBoolean(KEY_TRACKING_ACTIVE, false) &&
+            saved.getBoolean(KEY_ROLE_ALLOWED, false)
     }
 
     fun hasRequiredLocationPermissions(context: Context): Boolean {
@@ -171,6 +182,7 @@ object LocationTrackingManager {
     }
 
     fun sendLocationToServer(context: Context, lat: Double, lng: Double): Boolean {
+        if (!isTrackingActive(context)) return false
         val prefs = prefs(context)
         val userId = prefs.getString(KEY_USER_ID, null)
         val authToken = prefs.getString(KEY_AUTH_TOKEN, null)

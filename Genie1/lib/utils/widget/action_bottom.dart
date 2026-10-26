@@ -17,13 +17,16 @@ import '../widget/battery_optimization_helper.dart';
 import '../api/face_auth_api.dart';
 import '../face/face_auth_flow.dart';
 import '../face/face_performance_trace.dart';
+import '../live_tracking_access.dart';
 
 class Action_Bottom {
   static Future<bool> _handleLocationPermission(
     BuildContext context, {
     required bool startingTracking,
   }) async {
-    if (Platform.isAndroid && startingTracking) {
+    if (Platform.isAndroid &&
+        startingTracking &&
+        await LiveTrackingAccess.canTrack(requireCheckIn: false)) {
       final notificationPermission = await Permission.notification.request();
       if (!notificationPermission.isGranted) {
         Warning.show(
@@ -289,7 +292,8 @@ class Action_Bottom {
                           await prefs.setBool('is_employee_checked_in', true);
                           trackingError =
                               await _startEmployeeLiveLocationTracking();
-                          if (trackingError == null) {
+                          if (trackingError == null &&
+                              LiveLocationService().isTracking) {
                             await const FacePerformanceTrace().measure(
                               'battery guidance (includes user wait)',
                               () =>
@@ -536,7 +540,8 @@ class Action_Bottom {
                             await prefs.setBool('is_employee_checked_in', true);
                             trackingError =
                                 await _startEmployeeLiveLocationTracking();
-                            if (trackingError == null) {
+                            if (trackingError == null &&
+                                LiveLocationService().isTracking) {
                               await const FacePerformanceTrace().measure(
                                 'battery guidance (includes user wait)',
                                 () =>

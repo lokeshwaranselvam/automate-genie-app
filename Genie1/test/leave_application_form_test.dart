@@ -162,6 +162,46 @@ Future<void> submit(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets(
+    'API hides fields and makes reason optional with a server length limit',
+    (tester) async {
+      await withLeavePage(
+        tester,
+        (requests) async {
+          expect(find.byKey(const ValueKey('leave-type')), findsNothing);
+          final reason = tester.widget<TextFormField>(
+            find.byKey(const ValueKey('leave-reason')),
+          );
+          final input = tester.widget<TextField>(
+            find.descendant(
+              of: find.byKey(const ValueKey('leave-reason')),
+              matching: find.byType(TextField),
+            ),
+          );
+          expect(input.maxLength, 4);
+          expect(reason.validator!(''), isNull);
+          expect(find.byType(Checkbox), findsNothing);
+        },
+        reply: (request) async {
+          final data =
+              jsonDecode(optionsResponse().body) as Map<String, dynamic>;
+          (data['message'] as Map)['business_policy'] = {
+            'fields': {
+              'description': {'required': false, 'max_length': 4},
+              'leave_type': {'visible': false},
+              'half_day': {'visible': false},
+            },
+            'rules': {
+              'earliest_date': '2026-11-01',
+              'latest_date': '2026-11-30',
+            },
+          };
+          return http.Response(jsonEncode(data), 200);
+        },
+      );
+    },
+  );
+
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
     final fontDirectory = Platform.environment['LEAVE_UI_PREVIEW_FONT_DIR'];
@@ -500,7 +540,7 @@ void main() {
       await withLeavePage(
         tester,
         (_) async {
-          await tester.tap(find.byTooltip('Back to Attendance'));
+          await tester.tap(find.byTooltip('Back to More'));
           await tester.tap(find.byTooltip('Notifications'));
           expect(backs, 1);
           expect(notifications, 1);
@@ -511,60 +551,54 @@ void main() {
     },
   );
 
-  testWidgets(
-    'attendance button replaces correction and opens the leave form',
-    (tester) async {
-      SharedPreferences.setMockInitialValues({'session_sid': 'leave-session'});
-      dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
-      final client = MockClient((_) async => optionsResponse());
-      await http.runWithClient(() async {
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: Builder(
-                builder:
-                    (context) => AttendancePage(
-                      checkedIn: false,
-                      previousDayPendingCheckout: false,
-                      loading: false,
-                      actionLoading: false,
-                      status: const {},
-                      position: null,
-                      accuracy: null,
-                      currentAddress: '',
-                      onRefresh: () async {},
-                      onBack: () {},
-                      onOpenHistory: () {},
-                      onAttendanceAction: () {},
-                      onLeaveApplication:
-                          () => Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder:
-                                  (context) => LeaveApplicationPage(
-                                    onBack: () => Navigator.of(context).pop(),
-                                    onNotifications: () {},
-                                  ),
-                            ),
+  testWidgets('attendance keeps its action without the moved leave button', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({'session_sid': 'leave-session'});
+    dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
+    final client = MockClient((_) async => optionsResponse());
+    await http.runWithClient(() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder:
+                  (context) => AttendancePage(
+                    checkedIn: false,
+                    previousDayPendingCheckout: false,
+                    loading: false,
+                    actionLoading: false,
+                    status: const {},
+                    position: null,
+                    accuracy: null,
+                    currentAddress: '',
+                    onRefresh: () async {},
+                    onBack: () {},
+                    onOpenHistory: () {},
+                    onAttendanceAction: () {},
+                    onLeaveApplication:
+                        () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder:
+                                (context) => LeaveApplicationPage(
+                                  onBack: () => Navigator.of(context).pop(),
+                                  onNotifications: () {},
+                                ),
                           ),
-                    ),
-              ),
+                        ),
+                  ),
             ),
           ),
-        );
-        expect(find.text('Request Correction'), findsNothing);
-        await tester.pumpAndSettle();
-        await tester.scrollUntilVisible(find.text('Leave Application'), 200);
-        await tester.tap(find.text('Leave Application'));
-        await tester.pumpAndSettle();
-        expect(find.text('Submit Application'), findsOneWidget);
-        await tester.tap(find.byTooltip('Back to Attendance'));
-        await tester.pumpAndSettle();
-        expect(find.text('Check In'), findsOneWidget);
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pumpAndSettle();
-      }, () => client);
-    },
-  );
+        ),
+      );
+      expect(find.text('Request Correction'), findsNothing);
+      await tester.pumpAndSettle();
+      expect(find.text('Leave Application'), findsNothing);
+      expect(find.text('Check In'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    }, () => client);
+  });
 
   testWidgets('completed attendance shows a disabled Completed button', (
     tester,

@@ -40,6 +40,9 @@ class HomeDashboardView extends StatelessWidget {
     this.showVisits = false,
     this.showPending = false,
     this.showSchedule = false,
+    this.showTasks = true,
+    this.showAttendance = true,
+    this.showNewTask = true,
     this.taskSummary,
   });
 
@@ -51,6 +54,7 @@ class HomeDashboardView extends StatelessWidget {
   final bool showLeads, showVisits;
   final bool showPending;
   final bool showSchedule;
+  final bool showTasks, showAttendance, showNewTask;
   final ({int pending, int inProgress, int completed})? taskSummary;
   final List<Widget> schedule;
   final Future<void> Function() onRefresh;
@@ -83,20 +87,21 @@ class HomeDashboardView extends StatelessWidget {
             const SizedBox(height: 20),
             _profile(),
             const SizedBox(height: 18),
-            if (!showVisits && !showLeads && !showPending)
+            if (showTasks && !showVisits && !showLeads && !showPending)
               _tasksOverview()
             else
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _metric(
-                    Icons.event_available_rounded,
-                    taskCount,
-                    'Tasks Today',
-                    const Color(0xFF4514EE),
-                    const Color(0xFFF0EDFF),
-                    onTasks,
-                  ),
+                  if (showTasks)
+                    _metric(
+                      Icons.event_available_rounded,
+                      taskCount,
+                      'Tasks Today',
+                      const Color(0xFF4514EE),
+                      const Color(0xFFF0EDFF),
+                      onTasks,
+                    ),
                   if (showVisits) ...[
                     const SizedBox(width: 7),
                     _metric(
@@ -207,15 +212,16 @@ class HomeDashboardView extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _quickAction(
-                  attendanceBusy
-                      ? Icons.hourglass_top_rounded
-                      : Icons.access_time_filled_rounded,
-                  attendanceBusy ? 'Working...' : 'Attendance',
-                  'Mark your day',
-                  const [Color(0xFF2969FF), Color(0xFF3911F4)],
-                  onAttendance,
-                ),
+                if (showAttendance)
+                  _quickAction(
+                    attendanceBusy
+                        ? Icons.hourglass_top_rounded
+                        : Icons.access_time_filled_rounded,
+                    attendanceBusy ? 'Working...' : 'Attendance',
+                    'Mark your day',
+                    const [Color(0xFF2969FF), Color(0xFF3911F4)],
+                    onAttendance,
+                  ),
                 if (showAddLead)
                   _quickAction(
                     Icons.person_add_alt_1_rounded,
@@ -232,13 +238,14 @@ class HomeDashboardView extends StatelessWidget {
                     const [Color(0xFFB449E8), Color(0xFF8120CD)],
                     onNewVisit,
                   ),
-                _quickAction(
-                  Icons.add_task_rounded,
-                  'New Task',
-                  'Create a task',
-                  const [Color(0xFFFFA035), Color(0xFFFF641F)],
-                  onNewTask,
-                ),
+                if (showNewTask)
+                  _quickAction(
+                    Icons.add_task_rounded,
+                    'New Task',
+                    'Create a task',
+                    const [Color(0xFFFFA035), Color(0xFFFF641F)],
+                    onNewTask,
+                  ),
               ],
             ),
           ],
@@ -970,10 +977,11 @@ class HomeNavigationBar extends StatelessWidget {
     required this.onTap,
     this.showVisits = false,
     this.showLeads = false,
+    this.showTasks = true,
   });
   final int currentIndex;
   final ValueChanged<int> onTap;
-  final bool showVisits, showLeads;
+  final bool showVisits, showLeads, showTasks;
 
   @override
   Widget build(BuildContext context) => ClipRRect(
@@ -988,7 +996,7 @@ class HomeNavigationBar extends StatelessWidget {
             children: [
               for (final index in [
                 0,
-                1,
+                if (showTasks) 1,
                 if (showVisits) 2,
                 if (showLeads) 3,
                 4,

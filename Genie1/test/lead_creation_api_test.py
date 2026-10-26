@@ -1,3 +1,4 @@
+from test.business_policy_stub import install as install_business_policy
 """Contract checks for the restricted lead API script, with a mocked ERP."""
 import ast
 from pathlib import Path
@@ -9,7 +10,7 @@ class LeadCreationApiTest(unittest.TestCase):
     script = (Path(__file__).resolve().parents[1] /
               'frappe_server_scripts/create_lead_from_mobile.py').read_text(encoding='utf-8')
 
-    def run_api(self, whatsapp=None, method='POST', view='', user='sales@example.test', has_field=True, has_source=True):
+    def run_api(self, whatsapp=None, method='POST', view='', user='sales@example.test', has_field=True, has_source=True, roles=('Sales User',)):
         self.saved = []
         self.queries = []
         values = {
@@ -62,9 +63,14 @@ class LeadCreationApiTest(unittest.TestCase):
         frappe = SimpleNamespace(
             session=session, form_dict=values, request=SimpleNamespace(method=method),
             response=response, get_meta=lambda dt: SimpleNamespace(get_field=field),
-            get_all=get_all, db=SimpleNamespace(get_value=get_value), new_doc=new_doc,
+            get_all=get_all, db=SimpleNamespace(get_value=get_value, exists=lambda dt, filters: (
+                dt == 'Has Role' and filters['parent'] == user and
+                filters['parenttype'] == 'User' and filters['parentfield'] == 'roles' and
+                any(role in roles for role in filters['role'][1])
+            )), new_doc=new_doc,
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
+        install_business_policy(frappe)
         exec(self.script, {'frappe': frappe})
         return response['message']
 
@@ -119,6 +125,20 @@ class LeadCreationApiTest(unittest.TestCase):
     def test_guest_is_still_rejected(self):
         with self.assertRaisesRegex(ValueError, 'sign in'):
             self.run_api(user='Guest')
+
+    def test_only_sales_roles_can_create_even_with_direct_post(self):
+        for roles in [(), ('Employee',), ('Designer',), ('Production Manager',), ('System Manager',)]:
+            with self.subTest(roles=roles), self.assertRaisesRegex(ValueError, 'Sales User or Sales Manager'):
+                self.run_api('9876543210', roles=roles)
+            self.assertEqual(self.saved, [])
+        for roles in [('Sales User',), ('Sales Manager',), ('Sales Manager', 'Employee')]:
+            with self.subTest(roles=roles):
+                self.run_api('9876543210', roles=roles)
+                self.assertEqual(len(self.saved), 1)
+
+    def test_role_gate_preserves_existing_owner_scoped_reads(self):
+        self.assertIn('leads', self.run_api(method='GET', view='list', roles=()))
+        self.assertIn('lead', self.run_api(method='GET', view='detail', roles=()))
 
     def test_script_uses_no_imports_or_custom_functions(self):
         tree = ast.parse(self.script)

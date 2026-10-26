@@ -4,6 +4,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 
 import 'session_auth.dart';
+import '../api_business_policy.dart';
 
 /// Opportunity access using Frappe's normal document permissions.
 class OpportunityApi {
@@ -163,7 +164,7 @@ class OpportunityApi {
     return Map<String, dynamic>.from(await _read(name: name));
   }
 
-  static Future<OpportunityEditOptions> getEditOptions() async {
+  static Future<OpportunityEditOptions> getEditOptions({String? name}) async {
     final body = await _request(
       '/api/method/frappe.desk.form.load.getdoctype',
       query: {'doctype': 'Opportunity'},
@@ -222,6 +223,46 @@ class OpportunityApi {
         'ERP did not return Opportunity status options.',
       );
     }
+    final policyBody = await _request(
+      '/api/method/mobile_opportunity_policy',
+      query: {'action': 'get', if (name != null) 'name': name},
+    );
+    final policy = policyBody['message'];
+    final expectedUser = await SessionAuthApi.getSavedSessionUser();
+    if (policy is! Map ||
+        policy['current_user'] != expectedUser ||
+        policy['editable_statuses'] is! List ||
+        (policy['editable_statuses'] as List).isEmpty ||
+        (policy['editable_statuses'] as List).any(
+          (value) => value is! String || !statuses.contains(value),
+        ) ||
+        policy['status_transitions'] is! Map ||
+        policy['followup_policy'] is! Map) {
+      throw const FormatException('ERP returned invalid Opportunity policy.');
+    }
+    final transitions = <String, List<String>>{};
+    for (final entry in (policy['status_transitions'] as Map).entries) {
+      if (entry.key is! String ||
+          entry.value is! List ||
+          (entry.value as List).any((value) => value is! String)) {
+        throw const FormatException(
+          'ERP returned invalid Opportunity transitions.',
+        );
+      }
+      transitions[entry.key] = List<String>.from(entry.value);
+    }
+    final datePolicy = policy['followup_policy'] as Map;
+    final earliestText = datePolicy['earliest_date']?.toString() ?? '';
+    final earliest =
+        earliestText.isEmpty ? null : DateTime.tryParse(earliestText);
+    if (datePolicy['allow_past'] is! bool ||
+        (earliestText.isNotEmpty &&
+            (earliest == null ||
+                earliest.toIso8601String().substring(0, 10) != earliestText))) {
+      throw const FormatException(
+        'ERP returned invalid Opportunity date rules.',
+      );
+    }
     return OpportunityEditOptions(
       statuses: statuses,
       followUpField:
@@ -229,6 +270,11 @@ class OpportunityApi {
               ? followUp.single['fieldname']?.toString()
               : null,
       notesType: hasNote ? (notes?['options']?.toString()) : null,
+      allowedStatuses: List<String>.from(policy['editable_statuses']),
+      statusTransitions: transitions,
+      allowPastFollowup: datePolicy['allow_past'],
+      earliestDate: earliest,
+      businessPolicy: ApiBusinessPolicy.fromApi(policy['business_policy']),
     );
   }
 
@@ -239,7 +285,7 @@ class OpportunityApi {
     required Map<String, dynamic> changes,
   }) async {
     if (changes.isEmpty) return original;
-    final options = await getEditOptions();
+    final options = await getEditOptions(name: original['name']?.toString());
     final allowed = {
       'status',
       if (options.notesType != null) 'notes',
@@ -251,7 +297,9 @@ class OpportunityApi {
       );
     }
     if (changes.containsKey('status') &&
-        (!editableStatuses.contains(changes['status']) ||
+        (!options
+                .statusesFor(original['status']?.toString() ?? '')
+                .contains(changes['status']) ||
             !options.statuses.contains(changes['status']))) {
       throw ArgumentError('Select a valid Opportunity status.');
     }
@@ -263,9 +311,9 @@ class OpportunityApi {
               : original[dateField];
       if ((changes.containsKey(dateField) ||
               (date?.toString().isNotEmpty ?? false)) &&
-          !isFutureFollowUpDate(date)) {
+          !options.isAllowedFollowupDate(date)) {
         throw ArgumentError(
-          'Select a next follow-up date of today or later. Past dates are not allowed.',
+          'Select a valid next follow-up date on or after ${options.firstFollowupDate.toIso8601String().substring(0, 10)}.',
         );
       }
     }
@@ -278,12 +326,11 @@ class OpportunityApi {
       );
     }
     final body = await _request(
-      '/api/resource/Opportunity/${Uri.encodeComponent(name)}',
+      '/api/method/mobile_opportunity_policy',
       changes: {
-        ...changes,
-        if (changes.containsKey('status') &&
-            changes['status'] != original['status'])
-          'sales_stage': changes['status'],
+        'action': 'save',
+        'name': name,
+        'changes': changes,
         'modified': original['modified'],
       },
       expectedOpportunityOwner: original['opportunity_owner']?.toString(),
@@ -387,7 +434,11 @@ class OpportunityApi {
     try {
       for (var attempt = 0; attempt < 2; attempt++) {
         final response = await send(
-          changes == null ? 'GET' : 'PUT',
+          changes == null
+              ? 'GET'
+              : path == '/api/method/mobile_opportunity_policy'
+              ? 'POST'
+              : 'PUT',
           base.resolve(path).replace(queryParameters: query),
           csrf: changes == null ? null : await token(),
         );
@@ -467,10 +518,51 @@ class OpportunityEditOptions {
     required this.statuses,
     this.followUpField,
     this.notesType,
+    this.allowedStatuses,
+    this.statusTransitions = const {},
+    this.allowPastFollowup = false,
+    this.earliestDate,
+    this.businessPolicy = ApiBusinessPolicy.empty,
   });
   final List<String> statuses;
   final String? followUpField;
   final String? notesType;
+  final List<String>? allowedStatuses;
+  final Map<String, List<String>> statusTransitions;
+  final bool allowPastFollowup;
+  final DateTime? earliestDate;
+  final ApiBusinessPolicy businessPolicy;
+
+  List<String> statusesFor(String current) {
+    final allowed = allowedStatuses ?? OpportunityApi.editableStatuses;
+    final targets = statusTransitions[current];
+    return allowed
+        .where(
+          (value) =>
+              targets == null || targets.contains(value) || value == current,
+        )
+        .toList();
+  }
+
+  DateTime get firstFollowupDate {
+    final today = OpportunityApi.earliestFollowUpDate;
+    if (!allowPastFollowup) {
+      return earliestDate != null && earliestDate!.isAfter(today)
+          ? earliestDate!
+          : today;
+    }
+    return earliestDate ?? DateTime(1900);
+  }
+
+  bool isAllowedFollowupDate(Object? value) {
+    if (value is! String || !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)) {
+      return false;
+    }
+    final date = DateTime.tryParse(value);
+    return date != null &&
+        date.toIso8601String().substring(0, 10) == value &&
+        !date.isBefore(firstFollowupDate);
+  }
 }
 
 /// Preserves the response status for the edit dialog without exposing tracebacks.

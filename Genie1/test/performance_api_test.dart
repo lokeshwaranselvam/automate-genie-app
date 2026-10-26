@@ -108,7 +108,7 @@ void main() {
               );
             }),
           ).canViewSales();
-      expect(result, access.$1 || access.$2);
+      expect(result, access.$1);
     }
   });
 

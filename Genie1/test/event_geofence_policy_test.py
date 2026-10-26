@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 class EventGeofencePolicyTest(unittest.TestCase):
     def test_category_policy_preserves_event_and_participant_response(self):
-        for filename in ("api.py", "api_single_device_updated.py"):
+        for filename in ("api_utils.py", "api_single_device_updated.py"):
             path = Path(__file__).resolve().parents[1] / "backend_patches" / filename
             tree = ast.parse(path.read_text(encoding="utf-8"))
             function = next(node for node in tree.body
@@ -16,6 +16,8 @@ class EventGeofencePolicyTest(unittest.TestCase):
             function.decorator_list = []
             for category in ("Installation", " installation ", "INSTALLATION",
                              "Measurement", " measurement ", "MEASUREMENT",
+                             "Other", "Others", " Bank ", "Head Office CH",
+                             "Timbe / Bioman Office CH", "Collection", "COLLECTION",
                              "Site Visit", "SiteVisit", "Client Visit",
                              "Complaint Visit", "Meeting", "", None):
                 with self.subTest(filename=filename, category=category):
@@ -38,7 +40,9 @@ class EventGeofencePolicyTest(unittest.TestCase):
                         "event": event_data,
                         "requires_geofence": category not in (
                             "Installation", " installation ", "INSTALLATION",
-                            "Measurement", " measurement ", "MEASUREMENT"),
+                            "Measurement", " measurement ", "MEASUREMENT",
+                            "Other", "Others", " Bank ", "Head Office CH",
+                            "Timbe / Bioman Office CH", "Collection", "COLLECTION"),
                         "reference_details": [{
                             "doctype": "Opportunity", "name": "OPP-1",
                             "opportunity_from": "Customer", "party_name": "CUSTOMER-1",

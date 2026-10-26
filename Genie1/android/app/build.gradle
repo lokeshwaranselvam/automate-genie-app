@@ -37,7 +37,7 @@ if (!hasReleaseKeystore) {
 }
 
 android {
-    namespace "com.thirvusoft.homegeniecom"
+    namespace "ai.automategenie.app"
     compileSdk 36   // ✅ safer (36 can cause issues)
 
     ndkVersion "28.2.13676358"
@@ -59,7 +59,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.thirvusoft.homegeniecom"
+        applicationId "ai.automategenie.app"
 
         minSdkVersion flutter.minSdkVersion
         targetSdkVersion 36

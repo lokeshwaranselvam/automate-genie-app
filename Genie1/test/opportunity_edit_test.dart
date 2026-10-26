@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/utils/api/opportunity_api.dart';
+import 'package:homegenie/utils/api_business_policy.dart';
 import 'package:homegenie/utils/widget/opportunity_edit_dialog.dart';
 import 'package:homegenie/utils/widget/warning.dart';
 import 'package:http/http.dart' as http;
@@ -11,13 +12,16 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const user = 'creator@example.test';
-const original = <String, dynamic>{
+final original = <String, dynamic>{
   'name': 'OPP-1',
   'owner': 'other.creator@example.test',
   'opportunity_owner': user,
   'modified': '2026-10-21 10:00:00',
   'status': 'Open',
-  'custom_next_followup_date': '2026-10-22',
+  'custom_next_followup_date': DateTime.now().toIso8601String().substring(
+    0,
+    10,
+  ),
   'notes': [
     {
       'name': 'NOTE-1',
@@ -56,6 +60,64 @@ const metadata = {
 };
 
 void main() {
+  testWidgets('API can allow status changes without notes or Event warnings', (
+    tester,
+  ) async {
+    Map<String, dynamic>? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder:
+              (context) => Scaffold(
+                body: TextButton(
+                  child: const Text('Edit'),
+                  onPressed:
+                      () => showDialog<void>(
+                        context: context,
+                        builder:
+                            (_) => OpportunityEditDialog(
+                              document: original,
+                              options: OpportunityEditOptions(
+                                statuses: const ['Open', 'Demo'],
+                                notesType: 'CRM Note',
+                                followUpField: 'custom_next_followup_date',
+                                businessPolicy: ApiBusinessPolicy.fromApi({
+                                  'fields': {
+                                    'note': {
+                                      'visible': false,
+                                      'required': false,
+                                    },
+                                  },
+                                  'rules': {
+                                    'note_on_status_change': false,
+                                    'note_on_followup_change': false,
+                                    'dependencies': [],
+                                  },
+                                }),
+                              ),
+                              onSave: (patch) async {
+                                saved = patch;
+                              },
+                            ),
+                      ),
+                ),
+              ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextField, 'Add note'), findsNothing);
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Demo').last);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Create an event first'), findsNothing);
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(saved, {'status': 'Demo'});
+  });
+
   testWidgets(
     'event-required error uses Create event heading only for this notice',
     (tester) async {
@@ -174,9 +236,7 @@ void main() {
           await tester.tap(find.text('Save'));
           await tester.pumpAndSettle();
           expect(
-            find.textContaining(
-              'The next follow-up date cannot be in the past.',
-            ),
+            find.textContaining('Select a next follow-up date on or after'),
             findsOneWidget,
           );
           expect(writes, 0);
@@ -338,16 +398,104 @@ void main() {
       'session_username': user,
     });
   });
-  MockClient server(Future<http.Response> Function(http.Request) handler) =>
-      MockClient((request) async {
-        if (request.url.path.endsWith('get_logged_user')) {
-          return http.Response(jsonEncode({'message': user}), 200);
-        }
-        if (request.url.path.endsWith('getdoctype')) {
-          return http.Response(jsonEncode(metadata), 200);
-        }
-        return handler(request);
-      });
+  MockClient server(
+    Future<http.Response> Function(http.Request) handler, {
+    Map<String, Object?> policy = const {},
+  }) => MockClient((request) async {
+    if (request.url.path.endsWith('get_logged_user')) {
+      return http.Response(jsonEncode({'message': user}), 200);
+    }
+    if (request.url.path.endsWith('getdoctype')) {
+      return http.Response(jsonEncode(metadata), 200);
+    }
+    if (request.url.path.endsWith('mobile_opportunity_policy') &&
+        request.method == 'GET') {
+      return http.Response(
+        jsonEncode({
+          'message': {
+            'current_user': user,
+            'editable_statuses': ['Open', 'Follow-up'],
+            'status_transitions': {},
+            'followup_policy': {
+              'allow_past': false,
+              'earliest_date': DateTime.now().toIso8601String().substring(
+                0,
+                10,
+              ),
+            },
+            ...policy,
+          },
+        }),
+        200,
+      );
+    }
+    return handler(request);
+  });
+
+  test(
+    'API overrides editable statuses, transitions and past follow-up policy',
+    () async {
+      await http.runWithClient(
+        () async {
+          final options = await OpportunityApi.getEditOptions(name: 'OPP-1');
+          expect(options.statusesFor('Open'), ['Follow-up']);
+          expect(options.firstFollowupDate, DateTime(2000));
+          expect(options.isAllowedFollowupDate('2001-01-01'), isTrue);
+          expect(options.isAllowedFollowupDate('1999-12-31'), isFalse);
+        },
+        () => server(
+          (_) async => throw StateError('Unexpected request'),
+          policy: {
+            'editable_statuses': ['Follow-up'],
+            'status_transitions': {
+              'Open': ['Follow-up'],
+            },
+            'followup_policy': {
+              'allow_past': true,
+              'earliest_date': '2000-01-01',
+            },
+          },
+        ),
+      );
+    },
+  );
+
+  testWidgets('dialog uses API status choices and earliest follow-up date', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: OpportunityEditDialog(
+            document: {...original, 'custom_next_followup_date': '2001-01-01'},
+            options: OpportunityEditOptions(
+              statuses: const ['Open', 'Lost'],
+              allowedStatuses: const ['Lost'],
+              statusTransitions: const {
+                'Open': ['Lost'],
+              },
+              followUpField: 'custom_next_followup_date',
+              notesType: 'CRM Note',
+              allowPastFollowup: true,
+              earliestDate: DateTime(2000),
+            ),
+          ),
+        ),
+      ),
+    );
+    final dropdown = tester.widget<DropdownButton<String>>(
+      find.byType(DropdownButton<String>),
+    );
+    expect(dropdown.items!.map((item) => item.value).toList(), ['Lost']);
+    await tester.tap(find.byType(OutlinedButton));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<DatePickerDialog>(find.byType(DatePickerDialog)).firstDate,
+      DateTime(2000),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
 
   test('reads customized status, follow-up and notes metadata', () async {
     await http.runWithClient(() async {
@@ -409,11 +557,12 @@ void main() {
             return http.Response(jsonEncode({'data': original}), 200);
           }
           writes++;
-          expect(request.method, 'PUT');
+          expect(request.method, 'POST');
           expect(request.headers['X-Frappe-CSRF-Token'], 'token$tokens');
           expect(jsonDecode(request.body), {
-            'status': 'Follow-up',
-            'sales_stage': 'Follow-up',
+            'action': 'save',
+            'name': 'OPP-1',
+            'changes': {'status': 'Follow-up'},
             'modified': original['modified'],
             'csrf_token': 'token$tokens',
           });
@@ -469,7 +618,9 @@ void main() {
           }
           writes++;
           expect(jsonDecode(request.body), {
-            ...changes,
+            'action': 'save',
+            'name': 'OPP-1',
+            'changes': changes,
             'modified': original['modified'],
             'csrf_token': 'token',
           });
@@ -653,7 +804,7 @@ void main() {
                       patch = await showDialog<Map<String, dynamic>>(
                         context: context,
                         builder:
-                            (_) => const OpportunityEditDialog(
+                            (_) => OpportunityEditDialog(
                               document: original,
                               options: OpportunityEditOptions(
                                 statuses: ['Open', 'Follow-up'],

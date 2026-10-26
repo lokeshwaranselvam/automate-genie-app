@@ -1,5 +1,7 @@
 import 'notification_inbox.dart';
 import 'lead_call_notification.dart';
+import 'event_assignment_notification.dart';
+import 'package:event_assignment_alarm/event_assignment_alarm.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -19,6 +21,8 @@ const String _pendingWorkChannelId = 'work_assignment';
 const String _pendingWorkSilentChannelId = 'pending_work_alarm_playback';
 const String _pendingWorkChannelMigrationKey =
     'pending_work_alarm_channel_refreshed_v1';
+const String _eventAssignmentVisualChannelId = 'event_assignment_visual_v1';
+const String _eventAssignmentAlarmChannelId = 'event_assignment_alarm_v1';
 
 const AndroidNotificationChannel _pendingWorkChannel =
     AndroidNotificationChannel(
@@ -88,6 +92,10 @@ bool _isPendingWork(RemoteMessage message) {
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
+  if (EventAssignmentNotification.fromData(message.data) != null) {
+    await showEventAssignmentNotification(message);
+    return;
+  }
   await NotificationInbox.capture(message);
   if (LeadCallNotification.fromData(message.data) != null) {
     if (message.notification == null) {
@@ -133,6 +141,29 @@ Future<void> _initializeLocalNotifications() async {
   await android?.createNotificationChannel(_pendingWorkSilentChannel);
   await android?.createNotificationChannel(
     const AndroidNotificationChannel(
+      _eventAssignmentVisualChannelId,
+      'Visit Assignments',
+      description: 'Visit alerts accompanied by the Event alarm player',
+      importance: Importance.high,
+      playSound: false,
+      enableVibration: true,
+    ),
+  );
+  await android?.createNotificationChannel(
+    const AndroidNotificationChannel(
+      _eventAssignmentAlarmChannelId,
+      'Visit Assignment Alarm',
+      description:
+          'Alarm sound when Android cannot start the Event alarm player',
+      importance: Importance.high,
+      sound: RawResourceAndroidNotificationSound('work_assigned'),
+      audioAttributesUsage: AudioAttributesUsage.alarm,
+      playSound: true,
+      enableVibration: true,
+    ),
+  );
+  await android?.createNotificationChannel(
+    const AndroidNotificationChannel(
       _leadCallChannelId,
       'Lead and Opportunity Calls',
       description: 'Assigned customers awaiting a call',
@@ -151,6 +182,10 @@ class FcmNotificationService {
     await _initializeLocalNotifications();
 
     FirebaseMessaging.onMessage.listen((message) async {
+      if (EventAssignmentNotification.fromData(message.data) != null) {
+        await showEventAssignmentNotification(message, playAlarm: true);
+        return;
+      }
       await NotificationInbox.capture(message);
       if (LeadCallNotification.fromData(message.data) != null) {
         await showLeadCallNotification(message);
@@ -188,6 +223,83 @@ class FcmNotificationService {
     _initialized = true;
     debugPrint('FCM pending-work notification listener initialized.');
   }
+}
+
+/// Android uses native alarm-stream playback in both foreground and background.
+/// The plugin is registered in Firebase's engine as well as the Activity engine.
+Future<bool> showEventAssignmentNotification(
+  RemoteMessage message, {
+  bool playAlarm = false,
+}) async {
+  if (EventAssignmentNotification.fromData(message.data) == null) return false;
+  await _initializeLocalNotifications();
+  final nativeAlarm =
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  // The sender derives this flag from the assignee's ERP roles. Missing or
+  // unrecognized flags keep the push visible without starting alarm audio.
+  final alarmEnabled = message.data['alarm_enabled'] == '1';
+  Future<void> Function()? playSound;
+  if (alarmEnabled) {
+    if (nativeAlarm) {
+      playSound = () async {
+        if (!await EventAssignmentAlarm.play()) {
+          await _showEventAssignmentAlert(message, sound: true);
+        }
+      };
+    } else if (playAlarm) {
+      playSound = () => PendingWorkAlarmPlayer.play();
+    }
+  }
+  return EventAssignmentAlerts.deliver(
+    data: message.data,
+    notify: () async {
+      if (nativeAlarm) {
+        await _showEventAssignmentAlert(message, sound: false);
+      } else {
+        await showPendingWorkNotification(
+          message,
+          playChannelSound: alarmEnabled && !playAlarm,
+        );
+      }
+      await NotificationInbox.capture(message);
+    },
+    playSound: playSound,
+  );
+}
+
+Future<void> _showEventAssignmentAlert(
+  RemoteMessage message, {
+  required bool sound,
+}) async {
+  final assignment = EventAssignmentNotification.fromData(message.data)!;
+  final id =
+      'event:${assignment.eventId}:${assignment.assignmentId}'.hashCode &
+      0x7fffffff;
+  await _localNotifications.show(
+    id,
+    message.data['title']?.toString() ?? 'New event assigned',
+    message.data['body']?.toString() ?? 'A new visit has been assigned to you.',
+    NotificationDetails(
+      android: AndroidNotificationDetails(
+        sound
+            ? _eventAssignmentAlarmChannelId
+            : _eventAssignmentVisualChannelId,
+        sound ? 'Visit Assignment Alarm' : 'Visit Assignments',
+        importance: Importance.high,
+        priority: Priority.high,
+        category: AndroidNotificationCategory.alarm,
+        visibility: NotificationVisibility.private,
+        playSound: sound,
+        sound:
+            sound
+                ? const RawResourceAndroidNotificationSound('work_assigned')
+                : null,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
+        enableVibration: true,
+        icon: 'ic_notification',
+      ),
+    ),
+  );
 }
 
 Future<void> showPendingWorkNotification(

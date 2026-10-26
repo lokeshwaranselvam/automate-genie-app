@@ -9,6 +9,8 @@
 #      form fields: action=save, event_id, observation, outcome
 # OTP is no longer collected or validated. Existing OTP field data is retained.
 
+# Business settings are defined once in mobile_business_policy.
+
 action = (frappe.form_dict.get("action") or "get").strip().lower()
 event_id = (frappe.form_dict.get("event_id") or "").strip()
 current_user = frappe.session.user
@@ -40,9 +42,22 @@ for participant_field in ["event_participants", "participants"]:
 if not is_assigned:
     frappe.throw("This Event is not assigned to your user.")
 
+visit_policy = frappe.call("mobile_business_policy", feature="visit", action="get", event_id="")["policy"]
+report_policy = frappe.call("mobile_business_policy", feature="visit_report", action="get", event_id="")["policy"]
+requires_saved_location = visit_policy["rules"]["requires_saved_location"]
+visit_geofencing_enabled = visit_policy["rules"]["visit_geofencing_enabled"]
+requires_checkout_photo = visit_policy["uploads"]["min_count"] > 0
+visit_checkin_radius_meters = visit_policy["rules"]["visit_checkin_radius_meters"]
+visit_monitoring_enabled = visit_policy["rules"]["visit_monitoring_enabled"]
+visit_monitoring_radius_meters = visit_policy["rules"]["visit_monitoring_radius_meters"]
+checkout_location_categories = visit_policy["rules"]["checkout_location_categories"]
+checkout_location_visit_types = visit_policy["rules"]["checkout_location_visit_types"]
+allowed_outcomes = report_policy["fields"]["outcome"]["options"]
+allow_report_edit_after_submit = report_policy["rules"]["allow_edit_after_submit"]
+
 description = event.get("description") or ""
 prefix = "observation : "
-separator = "\nOutcome: "
+separator = "\nOutcome:"
 observation = ""
 outcome = ""
 
@@ -62,14 +77,26 @@ for old, new in [
     report_text = report_text.replace(old, new)
 
 report_text = report_text.strip()
+has_report_format = False
 if report_text.startswith(prefix) and separator in report_text:
+    has_report_format = True
     report_body = report_text[len(prefix):]
     split_at = report_body.rfind(separator)
     observation = report_body[:split_at].strip()
     outcome = report_body[split_at + len(separator):].strip()
 
-allowed_outcomes = ["Interested", "Not Interested", "Follow-up Required"]
-is_submitted = bool(observation and outcome in allowed_outcomes)
+# Keep historical reports submitted even if their outcome is later retired.
+is_submitted = has_report_format
+report_block_reason = ""
+if is_submitted and not allow_report_edit_after_submit:
+    report_block_reason = "This visit report has already been submitted and cannot be edited."
+elif not report_policy["rules"]["submit_enabled"]:
+    report_block_reason = report_policy["rules"]["disabled_reason"]
+can_edit_report = not bool(report_block_reason)
+report_policy["actions"] = {
+    "edit": {"allowed": can_edit_report, "reason": report_block_reason},
+    "submit": {"allowed": can_edit_report, "reason": report_block_reason},
+}
 
 if action == "get":
     # Assignment was verified above. Return only files attached to this Event.
@@ -88,28 +115,41 @@ if action == "get":
     frappe.response["message"] = {
         "status": "success",
         "action": "get",
+        "requires_saved_location": requires_saved_location,
+        "visit_geofencing_enabled": visit_geofencing_enabled,
+        "requires_checkout_photo": requires_checkout_photo,
+        "visit_checkin_radius_meters": visit_checkin_radius_meters,
+        "visit_monitoring_enabled": visit_monitoring_enabled,
+        "visit_monitoring_radius_meters": visit_monitoring_radius_meters,
+        "checkout_location_categories": checkout_location_categories,
+        "checkout_location_visit_types": checkout_location_visit_types,
         "event_id": event_id,
         "observation": observation,
         "outcome": outcome,
         "custom_otp": event.get("custom_otp") or "",
         "is_submitted": is_submitted,
+        "can_edit_report": can_edit_report,
         "description": description,
         "outcomes": allowed_outcomes,
+        "business_policy": report_policy,
+        "visit_policy": visit_policy,
         "event_category": event.get("event_category") or event.get("custom_event_category") or "",
         "attachments": attachments,
     }
 
 elif action == "save":
-    if is_submitted:
-        frappe.throw("This visit report has already been submitted and cannot be edited.")
+    if not can_edit_report:
+        frappe.throw(report_block_reason)
 
     observation = (frappe.form_dict.get("observation") or "").strip()
     outcome = (frappe.form_dict.get("outcome") or "").strip()
 
-    if not observation:
+    if report_policy["fields"]["observation"]["required"] and not observation:
         frappe.throw("Observation is required.")
-    if outcome not in allowed_outcomes:
+    if (outcome or report_policy["fields"]["outcome"]["required"]) and outcome not in allowed_outcomes:
         frappe.throw("Choose a valid visit outcome.")
+    frappe.call("mobile_business_policy", feature="visit_report", action="validate", original_values={},
+        values={"observation": observation, "outcome": outcome})
 
     report_description = "observation : " + observation + "\nOutcome: " + outcome
     event.description = report_description
@@ -118,11 +158,21 @@ elif action == "save":
     frappe.response["message"] = {
         "status": "success",
         "action": "save",
+        "requires_saved_location": requires_saved_location,
+        "visit_geofencing_enabled": visit_geofencing_enabled,
+        "requires_checkout_photo": requires_checkout_photo,
+        "visit_checkin_radius_meters": visit_checkin_radius_meters,
+        "visit_monitoring_enabled": visit_monitoring_enabled,
+        "visit_monitoring_radius_meters": visit_monitoring_radius_meters,
+        "checkout_location_categories": checkout_location_categories,
+        "checkout_location_visit_types": checkout_location_visit_types,
         "event_id": event.name,
         "observation": observation,
         "outcome": outcome,
         "custom_otp": event.get("custom_otp") or "",
         "is_submitted": True,
+        "can_edit_report": allow_report_edit_after_submit,
+        "outcomes": allowed_outcomes,
         "description": report_description,
     }
 

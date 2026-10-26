@@ -123,7 +123,7 @@ class PerformanceApi {
     }
     // Share Home's server-verified Sales User OR Sales Manager capability.
     // Performance aggregation still enforces its own server permissions.
-    return message['can_create_lead'] == true || message['can_create'] == true;
+    return message['can_create_lead'] == true;
   }
 
   Future<PerformanceData> load(DateTime month) async {

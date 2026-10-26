@@ -1,59 +1,21 @@
 {
   "project_info": {
-    "project_number": "25309148229",
-    "project_id": "pending-work-app-dc16c",
-    "storage_bucket": "pending-work-app-dc16c.firebasestorage.app"
+    "project_number": "592196322843",
+    "project_id": "automategenie-mobile",
+    "storage_bucket": "automategenie-mobile.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:25309148229:android:551efc8111f5e505f01f2c",
+        "mobilesdk_app_id": "1:592196322843:android:99d1e41fb4fc3680a9dabe",
         "android_client_info": {
-          "package_name": "Home_.Genie1"
+          "package_name": "ai.automategenie.app"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyAhEiYXd9HnVWnxQeUIS1VjT8pGEVLezVY"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:25309148229:android:d1130888801bb3f9f01f2c",
-        "android_client_info": {
-          "package_name": "com.example.my_flutter_app"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyAhEiYXd9HnVWnxQeUIS1VjT8pGEVLezVY"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:25309148229:android:0605951ff79b5dfff01f2c",
-        "android_client_info": {
-          "package_name": "com.thirvusoft.homegeniecom"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyAhEiYXd9HnVWnxQeUIS1VjT8pGEVLezVY"
+          "current_key": "AIzaSyCihAabJMcAYpr57uX_yVwk4Cewl9r-WMg"
         }
       ],
       "services": {

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../live_tracking_access.dart';
 
 /// Background ("Allow all the time") location is optional: live tracking runs
 /// as a foreground service with "While using the app". Android shows the
@@ -13,6 +14,7 @@ class LocationPermissionHelper {
 
   static Future<void> requestBackgroundOnce() async {
     try {
+      if (!await LiveTrackingAccess.canTrack()) return;
       if (await Permission.locationAlways.isGranted) return;
       if (!await Permission.location.isGranted) return;
 

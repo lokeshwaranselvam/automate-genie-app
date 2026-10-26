@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import 'session_auth.dart';
 import '../lead_phone_number.dart';
+import '../api_business_policy.dart';
 
 class LeadFormOptions {
   final String leadOwner;
@@ -12,6 +13,7 @@ class LeadFormOptions {
   final List<String> sourceOptions;
   final List<String> productCategoryOptions;
   final String? csrfToken;
+  final ApiBusinessPolicy businessPolicy;
 
   const LeadFormOptions({
     required this.leadOwner,
@@ -19,6 +21,7 @@ class LeadFormOptions {
     required this.sourceOptions,
     required this.productCategoryOptions,
     this.csrfToken,
+    this.businessPolicy = ApiBusinessPolicy.empty,
   });
 }
 
@@ -217,11 +220,13 @@ class LeadApi {
     _formSession = sid;
     _formEndpoint = endpoint;
     _csrfToken = message['csrf_token']?.toString().trim();
+    final policy = ApiBusinessPolicy.fromApi(message['business_policy']);
     return LeadFormOptions(
+      businessPolicy: policy,
       leadOwner: message['lead_owner']?.toString() ?? '',
       leadOwnerName: message['lead_owner_name']?.toString() ?? '',
-      sourceOptions: sourceOptions,
-      productCategoryOptions: productCategoryOptions,
+      sourceOptions: policy.options('source', sourceOptions),
+      productCategoryOptions: policy.options('custom_product_enquired', productCategoryOptions),
       csrfToken: _csrfToken,
     );
   }
@@ -283,8 +288,13 @@ class LeadApi {
     required String address,
     required String csrfToken,
     String whatsappNo = '',
+    ApiBusinessPolicy businessPolicy = ApiBusinessPolicy.empty,
   }) async {
-    final whatsappError = LeadPhoneNumber.validateWhatsApp(whatsappNo);
+    final whatsappError =
+        whatsappNo.trim().isEmpty &&
+                !businessPolicy.required('whatsapp_no', true)
+            ? null
+            : LeadPhoneNumber.validateWhatsApp(whatsappNo);
     if (whatsappError != null) throw FormatException(whatsappError);
     final sid = await _sessionId();
     final endpoint = _endpoint();

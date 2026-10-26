@@ -71,11 +71,36 @@ void main() {
                       {
                         'fieldname': 'status',
                         'fieldtype': 'Select',
-                        'options': 'Open\nFollow-up',
+                        'options':
+                            'Open\nFollow-up\nDemo\nVC\nDuplicate Lead\nJunk\nNot Interested\nHot Followup\nRNR\nB2B Database',
                       },
                     ],
                   },
                 ],
+              }),
+              200,
+            );
+          }
+          if (request.url.path.endsWith('mobile_opportunity_policy')) {
+            return http.Response(
+              jsonEncode({
+                'message': {
+                  'current_user': 'creator@example.test',
+                  'editable_statuses': [
+                    'Open',
+                    'Follow-up',
+                    'Demo',
+                    'VC',
+                    'Duplicate Lead',
+                    'Junk',
+                    'Not Interested',
+                    'Hot Followup',
+                    'RNR',
+                    'B2B Database',
+                  ],
+                  'status_transitions': {},
+                  'followup_policy': {'allow_past': false, 'earliest_date': ''},
+                },
               }),
               200,
             );

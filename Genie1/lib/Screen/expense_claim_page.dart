@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import '../utils/api_business_policy.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
@@ -37,6 +38,17 @@ class ExpenseClaimPage extends StatefulWidget {
 }
 
 class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
+  ApiBusinessPolicy get _policy =>
+      _options?.businessPolicy ?? ApiBusinessPolicy.empty;
+  String _fieldName(String label) =>
+      label.startsWith('Amount')
+          ? 'amount'
+          : const {
+                'Expense Type': 'expense_type',
+                'Description': 'description',
+                'Date': 'expense_date',
+              }[label] ??
+              label;
   final _formKey = GlobalKey<FormState>();
   final _expenses = <_ExpenseRowDraft>[_ExpenseRowDraft()];
   final _bills = <XFile>[];
@@ -122,6 +134,26 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
 
   void _syncExpenseTypes(ExpenseClaimFormOptions options) {
     for (final row in _expenses) {
+      options.businessPolicy.applyDefault(
+        'description',
+        row.descriptionController,
+      );
+      options.businessPolicy.applyDefault('amount', row.amountController);
+      final defaultType =
+          options.businessPolicy.field('expense_type')['default']?.toString();
+      if ((row.expenseType == null ||
+              options.businessPolicy.readOnly('expense_type')) &&
+          options.expenseTypes.any((option) => option.value == defaultType))
+        row.expenseType = defaultType;
+      final defaultDate = DateTime.tryParse(
+        options.businessPolicy.field('expense_date')['default']?.toString() ??
+            '',
+      );
+      if (defaultDate != null &&
+          options.businessPolicy.readOnly('expense_date'))
+        row.expenseDate = defaultDate;
+    }
+    for (final row in _expenses) {
       if (!options.expenseTypes.any((item) => item.value == row.expenseType)) {
         row.expenseType = options.expenseTypes.first.value;
       }
@@ -136,11 +168,12 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
       );
       return;
     }
-    setState(
-      () => _expenses.add(
+    setState(() {
+      _expenses.add(
         _ExpenseRowDraft(expenseType: _options!.expenseTypes.first.value),
-      ),
-    );
+      );
+      _syncExpenseTypes(_options!);
+    });
   }
 
   void _removeExpense(_ExpenseRowDraft row) {
@@ -294,7 +327,7 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
   Future<void> _submit() async {
     if (_submitting || _loadingApprovers || _options == null) return;
     if (!_formKey.currentState!.validate()) return;
-    if (_bills.isEmpty) {
+    if (_bills.length < (_policy.data.isEmpty ? 1 : _policy.minimumUploads)) {
       _showMessage('Attach a bill photo before submitting.');
       return;
     }
@@ -325,6 +358,7 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
         csrfToken: _options!.csrfToken,
         billPaths: _bills.map((bill) => bill.path).toList(),
         supportsMultipleExpenses: _options!.supportsMultipleExpenses,
+        businessPolicy: _policy,
       );
       if (!mounted) return;
       _clearForm();
@@ -352,6 +386,7 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
       _expenses
         ..clear()
         ..add(_ExpenseRowDraft(expenseType: previousRows.first.expenseType));
+      _syncExpenseTypes(_options!);
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       for (final row in previousRows) {
@@ -405,20 +440,27 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
         ),
         children: [
           TextSpan(text: text),
-          const TextSpan(
-            text: ' *',
-            style: TextStyle(color: Color(0xFFC74A55)),
-          ),
+          if (text == 'Attach Bills'
+              ? (_policy.data.isEmpty || _policy.minimumUploads > 0)
+              : _policy.required(_fieldName(text), true))
+            const TextSpan(
+              text: ' *',
+              style: TextStyle(color: Color(0xFFC74A55)),
+            ),
         ],
       ),
     ),
   );
 
-  Widget _formField(String label, Widget child) => Padding(
-    padding: const EdgeInsets.only(bottom: 20),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [_fieldLabel(label), child],
+  Widget _formField(String label, Widget child) => BusinessPolicyField(
+    policy: _policy,
+    name: _fieldName(label),
+    child: Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [_fieldLabel(label), child],
+      ),
     ),
   );
 
@@ -594,10 +636,14 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
               ],
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.only(bottom: 12),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
             child: Text(
-              'Attach the bill photos for this claim. At least one photo is required.',
+              _policy.data.isEmpty || _policy.minimumUploads == 1
+                  ? 'Attach the bill photos for this claim. At least one photo is required.'
+                  : _policy.minimumUploads == 0
+                  ? 'Bill attachments are optional.'
+                  : 'Attach at least ${_policy.minimumUploads} bill files.',
             ),
           ),
           _formField('Attach Bills', _buildBillPicker()),
@@ -692,10 +738,12 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
                     ? null
                     : (value) => setState(() => row.expenseType = value),
             validator:
-                (value) =>
-                    value == null || value.isEmpty
-                        ? 'Choose an expense type.'
-                        : null,
+                (value) => _policy.validate(
+                  'expense_type',
+                  value,
+                  legacyRequired: true,
+                  requiredMessage: 'Choose an expense type.',
+                ),
           ),
         ),
         _formField(
@@ -703,11 +751,15 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
           TextFormField(
             key: ObjectKey(row.amountController),
             controller: row.amountController,
+            readOnly: _policy.readOnly('amount'),
+            maxLength: _policy.maxLength('amount'),
             onChanged: (_) => setState(() {}),
             enabled: !_submitting,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             decoration: _inputDecoration(hint: 'Enter amount'),
             validator: (value) {
+              if (_policy.hasField('amount'))
+                return _policy.validate('amount', value);
               final parsed = double.tryParse(
                 (value ?? '').replaceAll(',', '').trim(),
               );
@@ -739,15 +791,19 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
           TextFormField(
             key: ObjectKey(row.descriptionController),
             controller: row.descriptionController,
+            readOnly: _policy.readOnly('description'),
+            maxLength: _policy.maxLength('description'),
             enabled: !_submitting,
             minLines: 1,
             maxLines: 3,
             decoration: _inputDecoration(hint: 'Enter expense details'),
             validator:
-                (value) =>
-                    (value ?? '').trim().isEmpty
-                        ? 'Description is required.'
-                        : null,
+                (value) => _policy.validate(
+                  'description',
+                  value,
+                  legacyRequired: true,
+                  requiredMessage: 'Description is required.',
+                ),
           ),
         ),
       ],

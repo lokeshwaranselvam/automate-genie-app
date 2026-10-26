@@ -36,8 +36,11 @@ if expected_action:
     user_email = str(frappe.db.get_value("User", current_user, "email") or "").strip().lower()
     email_local_part = user_email.split("@", 1)[0] if "@" in user_email else ""
     face_required = (
-        (".trainee" in email_local_part or ".itdigital" in email_local_part)
-        and employee_record.department == "IT And Digital - HBPPL"
+        user_email == "murugan.finance@homegeniegroup.com"
+        or (
+            (".trainee" in email_local_part or ".itdigital" in email_local_part)
+            and employee_record.department == "IT And Digital - HBPPL"
+        )
     )
     if face_required:
         record_id = frappe.form_dict.get("face_verification")

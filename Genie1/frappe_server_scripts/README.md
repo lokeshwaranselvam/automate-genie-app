@@ -1,3 +1,13 @@
+## Shared mobile business policy
+
+The current deployment and configuration guide is
+[backend_patches/MOBILE_BUSINESS_POLICY.md](../backend_patches/MOBILE_BUSINESS_POLICY.md).
+Install `mobile_business_policy.py` as API Method `mobile_business_policy`, update
+the listed adapters, and install `mobile_file_policy_guard.py` as **File / Before
+Save**. These scripts centralize the supported mobile form, visit action,
+attachment, Opportunity note/dependency and leave date policies. The custom-app
+visit methods require the accompanying focused update. Deploy before the app.
+
 # Mobile Lead creation API
 
 Create a Frappe **Server Script** with these settings:
@@ -105,24 +115,70 @@ Create a Frappe **Server Script** with these settings:
 
 Paste `mobile_site_visit_api.py` into the Server Script. The app calls
 `GET /api/method/mobile_site_visit?action=can_create` for a session-bound
-Sales Manager role check. Only Sales Managers see New Visit. The creation
+Sales Manager, Accounts User, SCM Manager, or Delivery Manager role check.
+These roles can see New Visit. The creation
 endpoint also enforces this role for form options, mobile search, location
 saving, and event creation. Visit lists, check-in/out, and visit reports keep
 their existing permissions. Deploy this updated Server Script before the app.
 
+Event category choices are restricted using the signed-in creator's
+`Employee.user_id` and `Employee.company`, including users who have both
+Sales Manager and Sales User. Categories are combined from all applicable
+creation roles, with each configured category returned once:
+
+- Accounts User adds Bank, Collection, and Other/Others, preserving whichever
+  labels are configured in ERP.
+- SCM Manager or Delivery Manager adds Installation, Complaint Visit, Site Visit,
+  and Maintenance.
+
+Sales Manager contributes the following company-based categories:
+
+- Bioman Sewage Solutions Private Limited / Homegenie Building Products
+  Private Limited: Site Visit, Installation, Collection, Measurement, Complaint Visit.
+- Doortisan Creations Private Limited / Timbe Windows Private Limited:
+  Measurement, Collection, Site Visit.
+
+Only categories configured in ERP are returned, preserving their stored labels.
+The same policy rejects disallowed direct `create_event` and `get_references`
+requests. Sales Managers in other companies or with missing Employee/company
+mappings retain access to all configured categories, including when other roles
+coexist. Accounts/SCM/Delivery users without Sales Manager retain their own role
+categories only. The form already renders the API's `event_categories`
+response. The Home Opportunities menu uses the separate `can_view_opportunities`
+capability to preserve Sales Manager access when Accounts User can create visits.
+Deploy the updated
+`mobile_site_visit_api.py` to the existing `mobile_site_visit` API Server Script.
+
 The same `can_create` response includes `can_create_lead` for Sales User or
-Sales Manager, and `can_view_pending` for Production Manager, Production User,
-Sales User, or Sales Manager. Home uses these session-bound capabilities to
-show its sales and Pending cards. Create Lead in the drawer and All Visits
-under More use `can_create_lead`. An empty pending dashboard shows `00`;
-an unavailable pending count shows `—` and can be retried by refreshing Home.
+Sales Manager, `can_view_visits` for Sales User, Sales Manager, Accounts User,
+SCM Manager, Delivery Manager, or Designer,
+and `can_view_pending` for Production Manager, Production User, Sales User,
+or Sales Manager. Home cards, quick actions, bottom navigation, More, and the
+drawer use these session-bound capabilities. Sales Manager, Accounts User,
+SCM Manager, or Delivery Manager can create
+visits; other visit viewers retain their existing visit-data permissions.
+Pending Work is available from its Home card and drawer entry only; Tasks
+remains available as before. More and bottom navigation do not include Pending.
+Assign or remove these roles on the ERP User and refresh Home to reload access.
+The app hides gated entries until the server verifies the signed-in user.
+An empty pending dashboard shows `00`;
+an unavailable pending count shows `â€”` and can be retried by refreshing Home.
 Update the existing `mobile_site_visit` Server Script with
-`frappe_server_scripts/mobile_site_visit_api.py`, then rebuild/reinstall the app.
+`frappe_server_scripts/mobile_site_visit_api.py`. Also update the existing
+`create_lead_from_mobile` API Server Script with `create_lead_from_mobile.py`:
+its POST now requires Sales User or Sales Manager, while existing owner-scoped
+GET list/detail behavior is preserved. Keep Allow Guest disabled for both.
+Then rebuild/reinstall the app. Local files do not deploy ERP scripts.
 
 The app calls
-`GET /api/method/mobile_site_visit?action=get` to load Opportunities owned by
-`frappe.session.user` and enabled ERP users. Opportunity is searchable in the
-form, and Location Type is restricted to `Site`, `Home`, and `Others`. If the
+`GET /api/method/mobile_site_visit?action=get` to load the latest 500 Opportunities
+and enabled ERP users. The Opportunity field calls
+`action=search_opportunities&query=...` after a short typing delay to search by
+Opportunity ID or name beyond those initial results. Suggestions show the
+Opportunity ID and its own `contact_mobile` (or `phone`), rather than the linked
+Lead/Customer ID. Phone lookup retains its existing Opportunity-phone and linked
+Lead matching; returned selections always carry the Opportunity's `name`.
+Location Type is restricted to `Site`, `Home`, and `Others`. If the
 child field is a Select, configure those three options in Frappe; if it is a
 Link, create records with those names. The API finds the
 Opportunity Table field by checking for a child DocType with the exact fields

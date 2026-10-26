@@ -11,6 +11,13 @@ if not current_user or current_user == "Guest":
 
 lead_view = (frappe.form_dict.get("view") or "").strip()
 request_method = (frappe.request.method or "").upper()
+if request_method == "POST" and not frappe.db.exists(
+    "Has Role",
+    {"parent": current_user, "parenttype": "User", "parentfield": "roles",
+     "role": ["in", ["Sales User", "Sales Manager"]]},
+):
+    frappe.throw("Only users with the Sales User or Sales Manager role can create Leads.")
+
 lead_meta = frappe.get_meta("Lead")
 lead_fields = ["name"]
 lead_fields.extend(["owner", "creation", "modified", "modified_by", "docstatus"])
@@ -48,6 +55,7 @@ elif request_method == "GET" and lead_view == "detail":
     frappe.response["message"] = {"lead": lead}
 
 elif request_method == "GET":
+    business_policy = frappe.call("mobile_business_policy", feature="lead", action="get", event_id="")["policy"]
     # The mobile form reads these two arrays to populate its dropdowns.
     lead_meta = frappe.get_meta("Lead")
     lead_options = {}
@@ -115,16 +123,18 @@ elif request_method == "GET":
         "source_options": source_options,
         "product_category_options": product_category_options,
         "csrf_token": csrf_token,
+        "business_policy": business_policy,
     }
 
 elif request_method == "POST":
+    business_policy = frappe.call("mobile_business_policy", feature="lead", action="get", event_id="")["policy"]
     first_name = (frappe.form_dict.get("first_name") or "").strip()
     mobile_no = (frappe.form_dict.get("mobile_no") or "").strip()
     whatsapp_no = frappe.form_dict.get("whatsapp_no") or ""
     if not isinstance(whatsapp_no, str):
         frappe.throw("Enter a valid WhatsApp number (7-15 digits).")
     whatsapp_no = whatsapp_no.strip()
-    if not whatsapp_no:
+    if not whatsapp_no and business_policy["fields"]["whatsapp_no"]["required"]:
         frappe.throw("WhatsApp Number is required.")
     if whatsapp_no:
         if len(whatsapp_no) > 64:
@@ -149,18 +159,23 @@ elif request_method == "POST":
     ).strip()
     address = (frappe.form_dict.get("custom_address") or "").strip()
 
-    if not first_name:
+    if not first_name and business_policy["fields"]["first_name"]["required"]:
         frappe.throw("Customer Name is required.")
-    if not mobile_no:
+    if not mobile_no and business_policy["fields"]["mobile_no"]["required"]:
         frappe.throw("Phone Number is required.")
-    if not requirement:
+    if not requirement and business_policy["fields"]["custom_requirement"]["required"]:
         frappe.throw("Requirement is required.")
-    if not source:
+    if not source and business_policy["fields"]["source"]["required"]:
         frappe.throw("Lead Source is required.")
-    if not product_category:
+    if not product_category and business_policy["fields"]["custom_product_enquired"]["required"]:
         frappe.throw("Product Enquired is required.")
-    if not address:
+    if not address and business_policy["fields"]["custom_address"]["required"]:
         frappe.throw("Location is required.")
+    frappe.call("mobile_business_policy", feature="lead", action="validate", original_values={}, values={
+        "first_name": first_name, "mobile_no": mobile_no, "whatsapp_no": whatsapp_no,
+        "custom_requirement": requirement, "source": source,
+        "custom_product_enquired": product_category, "custom_address": address,
+    })
 
     lead_meta = frappe.get_meta("Lead")
     lead_options = {}
@@ -217,9 +232,9 @@ elif request_method == "POST":
         lead_options[fieldname] = options
     source_options = lead_options["source"]
     product_category_options = lead_options["custom_product_enquired"]
-    if source not in source_options:
+    if source and source not in source_options:
         frappe.throw("Choose a Lead Source from the configured options.")
-    if product_category not in product_category_options:
+    if product_category and product_category not in product_category_options:
         frappe.throw("Choose a Product Enquired from the configured options.")
 
     lead = frappe.new_doc("Lead")

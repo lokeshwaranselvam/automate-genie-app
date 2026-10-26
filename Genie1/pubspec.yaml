@@ -74,6 +74,8 @@ dependencies:
   path: ^1.9.0
   firebase_core: ^4.15.0
   firebase_messaging: ^16.7.0
+  event_assignment_alarm:
+    path: packages/event_assignment_alarm
 
 dev_dependencies:
   flutter_test:

@@ -1,4 +1,4 @@
-package com.thirvusoft.homegeniecom
+package ai.automategenie.app
 
 import android.content.Intent
 import android.os.Build
@@ -46,6 +46,13 @@ class MainActivity : FlutterActivity() {
                             val userId = call.argument<String>("userId")
                             val authToken = call.argument<String>("authToken")
                             val siteUrl = call.argument<String>("siteUrl")
+                            val trackingAllowed = call.argument<Boolean>("trackingAllowed") == true
+
+                            if (!trackingAllowed) {
+                                stopTracking(this)
+                                result.error("TRACKING_NOT_ALLOWED", "Live tracking requires an eligible checked-in user", null)
+                                return@setMethodCallHandler
+                            }
 
                             if (userId.isNullOrEmpty() || authToken.isNullOrEmpty() || siteUrl.isNullOrEmpty()) {
                                 result.error("INVALID_ARGS", "Missing required parameters: userId, authToken, or siteUrl", null)
@@ -61,7 +68,7 @@ class MainActivity : FlutterActivity() {
                                 return@setMethodCallHandler
                             }
 
-                            startTracking(this, userId, authToken, siteUrl)
+                            startTracking(this, userId, authToken, siteUrl, trackingAllowed)
                             result.success("Employee check-in started live tracking")
                         } catch (e: Exception) {
                             Log.e(TAG, "Error starting location tracking: ${e.message}", e)
@@ -80,7 +87,18 @@ class MainActivity : FlutterActivity() {
                     }
 
                     "isLocationTracking" -> {
-                        result.success(LocationService.isRunning)
+                        val expectedUser = call.argument<String>("userId")
+                        val saved = LocationTrackingManager.prefs(this)
+                        if (expectedUser != null &&
+                            (expectedUser != saved.getString(LocationTrackingManager.KEY_USER_ID, null) ||
+                             call.argument<String>("authToken") != saved.getString(LocationTrackingManager.KEY_AUTH_TOKEN, null) ||
+                             call.argument<String>("siteUrl") != saved.getString(LocationTrackingManager.KEY_SITE_URL, null))
+                        ) {
+                            stopTracking(this)
+                            result.success(false)
+                        } else {
+                            result.success(LocationService.isRunning && LocationTrackingManager.isTrackingActive(this))
+                        }
                     }
 
                     "hasLocationPermissions" -> {
@@ -146,9 +164,10 @@ class MainActivity : FlutterActivity() {
         context: android.content.Context,
         userId: String,
         authToken: String,
-        siteUrl: String
+        siteUrl: String,
+        trackingAllowed: Boolean
     ) {
-        LocationTrackingManager.startTracking(context, userId, authToken, siteUrl)
+        LocationTrackingManager.startTracking(context, userId, authToken, siteUrl, trackingAllowed)
     }
 
     private fun stopTracking(context: android.content.Context) {

@@ -1,4 +1,4 @@
-package com.thirvusoft.homegeniecom
+package ai.automategenie.app
 
 import android.content.Context
 import android.content.Intent

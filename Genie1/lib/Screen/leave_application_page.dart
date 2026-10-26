@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../utils/api/leave_application_api.dart';
+import '../utils/api_business_policy.dart';
 import '../utils/widget/warning.dart';
 
 const _leaveBlue = BrandColors.ink;
@@ -28,6 +29,8 @@ class LeaveApplicationPage extends StatefulWidget {
 }
 
 class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
+  ApiBusinessPolicy get _policy =>
+      _options?.businessPolicy ?? ApiBusinessPolicy.empty;
   final _formKey = GlobalKey<FormState>();
   final _reasonController = TextEditingController();
   final _api = LeaveApplicationApi();
@@ -69,6 +72,26 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
       if (!mounted) return;
       setState(() {
         _options = options;
+        _policy.applyDefault('description', _reasonController);
+        final fromDefault = DateTime.tryParse(
+          _policy.field('from_date')['default']?.toString() ?? '',
+        );
+        final toDefault = DateTime.tryParse(
+          _policy.field('to_date')['default']?.toString() ?? '',
+        );
+        if (fromDefault != null && _policy.readOnly('from_date'))
+          _fromDate = fromDefault;
+        if (toDefault != null && _policy.readOnly('to_date'))
+          _toDate = toDefault;
+        final typeDefault = _policy.field('leave_type')['default']?.toString();
+        if ((_leaveType == null || _policy.readOnly('leave_type')) &&
+            options.leaveTypes.any((option) => option.value == typeDefault))
+          _leaveType = typeDefault;
+        if (_policy.rules['half_day_allowed'] == false) _halfDay = false;
+        final halfDayDefault = _policy.field('half_day')['default'];
+        if (_policy.readOnly('half_day') && halfDayDefault is bool)
+          _halfDay = halfDayDefault;
+        _clampPolicyDates();
         _loading = false;
       });
     } catch (error) {
@@ -94,14 +117,40 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
   String _daysLabel(double days) =>
       '${NumberFormat('0.#').format(days)} ${days == 1 ? 'day' : 'days'}';
 
+  void _clampPolicyDates() {
+    final earliest = DateTime.tryParse(
+      _policy.rules['earliest_date']?.toString() ?? '',
+    );
+    final latest = DateTime.tryParse(
+      _policy.rules['latest_date']?.toString() ?? '',
+    );
+    if (earliest != null && _fromDate.isBefore(earliest)) _fromDate = earliest;
+    if (latest != null && _fromDate.isAfter(latest)) _fromDate = latest;
+    if (_toDate.isBefore(_fromDate)) _toDate = _fromDate;
+    if (latest != null && _toDate.isAfter(latest)) _toDate = latest;
+  }
+
   Future<void> _pickDate({required bool isEnd}) async {
     if (_submitting) return;
     final today = DateTime.now();
+    final earliest =
+        DateTime.tryParse(_policy.rules['earliest_date']?.toString() ?? '') ??
+        DateTime(today.year - 5);
+    final latest =
+        DateTime.tryParse(_policy.rules['latest_date']?.toString() ?? '') ??
+        DateTime(today.year + 5, 12, 31);
+    final minimum = isEnd && _fromDate.isAfter(earliest) ? _fromDate : earliest;
+    final current = isEnd ? _toDate : _fromDate;
     final selected = await showDatePicker(
       context: context,
-      initialDate: isEnd ? _toDate : _fromDate,
-      firstDate: isEnd ? _fromDate : DateTime(today.year - 5),
-      lastDate: DateTime(today.year + 5, 12, 31),
+      initialDate:
+          current.isBefore(minimum)
+              ? minimum
+              : current.isAfter(latest)
+              ? latest
+              : current,
+      firstDate: minimum,
+      lastDate: latest,
       helpText: isEnd ? 'To Date' : 'From Date',
       builder:
           (context, child) => Theme(
@@ -131,7 +180,7 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
     setState(() => _submitting = true);
     try {
       final result = await _api.submitApplication(
-        leaveType: _leaveType!,
+        leaveType: _leaveType ?? '',
         fromDate: _fromDate,
         toDate: _toDate,
         reason: _reasonController.text,
@@ -152,7 +201,9 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
         _halfDay = false;
         _fromDate = DateUtils.dateOnly(DateTime.now());
         _toDate = _fromDate;
+        _clampPolicyDates();
       });
+      await _loadOptions();
     } catch (error) {
       if (!mounted) return;
       Warning.show(
@@ -193,49 +244,66 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
         ),
       );
 
-  Widget _label(String label) => Padding(
-    padding: const EdgeInsets.only(bottom: 7),
-    child: Text.rich(
-      TextSpan(
-        children: [
-          TextSpan(text: label),
-          const TextSpan(
-            text: ' *',
-            style: TextStyle(color: Color(0xFFC84B55)),
-          ),
-        ],
-      ),
-      style: const TextStyle(
-        color: _leaveInk,
-        fontSize: 13,
-        fontWeight: FontWeight.w600,
-      ),
-    ),
-  );
+  String _fieldName(String label) =>
+      const {
+        'Reason': 'description',
+        'Leave Type': 'leave_type',
+        'From Date': 'from_date',
+        'To Date': 'to_date',
+      }[label] ??
+      label;
 
-  Widget _dateField({required bool isEnd}) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      _label(isEnd ? 'To Date' : 'From Date'),
-      InkWell(
-        key: ValueKey(isEnd ? 'leave-to-date' : 'leave-from-date'),
-        onTap: _submitting ? null : () => _pickDate(isEnd: isEnd),
-        borderRadius: BorderRadius.circular(8),
-        child: InputDecorator(
-          decoration: _decoration(
-            suffixIcon: const Icon(
-              Icons.calendar_month_outlined,
-              size: 21,
-              color: Color(0xFF727C89),
+  Widget _label(String label) =>
+      !_policy.visible(_fieldName(label))
+          ? const SizedBox.shrink()
+          : Padding(
+            padding: const EdgeInsets.only(bottom: 7),
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: label),
+                  if (_policy.required(_fieldName(label), true))
+                    const TextSpan(
+                      text: ' *',
+                      style: TextStyle(color: Color(0xFFC84B55)),
+                    ),
+                ],
+              ),
+              style: const TextStyle(
+                color: _leaveInk,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          );
+
+  Widget _dateField({required bool isEnd}) => BusinessPolicyField(
+    policy: _policy,
+    name: isEnd ? 'to_date' : 'from_date',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _label(isEnd ? 'To Date' : 'From Date'),
+        InkWell(
+          key: ValueKey(isEnd ? 'leave-to-date' : 'leave-from-date'),
+          onTap: _submitting ? null : () => _pickDate(isEnd: isEnd),
+          borderRadius: BorderRadius.circular(8),
+          child: InputDecorator(
+            decoration: _decoration(
+              suffixIcon: const Icon(
+                Icons.calendar_month_outlined,
+                size: 21,
+                color: Color(0xFF727C89),
+              ),
+            ),
+            child: Text(
+              DateFormat('dd MMM yyyy').format(isEnd ? _toDate : _fromDate),
+              style: const TextStyle(color: _leaveInk, fontSize: 14),
             ),
           ),
-          child: Text(
-            DateFormat('dd MMM yyyy').format(isEnd ? _toDate : _fromDate),
-            style: const TextStyle(color: _leaveInk, fontSize: 14),
-          ),
         ),
-      ),
-    ],
+      ],
+    ),
   );
 
   Widget _form() => Form(
@@ -244,37 +312,43 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _label('Leave Type'),
-        DropdownButtonFormField<String>(
-          key: const ValueKey('leave-type'),
-          initialValue: _leaveType,
-          decoration: _decoration(hint: 'Select Leave Type'),
-          isExpanded: true,
-          icon: const Icon(
-            Icons.keyboard_arrow_down_rounded,
-            size: 22,
-            color: Color(0xFF727C89),
+        BusinessPolicyField(
+          policy: _policy,
+          name: 'leave_type',
+          child: DropdownButtonFormField<String>(
+            key: const ValueKey('leave-type'),
+            initialValue: _leaveType,
+            decoration: _decoration(hint: 'Select Leave Type'),
+            isExpanded: true,
+            icon: const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 22,
+              color: Color(0xFF727C89),
+            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: _leaveInk, fontSize: 14),
+            items:
+                _options!.leaveTypes
+                    .map(
+                      (type) => DropdownMenuItem(
+                        value: type.value,
+                        child: Text(type.label),
+                      ),
+                    )
+                    .toList(),
+            onChanged:
+                _submitting || _policy.readOnly('leave_type')
+                    ? null
+                    : (value) => setState(() => _leaveType = value),
+            validator:
+                (value) => _policy.validate(
+                  'leave_type',
+                  value,
+                  legacyRequired: true,
+                  requiredMessage: 'Choose a leave type.',
+                ),
           ),
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(color: _leaveInk, fontSize: 14),
-          items:
-              _options!.leaveTypes
-                  .map(
-                    (type) => DropdownMenuItem(
-                      value: type.value,
-                      child: Text(type.label),
-                    ),
-                  )
-                  .toList(),
-          onChanged:
-              _submitting
-                  ? null
-                  : (value) => setState(() => _leaveType = value),
-          validator:
-              (value) =>
-                  value == null || value.isEmpty
-                      ? 'Choose a leave type.'
-                      : null,
         ),
         const SizedBox(height: 20),
         _dateField(isEnd: false),
@@ -307,51 +381,66 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
         const Divider(height: 1, color: Color(0xFFEEF0F3)),
         const SizedBox(height: 18),
         _label('Reason'),
-        TextFormField(
-          key: const ValueKey('leave-reason'),
-          controller: _reasonController,
-          enabled: !_submitting,
-          minLines: 3,
-          maxLines: 5,
-          textCapitalization: TextCapitalization.sentences,
-          style: const TextStyle(color: _leaveInk, fontSize: 14),
-          decoration: _decoration(hint: 'Enter reason for leave'),
-          validator:
-              (value) =>
-                  (value ?? '').trim().isEmpty ? 'Reason is required.' : null,
+        BusinessPolicyField(
+          policy: _policy,
+          name: 'description',
+          child: TextFormField(
+            key: const ValueKey('leave-reason'),
+            controller: _reasonController,
+            maxLength: _policy.maxLength('description'),
+            readOnly: _policy.readOnly('description'),
+            enabled: !_submitting,
+            minLines: 3,
+            maxLines: 5,
+            textCapitalization: TextCapitalization.sentences,
+            style: const TextStyle(color: _leaveInk, fontSize: 14),
+            decoration: _decoration(hint: 'Enter reason for leave'),
+            validator:
+                (value) => _policy.validate(
+                  'description',
+                  value,
+                  legacyRequired: true,
+                  requiredMessage: 'Reason is required.',
+                ),
+          ),
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            SizedBox(
-              width: 24,
-              child: Checkbox(
-                key: const ValueKey('leave-half-day'),
-                value: _halfDay,
-                activeColor: _leaveBlue,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(3),
-                ),
-                onChanged:
-                    _submitting
-                        ? null
-                        : (value) => setState(() => _halfDay = value ?? false),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: GestureDetector(
-                onTap:
-                    _submitting
-                        ? null
-                        : () => setState(() => _halfDay = !_halfDay),
-                child: const Text(
-                  'Apply for half day',
-                  style: TextStyle(color: _leaveInk, fontSize: 13),
+        BusinessPolicyField(
+          policy: _policy,
+          name: 'half_day',
+          child: Row(
+            children: [
+              SizedBox(
+                width: 24,
+                child: Checkbox(
+                  key: const ValueKey('leave-half-day'),
+                  value: _halfDay,
+                  activeColor: _leaveBlue,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  onChanged:
+                      _submitting || _policy.rules['half_day_allowed'] == false
+                          ? null
+                          : (value) =>
+                              setState(() => _halfDay = value ?? false),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              Expanded(
+                child: GestureDetector(
+                  onTap:
+                      _submitting || _policy.rules['half_day_allowed'] == false
+                          ? null
+                          : () => setState(() => _halfDay = !_halfDay),
+                  child: const Text(
+                    'Apply for half day',
+                    style: TextStyle(color: _leaveInk, fontSize: 13),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 18),
         SizedBox(
@@ -392,7 +481,7 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
     appBar: brandAppBar(
       elevation: 0,
       leading: IconButton(
-        tooltip: 'Back to Attendance',
+        tooltip: 'Back to More',
         onPressed: widget.onBack,
         icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
       ),

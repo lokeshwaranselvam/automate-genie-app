@@ -213,12 +213,28 @@ class SiteVisitCreationApi {
     return (await homeQuickActionAccess()).canCreateVisit;
   }
 
-  static Future<({bool canAddLead, bool canCreateVisit, bool canViewPending})>
+  static Future<
+    ({
+      bool canAddLead,
+      bool canCreateVisit,
+      bool canViewOpportunities,
+      bool canViewVisits,
+      bool canViewPending,
+      Map<String, bool> featureVisibility,
+    })
+  >
   homeQuickActionAccess() async {
     final user = await SessionAuthApi.getSavedSessionUser();
     final sid = await SessionAuthApi.getSessionId();
     if (user == null || sid == null || sid.isEmpty) {
-      return (canAddLead: false, canCreateVisit: false, canViewPending: false);
+      return (
+        canAddLead: false,
+        canCreateVisit: false,
+        canViewOpportunities: false,
+        canViewVisits: false,
+        canViewPending: false,
+        featureVisibility: <String, bool>{},
+      );
     }
     final response = await http
         .get(
@@ -232,14 +248,35 @@ class SiteVisitCreationApi {
         .timeout(const Duration(seconds: 15));
     await _assertSession(sid);
     final permission = _decodeResponse(response, user);
-    final manager = permission['can_create'] == true;
+    if (permission['current_user']?.toString().trim().toLowerCase() !=
+        user.trim().toLowerCase()) {
+      throw const FormatException(
+        'The ERP permission response did not verify the signed-in user.',
+      );
+    }
+    final canCreateVisit = permission['can_create'] == true;
+    final canAddLead = permission['can_create_lead'] == true;
+    final visibility = permission['feature_visibility'];
+    if (visibility != null &&
+        (visibility is! Map ||
+            visibility.values.any((value) => value is! bool))) {
+      throw const FormatException(
+        'ERP returned invalid feature visibility rules.',
+      );
+    }
     return (
-      canAddLead: manager || permission['can_create_lead'] == true,
-      canCreateVisit: manager,
-      canViewPending:
-          manager ||
-          permission['can_create_lead'] == true ||
-          permission['can_view_pending'] == true,
+      canAddLead: canAddLead,
+      canCreateVisit: canCreateVisit,
+      canViewOpportunities:
+          permission.containsKey('can_view_opportunities')
+              ? permission['can_view_opportunities'] == true
+              : canCreateVisit,
+      canViewVisits: permission['can_view_visits'] != false,
+      canViewPending: permission['can_view_pending'] == true,
+      featureVisibility:
+          visibility is Map
+              ? Map<String, bool>.from(visibility)
+              : <String, bool>{},
     );
   }
 
@@ -315,6 +352,91 @@ class SiteVisitCreationApi {
         .toList();
   }
 
+  /// Search Opportunity IDs and names beyond the initial dropdown page.
+  static Future<List<Map<String, dynamic>>> searchOpportunities(
+    String query,
+  ) async {
+    final text = query.trim();
+    if (text.length < 2 || text.length > 140) {
+      throw ArgumentError(
+        'Enter between 2 and 140 characters of the Opportunity ID or name.',
+      );
+    }
+    final user =
+        await SessionAuthApi.getSavedSessionUser() ??
+        await SessionAuthApi.getActiveSessionUser();
+    final sid = await SessionAuthApi.getSessionId();
+    if (user == null || sid == null || sid.isEmpty) {
+      throw StateError('Your ERP session expired. Please sign in again.');
+    }
+    _useSession(sid);
+    final response = await http
+        .get(
+          _endpoint(query: {'action': 'search_opportunities', 'query': text}),
+          headers: {
+            'Accept': 'application/json',
+            'Cookie': 'sid=$sid',
+            'Cache-Control': 'no-cache, no-store',
+          },
+        )
+        .timeout(const Duration(seconds: 40));
+    await _assertSession(sid);
+    final result = _decodeResponse(response, user);
+    final rows = result['opportunities'];
+    if (rows is! List || rows.any((row) => row is! Map)) {
+      throw const FormatException(
+        'The site visit service returned an invalid Opportunity search response.',
+      );
+    }
+    return rows.map((row) => Map<String, dynamic>.from(row as Map)).toList();
+  }
+
+  static Future<List<Map<String, dynamic>>> loadReferences({
+    required String category,
+    String mobile = '',
+  }) async {
+    final user =
+        await SessionAuthApi.getSavedSessionUser() ??
+        await SessionAuthApi.getActiveSessionUser();
+    final sid = await SessionAuthApi.getSessionId();
+    if (user == null || sid == null || sid.isEmpty) {
+      throw StateError('Your ERP session expired. Please sign in again.');
+    }
+    _useSession(sid);
+    final response = await http
+        .get(
+          _endpoint(
+            query: {
+              'action': 'get_references',
+              'category': category,
+              if (mobile.isNotEmpty) 'mobile': mobile,
+            },
+          ),
+          headers: {
+            'Accept': 'application/json',
+            'Cookie': 'sid=$sid',
+            'Cache-Control': 'no-cache, no-store',
+          },
+        )
+        .timeout(const Duration(seconds: 40));
+    await _assertSession(sid);
+    final result = _decodeResponse(response, user);
+    final expectedDoctype =
+        category.trim().toLowerCase() == 'measurement'
+            ? 'Measurement'
+            : 'Installation Note';
+    if (result['reference_doctype'] != expectedDoctype ||
+        result['references'] is! List) {
+      throw const FormatException(
+        'The visit service returned invalid reference documents.',
+      );
+    }
+    return (result['references'] as List)
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+  }
+
   static Future<Map<String, dynamic>> saveLocation({
     required String opportunity,
     required String mapLink,
@@ -339,6 +461,12 @@ class SiteVisitCreationApi {
     required String assignedTo,
     required String category,
     String productEnquired = '',
+    String mapLink = '',
+    String referenceDoctype = '',
+    String referenceName = '',
+    double? latitude,
+    double? longitude,
+    String locationType = '',
   }) => _post({
     'action': 'create_event',
     'opportunity': opportunity,
@@ -349,5 +477,11 @@ class SiteVisitCreationApi {
     'assigned_to': assignedTo,
     'category': category,
     if (productEnquired.isNotEmpty) 'product_enquired': productEnquired,
+    if (referenceDoctype.isNotEmpty) 'reference_doctype': referenceDoctype,
+    if (referenceName.isNotEmpty) 'reference_name': referenceName,
+    if (mapLink.isNotEmpty) 'map_link': mapLink,
+    if (latitude != null) 'latitude': latitude.toString(),
+    if (longitude != null) 'longitude': longitude.toString(),
+    if (locationType.isNotEmpty) 'location_type': locationType,
   });
 }

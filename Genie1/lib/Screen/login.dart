@@ -199,7 +199,7 @@ class _LoginState extends State<Login> {
                         const SizedBox(height: 19),
                         _buildPasswordField(),
                         const SizedBox(height: 8),
-                        _buildRememberAndForgot(),
+                        _buildRememberMe(),
                         const SizedBox(height: 16),
                         _buildLoginButton(),
                       ],
@@ -316,7 +316,7 @@ class _LoginState extends State<Login> {
     );
   }
 
-  Widget _buildRememberAndForgot() {
+  Widget _buildRememberMe() {
     return Row(
       children: [
         SizedBox(
@@ -339,15 +339,6 @@ class _LoginState extends State<Login> {
                 style: TextStyle(fontSize: 12, color: Color(0xFF5F6B7A)),
               ),
             ],
-          ),
-        ),
-        const Spacer(),
-        const Text(
-          'Forgot Password?',
-          style: TextStyle(
-            color: _brandBlue,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
           ),
         ),
       ],

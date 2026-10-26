@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
 import 'session_auth.dart';
+import '../api_business_policy.dart';
 
 class LeaveTypeOption {
   const LeaveTypeOption({required this.value, required this.label});
@@ -19,12 +20,14 @@ class LeaveApplicationOptions {
     required this.employeeName,
     required this.leaveTypes,
     required this.csrfToken,
+    this.businessPolicy = ApiBusinessPolicy.empty,
   });
 
   final String employee;
   final String employeeName;
   final List<LeaveTypeOption> leaveTypes;
   final String csrfToken;
+  final ApiBusinessPolicy businessPolicy;
 
   factory LeaveApplicationOptions.fromJson(Map<String, dynamic> message) {
     final rawTypes = message['leave_types'];
@@ -47,10 +50,13 @@ class LeaveApplicationOptions {
     if (types.isEmpty) {
       throw const FormatException('No Leave Types are configured in ERPNext.');
     }
+    final policy = ApiBusinessPolicy.fromApi(message['business_policy']);
+    final allowed = policy.options('leave_type', types.map((row) => row.value).toList());
     return LeaveApplicationOptions(
+      businessPolicy: policy,
       employee: employee,
       employeeName: message['employee_name']?.toString() ?? employee,
-      leaveTypes: types,
+      leaveTypes: types.where((row) => allowed.contains(row.value)).toList(),
       csrfToken: message['csrf_token']?.toString() ?? '',
     );
   }

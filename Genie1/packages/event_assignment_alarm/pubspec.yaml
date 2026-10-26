@@ -1,0 +1,15 @@
+name: event_assignment_alarm
+description: Android alarm-stream playback for verified Event assignments.
+version: 1.0.0
+publish_to: none
+environment:
+  sdk: ^3.7.0
+dependencies:
+  flutter:
+    sdk: flutter
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: ai.automategenie.eventalarm
+        pluginClass: EventAssignmentAlarmPlugin

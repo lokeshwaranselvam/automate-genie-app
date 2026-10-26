@@ -222,6 +222,23 @@ class Check {
             )
             .timeout(const Duration(seconds: 12));
       }
+      if (doctype == 'Employee Checkin' &&
+          (response.statusCode == 403 || response.statusCode == 417)) {
+        // Optional location metadata must not block attendance verification.
+        response = await http
+            .get(
+              base
+                  .resolve('api/resource/Employee%20Checkin')
+                  .replace(
+                    queryParameters: {
+                      ...query,
+                      'fields': jsonEncode(['name', 'log_type', 'time']),
+                    },
+                  ),
+              headers: headers,
+            )
+            .timeout(const Duration(seconds: 12));
+      }
       if (response.statusCode != 200) {
         throw StateError('Attendance records unavailable.');
       }
@@ -252,7 +269,12 @@ class Check {
       String day(DateTime value) =>
           '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')} 00:00:00';
       final common = {
-        'fields': jsonEncode(['name', 'log_type', 'time']),
+        'fields': jsonEncode([
+          'name',
+          'log_type',
+          'time',
+          'custom_office_type',
+        ]),
         'order_by': 'time desc, creation desc',
       };
       final results = await Future.wait([
@@ -290,6 +312,12 @@ class Check {
           logs.isEmpty &&
           results[1].isNotEmpty &&
           results[1].first['log_type'] == 'IN';
+      final checkin =
+          hasIn
+              ? ins.first
+              : previousPending
+              ? results[1].first
+              : null;
       return {
         'checked_in': active,
         'checked_out': completed,
@@ -297,6 +325,8 @@ class Check {
         'check_in_exists_today': hasIn,
         'check_out_exists_today': hasOut,
         'previous_checkout_pending': previousPending,
+        if (checkin == null || checkin.containsKey('custom_office_type'))
+          'office_type': checkin?['custom_office_type'] ?? '',
         if (previousPending) 'check_in_time': results[1].first['time'],
         if (hasIn) 'check_in_time': ins.first['time'],
         if (completed) 'check_out_time': outs.first['time'],

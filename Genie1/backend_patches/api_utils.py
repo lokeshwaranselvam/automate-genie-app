@@ -75,7 +75,10 @@ def event_details(id):
     doc = frappe.get_doc("Event",id)
     response = {
     "event": doc.as_dict(),
-    "requires_geofence": (doc.get("event_category") or "").strip().lower() not in ("installation", "measurement"),
+    "requires_geofence": (doc.get("event_category") or "").strip().lower() not in (
+        "installation", "measurement", "other", "others", "bank",
+        "head office ch", "timbe / bioman office ch", "collection",
+    ),
     "reference_details": []
     }
 
@@ -456,7 +459,7 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
     except Exception as e:
         frappe.db.rollback()
         frappe.log_error(title = f"Error on checkout-{user}",message = frappe.get_traceback())
-        frappe.local.response["message"] = str(e)
+        frappe.local.response["message"] = (str(e) if isinstance(e, frappe.ValidationError) or str(e) == "Google distance lookup timed out. Please retry checkout." else "Unable to complete the request. Please try again.")
         frappe.local.response["http_status_code"] = 500
     finally:
         if timing_enabled:
@@ -526,55 +529,13 @@ def event_checkin(user, event_id, lat=None, lng=None, address= None):
     try:
         employeeid = frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, "name")
 
-        existing_event_visit = frappe.db.exists("Visit", {
-            "employee": employeeid,
-            "event_id": ["!=", event_id],
-            "custom_check_in_time": ["is", "set"],
-            "custom_check_out_time": ["is", "not set"]
-        })
-
-        if existing_event_visit:
-            return {
-                "status": "error",
-                "message": "You are already checked in to another event. Please check out before starting a new event."
-            }
-
-        
+        from frappe.utils.safe_exec import call_whitelisted_function
+        decision = call_whitelisted_function("mobile_business_policy", feature="visit", action="get", event_id=event_id)["policy"]
+        action = decision["actions"]["check_in"]
+        if user != frappe.session.user or not action["allowed"]:
+            return {"status": "error", "message": action["reason"] or "This action is unavailable for your user."}
         doc = frappe.get_doc("Event", event_id)
 
-        employee_checked_in = frappe.db.exists("Employee Checkin", {
-            "employee": employeeid,
-            "log_type": "IN",
-            "time": ["between", [f"{frappe.utils.nowdate()} 00:00:00", f"{frappe.utils.nowdate()} 23:59:59"]]
-        })
-
-        if not employee_checked_in:
-            return {
-                "status": "error",
-                "message": "You must check in as an employee before checking into an event."
-            }
-
-        latest_checkin = frappe.get_all("Employee Checkin", filters={
-            "employee": employeeid,
-            "log_type": "IN",
-            "time": ["between", [f"{frappe.utils.nowdate()} 00:00:00", f"{frappe.utils.nowdate()} 23:59:59"]]
-        }, fields=["name", "time"], order_by="time desc", limit=1)
-
-        latest_checkout = frappe.get_all("Employee Checkin", filters={
-            "employee": employeeid,
-            "log_type": "OUT",
-            "time": ["between", [f"{frappe.utils.nowdate()} 00:00:00", f"{frappe.utils.nowdate()} 23:59:59"]]
-        }, fields=["name", "time"], order_by="time desc", limit=1)
-
-        if latest_checkin and latest_checkout:
-            if latest_checkout[0]["time"] > latest_checkin[0]["time"]:
-                return {
-                    "status": "error",
-                    "message": "Already checked out. You cannot check into an event."
-                }
-        
-        if doc.custom_check_in:
-            return {"status": "error", "message": "Already Checked In"}
         current_time = now_datetime().strftime("%Y-%m-%d %H:%M:%S")
         doc.custom_location = address
         doc.custom_check_in = current_time
@@ -601,7 +562,7 @@ def event_checkin(user, event_id, lat=None, lng=None, address= None):
     except Exception as e:
         frappe.db.rollback()
         frappe.log_error(title = f"Error on Event checkin-{user}",message = frappe.get_traceback())
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": (str(e) if isinstance(e, frappe.ValidationError) else "Unable to complete the request. Please try again.")}
 
 
 @frappe.whitelist(allow_guest = False)
@@ -609,6 +570,11 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
     try:
 
 
+        from frappe.utils.safe_exec import call_whitelisted_function
+        decision = call_whitelisted_function("mobile_business_policy", feature="visit", action="get", event_id=event_id)["policy"]
+        action = decision["actions"]["check_out"]
+        if user != frappe.session.user or not action["allowed"]:
+            return {"status": "error", "message": action["reason"] or "This action is unavailable for your user."}
         doc = frappe.get_doc("Event", event_id)
         
         if not doc.custom_check_in:
@@ -618,15 +584,7 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
             return {"status": "error", "message": "Already Checked Out"}
 
         # OTP is no longer required. Keep the optional argument for older
-        # callers, but require an actual saved Event attachment before writes.
-        if not frappe.db.exists("File", {
-            "attached_to_doctype": "Event",
-            "attached_to_name": event_id,
-            "is_folder": 0,
-            "file_url": ["is", "set"],
-        }):
-            return {"status": "error", "message": "Attach a visit photo before checking out."}
-
+        # callers. Temporarily allow checkout without a photo; uploads remain available.
         current_time = now_datetime().strftime("%Y-%m-%d %H:%M:%S")
 
         existing_visit_record = frappe.db.exists("Visit", {
@@ -735,7 +693,7 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
         
         frappe.db.rollback()
         frappe.log_error(title = f"Error on Event checkout-{user}",message = frappe.get_traceback())
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": (str(e) if isinstance(e, frappe.ValidationError) else "Unable to complete the request. Please try again.")}
 
 @frappe.whitelist(methods=["POST"])
 def generate_keys(user: str):
@@ -780,7 +738,7 @@ def send_otp(event_id):
         return {"status": "error", "message": "Event not found"}
     except Exception as e:
         frappe.log_error( title = f"OTP Verification Failed",message = frappe.get_traceback())
-        return {"status": "error", "message": f"Server error: {e}"}
+        return {"status": "error", "message": "Unable to complete the request. Please try again."}
     
 @frappe.whitelist(allow_guest = False)
 def verify_otp(otp,event_id):
@@ -805,7 +763,7 @@ def verify_otp(otp,event_id):
         return {"status": "error", "message": "Event not found"}
     except Exception as e:
         frappe.log_error(title = f"OTP Verification Failed",message = frappe.get_traceback())
-        return {"status": "error", "message": f"Server error: {e}"}
+        return {"status": "error", "message": "Unable to complete the request. Please try again."}
 
 
 @frappe.whitelist()

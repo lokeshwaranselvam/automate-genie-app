@@ -22,8 +22,13 @@ if command.endswith(".checkin") or command.endswith(".checkout"):
     face_required = (
         employee_record
         and employee_record.user_id == current_user
-        and (".trainee" in email_local_part or ".itdigital" in email_local_part)
-        and employee_record.department == "IT And Digital - HBPPL"
+        and (
+            user_email == "murugan.finance@homegeniegroup.com"
+            or (
+                (".trainee" in email_local_part or ".itdigital" in email_local_part)
+                and employee_record.department == "IT And Digital - HBPPL"
+            )
+        )
     )
     if face_required:
         record_id = frappe.form_dict.get("face_verification")

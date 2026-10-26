@@ -409,6 +409,10 @@ class MobileFaceGuardTest(unittest.TestCase):
 
     def test_email_and_department_policy_in_both_hooks(self):
         cases = [
+            ("murugan.finance@homegeniegroup.com", "Finance - HBPPL", True),
+            (" MURUGAN.FINANCE@HOMEGENIEGROUP.COM ", None, True),
+            ("other.finance@homegeniegroup.com", "Finance - HBPPL", False),
+            ("murugan.finance@example.test", "Finance - HBPPL", False),
             ("new.trainee@homegeniegroup.com", "IT And Digital - HBPPL", True),
             ("new.itdigital@homegeniegroup.com", "IT And Digital - HBPPL", True),
             (" NEW.TRAINEE@homegeniegroup.com ", "IT And Digital - HBPPL", True),

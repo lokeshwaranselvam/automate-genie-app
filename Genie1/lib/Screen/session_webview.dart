@@ -3,9 +3,11 @@ import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../utils/api/session_auth.dart';
 import '../utils/connection_notice.dart';
+import '../utils/canteen_payment_webview.dart';
 import '../utils/widget/warning.dart';
 
 class SessionWebView extends StatefulWidget {
@@ -30,6 +32,7 @@ class _SessionWebViewState extends State<SessionWebView> {
   WebViewController? _controller;
   bool _isLoading = true;
   String? _error;
+  bool _openingPaymentApp = false;
 
   @override
   void initState() {
@@ -56,15 +59,23 @@ class _SessionWebViewState extends State<SessionWebView> {
       final siteHost = Uri.tryParse(siteUrl)?.host;
       final isSameSite = siteHost != null && uri.host == siteHost;
 
-      final controller =
+      final canteenPayments = isCanteenPaymentPage(uri);
+      late final WebViewController controller;
+      controller =
           WebViewController()
             ..setJavaScriptMode(JavaScriptMode.unrestricted)
             ..setNavigationDelegate(
               NavigationDelegate(
-                onNavigationRequest: (request) {
+                onNavigationRequest: (request) async {
                   final navigationUri = Uri.tryParse(request.url);
                   if (navigationUri == null ||
                       navigationUri.scheme != 'https') {
+                    if (canteenPayments) {
+                      final paymentUri = canteenUpiUri(request.url);
+                      if (paymentUri != null) {
+                        await _openPaymentApp(paymentUri);
+                      }
+                    }
                     return NavigationDecision.prevent;
                   }
                   return NavigationDecision.navigate;
@@ -77,7 +88,19 @@ class _SessionWebViewState extends State<SessionWebView> {
                     });
                   }
                 },
-                onPageFinished: (_) {
+                onPageFinished: (url) async {
+                  if (canteenPayments &&
+                      isCanteenPaymentPage(Uri.tryParse(url) ?? Uri())) {
+                    try {
+                      await controller.runJavaScript(
+                        canteenRazorpaySupportScript,
+                      );
+                    } catch (_) {
+                      _paymentNotice(
+                        'UPI could not be enabled. Please reopen Canteen.',
+                      );
+                    }
+                  }
                   if (mounted) setState(() => _isLoading = false);
                 },
                 onWebResourceError: (error) {
@@ -107,6 +130,32 @@ class _SessionWebViewState extends State<SessionWebView> {
     } catch (error) {
       _showError('Unable to open this page. $error');
     }
+  }
+
+  Future<void> _openPaymentApp(Uri uri) async {
+    if (_openingPaymentApp) return;
+    _openingPaymentApp = true;
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened) {
+        _paymentNotice('No compatible UPI app could be opened.');
+      }
+    } catch (_) {
+      _paymentNotice(
+        'Unable to open the UPI app. Please check it is installed.',
+      );
+    } finally {
+      _openingPaymentApp = false;
+    }
+    // Returning from a UPI app is not proof of payment. The Canteen page keeps
+    // responsibility for its existing server verification and booking flow.
+  }
+
+  void _paymentNotice(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _showError(String message) {

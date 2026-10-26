@@ -1,4 +1,7 @@
 # Miscellaneous
+# Firebase Admin credentials belong on the server, never in source control.
+/automategenie-mobile-firebase-adminsdk-*.json
+automategenie-service-account.json
 *.class
 *.log
 *.pyc

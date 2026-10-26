@@ -1,4 +1,4 @@
-package com.thirvusoft.homegeniecom; // change this to your package
+package ai.automategenie.app; // change this to your package
 
 
 import android.app.Service;

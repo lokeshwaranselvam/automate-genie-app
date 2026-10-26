@@ -13,6 +13,8 @@ import 'package:intl/intl.dart';
 import '../utils/api/location_api.dart';
 import '../utils/api/site_visit_creation_api.dart';
 import '../utils/site_visit_schedule.dart';
+import '../utils/site_visit_category_rule.dart';
+import '../utils/api_business_policy.dart';
 
 const _visitBlue = BrandColors.ink;
 const _visitInk = Color(0xFF202B3C);
@@ -48,11 +50,16 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
   String? _product;
   List<String> _productOptions = [];
   List<String> _eventCategories = [];
+  SiteVisitSchedulePolicy _schedulePolicy = const SiteVisitSchedulePolicy();
+  ApiBusinessPolicy _businessPolicy = ApiBusinessPolicy.empty;
+  List<String> _eventLocationTypes = List.of(_siteLocationTypes);
   String? _eventCategory;
   // The Autocomplete owns the opportunity text field; keep references so a
   // mobile-number search can fill or focus it.
   TextEditingController? _opportunityFieldController;
   FocusNode? _opportunityFocusNode;
+  int _opportunitySearchId = 0;
+  String? _opportunitySearchError;
   Timer? _mobileSearchDebounce;
   int _mobileSearchId = 0;
   bool _mobileSearching = false;
@@ -65,6 +72,26 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
   bool _loading = true;
   bool _saving = false;
   bool _eventStep = false;
+  bool _categoryStep = true;
+
+  Map<String, SiteVisitCategoryRule> _categoryRules = {};
+  SiteVisitCategoryRule get _categoryRule =>
+      _categoryRules[_eventCategory] ??
+      SiteVisitCategoryRule.legacy(_eventCategory);
+  bool get _directEvent => _categoryRule.isDirect;
+  String? get _referenceDoctype =>
+      _categoryRule.isDocument ? _categoryRule.referenceDoctype : null;
+  bool get _referenceEvent => _categoryRule.isDocument;
+  String get _referenceDetailLabel => 'Company';
+  Map<String, dynamic>? _selectedReference;
+  List<Map<String, dynamic>> _references = [];
+  List<Map<String, dynamic>>? _referenceMatches;
+  bool _referenceLoading = false;
+  String? _referenceError;
+  String _referenceQuery = '';
+  TextEditingController? _referenceFieldController;
+  FocusNode? _referenceFocusNode;
+
   String? _error;
   String? _opportunity;
   String? _initialOpportunityQuery;
@@ -102,12 +129,13 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
     final opportunity = _opportunity;
     final product = _product;
     final query = _initialOpportunityQuery;
-    final hadOptions = _productOptions.isNotEmpty;
+    final hadOptions = _eventCategories.isNotEmpty;
     await _loadOptions();
     if (!mounted) return;
     if (hadOptions) {
       setState(() {
         _eventCategory = _eventCategories.contains(category) ? category : null;
+        if (_eventCategory == null) _categoryStep = true;
         _assignedTo =
             _users.any((user) => user['name'] == assignedTo)
                 ? assignedTo
@@ -117,7 +145,9 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
         _product = _productOptions.contains(product) ? product : null;
       });
     }
-    if (_mobileSearchFailed && _mobileController.text.isNotEmpty) {
+    if (_referenceEvent && _referenceError != null) {
+      _onReferenceMobileChanged(_mobileController.text);
+    } else if (_mobileSearchFailed && _mobileController.text.isNotEmpty) {
       _onMobileChanged(_mobileController.text);
     }
   }
@@ -138,33 +168,58 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
               .map((row) => Map<String, dynamic>.from(row))
               .toList();
       final currentUser = result['current_user']?.toString() ?? '';
+      final schedulePolicy = SiteVisitSchedulePolicy.fromApi(
+        result['schedule_policy'],
+      );
+      final businessPolicy = ApiBusinessPolicy.fromApi(
+        result['business_policy'],
+      );
+      final categoryRules = <String, SiteVisitCategoryRule>{};
+      final rawRules = result['event_category_rules'];
+      if (rawRules != null) {
+        if (rawRules is! Map) {
+          throw const FormatException(
+            'ERP returned invalid event category rules.',
+          );
+        }
+        for (final category in result['event_categories'] as List) {
+          categoryRules[category
+              .toString()
+              .trim()] = SiteVisitCategoryRule.fromApi(rawRules[category]);
+        }
+      }
       setState(() {
+        _categoryRules = categoryRules;
+        _schedulePolicy = schedulePolicy;
+        _businessPolicy = businessPolicy;
+        _eventLocationTypes =
+            result['event_location_types'] is List
+                ? List<String>.from(result['event_location_types'])
+                : List.of(_siteLocationTypes);
+        _businessPolicy.applyDefault('summary', _summaryController);
         _opportunities = opportunities;
-        _users = users;
+        final allowedUsers = _businessPolicy.options(
+          'assigned_to',
+          users.map((user) => user['name']?.toString() ?? '').toList(),
+        );
+        _users =
+            users.where((user) => allowedUsers.contains(user['name'])).toList();
         _currentUser = currentUser;
-        _productOptions =
-            (result['product_enquired_options'] as List)
+        _productOptions = _businessPolicy.options(
+          'product_enquired',
+          (result['product_enquired_options'] as List)
+              .map((value) => value.toString().trim())
+              .where((value) => value.isNotEmpty)
+              .toSet()
+              .toList(),
+        );
+        _eventCategories =
+            (result['event_categories'] as List)
                 .map((value) => value.toString().trim())
                 .where((value) => value.isNotEmpty)
                 .toSet()
                 .toList();
-        _eventCategories =
-            (result['event_categories'] as List)
-                .map((value) => value.toString().trim())
-                .where(
-                  (value) => const {
-                    'installation',
-                    'measurement',
-                    'sitevisit',
-                    'clientvisit',
-                  }.contains(
-                    value.toLowerCase().replaceAll(RegExp(r'\s+'), ''),
-                  ),
-                )
-                .toSet()
-                .toList();
-        _eventCategory =
-            _eventCategories.contains('Installation') ? 'Installation' : null;
+        _eventCategory = null;
         if (_users.any((user) => user['name']?.toString() == currentUser)) {
           _assignedTo = currentUser;
         }
@@ -174,6 +229,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
           _initialOpportunityQuery = _opportunityLabel(onlyOpportunity);
           _setOpportunityDefaults(onlyOpportunity);
         }
+        _applyPolicySelections();
         _loading = false;
       });
     } catch (error) {
@@ -191,12 +247,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
       .replaceFirst('Exception: ', '');
 
   String _opportunityLabel(Map<String, dynamic> opportunity) {
-    for (final key in [
-      'title',
-      'opportunity_name',
-      'customer_name',
-      'party_name',
-    ]) {
+    for (final key in ['title', 'opportunity_name', 'customer_name']) {
       final value = opportunity[key]?.toString().trim() ?? '';
       if (value.isNotEmpty) return value;
     }
@@ -215,6 +266,22 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
         _users.any((user) => user['name']?.toString() == assignedUser)
             ? assignedUser
             : null;
+    _applyPolicySelections();
+  }
+
+  void _applyPolicySelections() {
+    final product =
+        _businessPolicy.field('product_enquired')['default']?.toString();
+    if ((_product == null || _businessPolicy.readOnly('product_enquired')) &&
+        _productOptions.contains(product)) {
+      _product = product;
+    }
+    final assigned =
+        _businessPolicy.field('assigned_to')['default']?.toString();
+    if ((_assignedTo == null || _businessPolicy.readOnly('assigned_to')) &&
+        _users.any((user) => user['name'] == assigned)) {
+      _assignedTo = assigned;
+    }
   }
 
   void _selectOpportunity(Map<String, dynamic> opportunity) {
@@ -232,6 +299,8 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
   }
 
   void _onMobileChanged(String value) {
+    _opportunitySearchId++;
+    _opportunitySearchError = null;
     _mobileSearchDebounce?.cancel();
     final searchId = ++_mobileSearchId;
     final digits = value.replaceAll(RegExp(r'\D'), '');
@@ -259,6 +328,42 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
       const Duration(milliseconds: 500),
       () => _searchByMobile(digits, searchId),
     );
+  }
+
+  Future<Iterable<Map<String, dynamic>>> _searchOpportunityOptions(
+    TextEditingValue value,
+  ) async {
+    final requestId = ++_opportunitySearchId;
+    final query = value.text.trim();
+    final source = _mobileMatches ?? _opportunities;
+    final local =
+        source
+            .where(
+              (row) =>
+                  _opportunityLabel(
+                    row,
+                  ).toLowerCase().contains(query.toLowerCase()) ||
+                  (row['name']?.toString().toLowerCase() ?? '').contains(
+                    query.toLowerCase(),
+                  ),
+            )
+            .toList();
+    // Keep phone-search results constrained to that number's matches.
+    if (_mobileMatches != null || query.length < 2) return local;
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (!mounted || requestId != _opportunitySearchId) return [];
+    try {
+      final matches = await SiteVisitCreationApi.searchOpportunities(query);
+      if (!mounted || requestId != _opportunitySearchId) return [];
+      if (_opportunitySearchError != null) {
+        setState(() => _opportunitySearchError = null);
+      }
+      return matches;
+    } catch (error) {
+      if (!mounted || requestId != _opportunitySearchId) return [];
+      setState(() => _opportunitySearchError = _message(error));
+      return [];
+    }
   }
 
   Future<void> _searchByMobile(String digits, int searchId) async {
@@ -311,7 +416,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
   }
 
   Future<void> _saveLocation() async {
-    if (!_locationFormKey.currentState!.validate()) return;
+    if (_saving || !_locationFormKey.currentState!.validate()) return;
     _locationSearchDebounce?.cancel();
     _locationSearchSession = null;
     _mapLinkRequestId++;
@@ -324,18 +429,21 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
               ? _selectedCoordinates!
               : LocationHelper.tryCoordinatesFromMapLink(link) ??
                   await LocationHelper.getCoordinatesFromMapLink(link);
-      final result = await SiteVisitCreationApi.saveLocation(
-        opportunity: _opportunity!,
-        mapLink: link,
-        latitude: coordinates.latitude,
-        longitude: coordinates.longitude,
-        locationType: _locationType!,
-      );
-      final rowName = result['location_row']?.toString().trim() ?? '';
-      if (rowName.isEmpty) {
-        throw const FormatException(
-          'The saved customer location has no ERP ID.',
+      var rowName = '';
+      if (!_referenceEvent) {
+        final result = await SiteVisitCreationApi.saveLocation(
+          opportunity: _opportunity!,
+          mapLink: link,
+          latitude: coordinates.latitude,
+          longitude: coordinates.longitude,
+          locationType: _locationType!,
         );
+        rowName = result['location_row']?.toString().trim() ?? '';
+        if (rowName.isEmpty) {
+          throw const FormatException(
+            'The saved customer location has no ERP ID.',
+          );
+        }
       }
       if (!mounted) return;
       setState(() {
@@ -644,7 +752,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
               zoom: _selectedCoordinates == null ? 12 : 16,
             ),
             onMapCreated: (controller) {
-              if (mounted && !_eventStep) _locationMapController = controller;
+              if (mounted) _locationMapController = controller;
             },
             onTap: _saving ? null : _selectMapLocation,
             markers: {
@@ -680,12 +788,17 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
 
   Future<void> _pickDate() async {
     final now = DateUtils.dateOnly(DateTime.now());
+    final firstDate = _schedulePolicy.firstDate(now);
     final picked = await showDatePicker(
       context: context,
       initialDate:
-          _visitDate == null || _visitDate!.isBefore(now) ? now : _visitDate!,
-      firstDate: now,
-      lastDate: DateTime(now.year + 5),
+          _visitDate == null || _visitDate!.isBefore(firstDate)
+              ? (now.isBefore(firstDate) ? firstDate : now)
+              : _visitDate!,
+      firstDate: firstDate,
+      lastDate: DateTime(
+        (firstDate.year > now.year ? firstDate.year : now.year) + 5,
+      ),
       builder:
           (context, child) => Theme(
             data: Theme.of(context).copyWith(
@@ -725,6 +838,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
       return;
     }
     final slots = SiteVisitSchedule.slots(
+      policy: _schedulePolicy,
       date: date,
       now: DateTime.now(),
       after: isEnd ? _startsOn : null,
@@ -761,7 +875,8 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                           title: Text(_timeLabel(slots[index])),
                           selected: slots[index] == selected,
                           onTap: () {
-                            if (slots[index].isBefore(DateTime.now())) {
+                            if (!_schedulePolicy.allowPast &&
+                                slots[index].isBefore(DateTime.now())) {
                               _showError(
                                 'This time has passed. Choose a later time.',
                               );
@@ -788,10 +903,11 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
   }
 
   Future<void> _createEvent() async {
-    if (!_eventFormKey.currentState!.validate()) return;
+    if (_saving || !_eventFormKey.currentState!.validate()) return;
     final date = _visitDate;
     if (date == null) return;
     final timeError = SiteVisitSchedule.validate(
+      policy: _schedulePolicy,
       start: _startsOn,
       end: _endsOn,
       now: DateTime.now(),
@@ -804,8 +920,44 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
     try {
       final startsOn = DateFormat('yyyy-MM-dd HH:mm:ss').format(_startsOn!);
       final endsOn = DateFormat('yyyy-MM-dd HH:mm:ss').format(_endsOn!);
+      LatLng? coordinates;
+      final link = _mapLinkController.text.trim();
+      if (_referenceEvent) {
+        coordinates = _resolvedMapLink == link ? _selectedCoordinates : null;
+        coordinates ??=
+            LocationHelper.tryCoordinatesFromMapLink(link) ??
+            await LocationHelper.getCoordinatesFromMapLink(link);
+      }
+      final fieldValues = <String, Object?>{
+        'category': _eventCategory,
+        'summary': _summaryController.text.trim(),
+        'starts_on': startsOn,
+        'ends_on': endsOn,
+        'assigned_to': _assignedTo,
+        'opportunity': _opportunity,
+        'location_row': _savedLocationRow,
+        'reference_name': _selectedReference?['name'],
+        'map_link': link,
+        'latitude': coordinates?.latitude,
+        'longitude': coordinates?.longitude,
+        'location_type': _locationType,
+      };
+      for (final field in _categoryRule.requiredFields) {
+        final value = fieldValues[field];
+        if (value == null || (value is String && value.trim().isEmpty)) {
+          throw StateError(
+            'Complete the required ${field.replaceAll('_', ' ')} field.',
+          );
+        }
+      }
       final result = await SiteVisitCreationApi.createEvent(
-        opportunity: _opportunity!,
+        opportunity: _directEvent || _referenceEvent ? '' : _opportunity!,
+        referenceDoctype: _referenceDoctype ?? '',
+        referenceName: _selectedReference?['name']?.toString() ?? '',
+        mapLink: _referenceEvent ? link : '',
+        latitude: coordinates?.latitude,
+        longitude: coordinates?.longitude,
+        locationType: _referenceEvent ? _locationType ?? '' : '',
         locationRow: _savedLocationRow,
         summary: _summaryController.text.trim(),
         startsOn: startsOn,
@@ -872,14 +1024,365 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
       borderRadius: BorderRadius.circular(16),
       border: Border.all(color: const Color(0xFFE8EBEF)),
     ),
-    child: child,
+    child: Material(color: Colors.transparent, child: child),
+  );
+
+  List<Widget> _locationFields() => [
+    TextFormField(
+      controller: _mapLinkController,
+      enabled: !_saving,
+      keyboardType: TextInputType.url,
+      onChanged: _onMapLinkChanged,
+      onFieldSubmitted: (_) => _previewMapLink(),
+      textInputAction: TextInputAction.next,
+      decoration: _decoration(
+        'Customer map link *',
+        hint: 'Paste a Google Maps link',
+        prefixIcon: const Icon(Icons.link_rounded),
+      ),
+      validator:
+          (value) =>
+              value == null || value.trim().isEmpty
+                  ? 'Map link is required.'
+                  : null,
+    ),
+    const SizedBox(height: 13),
+    DropdownButtonFormField<String>(
+      initialValue: _locationType,
+      isExpanded: true,
+      decoration: _decoration('Location type *'),
+      items: [
+        for (final type in _eventLocationTypes)
+          DropdownMenuItem(value: type, child: Text(type)),
+      ],
+      onChanged: (value) => setState(() => _locationType = value),
+      validator: (value) => value == null ? 'Select a location type.' : null,
+    ),
+    const SizedBox(height: 10),
+    _locationMapPicker(),
+  ];
+
+  void _chooseCategory(String category) {
+    _opportunitySearchId++;
+    _opportunitySearchError = null;
+    _mobileSearchDebounce?.cancel();
+    _mobileSearchId++;
+    _locationSearchDebounce?.cancel();
+    _locationSearchRequestId++;
+    _mapLinkRequestId++;
+    setState(() {
+      _eventCategory = category;
+      _categoryStep = false;
+      _eventStep = _directEvent;
+      _savedLocationRow = '';
+      _mapLinkController.clear();
+      _locationSearchController.clear();
+      _selectedCoordinates = null;
+      _resolvedMapLink = null;
+      _locationType = null;
+      _locationMapController = null;
+      _locationSearchResults = [];
+      _locationSearchError = null;
+      _mapLinkError = null;
+      _resolvingMapLink = false;
+      _searchingLocation = false;
+      _locationSearchSession = null;
+      _mobileSearching = false;
+      _mobileController.clear();
+      _mobileMatches = null;
+      _mobileSearchFailed = false;
+      _mobileSearchMessage = null;
+      _selectedReference = null;
+      _references = [];
+      _referenceMatches = null;
+      _referenceQuery = '';
+      _referenceError = null;
+      _referenceLoading = false;
+      _referenceFieldController = null;
+      _referenceFocusNode = null;
+      if (_directEvent || _referenceEvent) {
+        _product = null;
+        _assignedTo = _currentUser;
+      } else {
+        final selected = _opportunities.where(
+          (row) => row['name'] == _opportunity,
+        );
+        if (selected.isNotEmpty) _setOpportunityDefaults(selected.first);
+      }
+      _applyPolicySelections();
+    });
+    if (_referenceEvent) _onReferenceMobileChanged('');
+  }
+
+  Widget _categorySummary() => Row(
+    children: [
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _eventCategory ?? '',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const Text('Event category', style: TextStyle(color: _visitMuted)),
+          ],
+        ),
+      ),
+      TextButton(
+        onPressed: _saving ? null : () => setState(() => _categoryStep = true),
+        child: const Text('Change category'),
+      ),
+    ],
+  );
+
+  Widget _buildCategoryStep() {
+    if (_error != null) return _emptyMessage(_error!, canRetry: true);
+    if (_eventCategories.isEmpty) {
+      return _emptyMessage('No event categories are configured.');
+    }
+    return _sectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _StepHeading(number: '1', title: 'Select event category'),
+          const SizedBox(height: 12),
+          for (final category in _eventCategories)
+            ListTile(
+              title: Text(category),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => _chooseCategory(category),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _referenceLabel(Map<String, dynamic> row) {
+    final name = row['name']?.toString() ?? '';
+    final title = row['title']?.toString().trim() ?? '';
+    return title.isEmpty || title == name ? name : '$title ($name)';
+  }
+
+  String get _referenceDetail =>
+      _selectedReference?['company']?.toString().trim() ?? '';
+
+  void _selectReference(Map<String, dynamic> row) {
+    setState(() {
+      _selectedReference = row;
+      _referenceQuery = _referenceLabel(row);
+    });
+  }
+
+  void _onReferenceMobileChanged(String value) {
+    _mobileSearchDebounce?.cancel();
+    final requestId = ++_mobileSearchId;
+    final category = _eventCategory!;
+    final digits = value.replaceAll(RegExp(r'\D'), '');
+    setState(() {
+      _selectedReference = null;
+      _referenceQuery = '';
+      _referenceError = null;
+      _referenceLoading = digits.isEmpty || digits.length >= 5;
+      _referenceMatches = digits.isEmpty ? null : [];
+      _mobileSearchMessage =
+          digits.isNotEmpty && digits.length < 5
+              ? 'Enter at least 5 digits to search.'
+              : null;
+    });
+    _referenceFieldController?.clear();
+    if (digits.isNotEmpty && digits.length < 5) return;
+    if (digits.isEmpty) {
+      _fetchReferences(category, requestId);
+    } else {
+      _mobileSearchDebounce = Timer(
+        const Duration(milliseconds: 500),
+        () => _fetchReferences(category, requestId, mobile: digits),
+      );
+    }
+  }
+
+  Future<void> _fetchReferences(
+    String category,
+    int requestId, {
+    String mobile = '',
+  }) async {
+    if (!mounted || requestId != _mobileSearchId) return;
+    try {
+      final rows = await SiteVisitCreationApi.loadReferences(
+        category: category,
+        mobile: mobile,
+      );
+      if (!mounted ||
+          requestId != _mobileSearchId ||
+          category != _eventCategory) {
+        return;
+      }
+      setState(() {
+        _referenceLoading = false;
+        if (mobile.isEmpty) {
+          _references = rows;
+          _referenceMatches = null;
+        } else {
+          _referenceMatches = rows;
+        }
+        _mobileSearchMessage =
+            rows.isEmpty
+                ? 'No $_referenceDoctype documents found${mobile.isEmpty ? '.' : ' for this mobile number.'}'
+                : mobile.isEmpty
+                ? null
+                : '${rows.length} matching document(s) found.';
+      });
+      if (rows.length == 1) {
+        _selectReference(rows.single);
+        _referenceFieldController?.text = _referenceQuery;
+      } else if (mobile.isNotEmpty && rows.isNotEmpty) {
+        _referenceFocusNode?.requestFocus();
+      }
+    } catch (error) {
+      if (!mounted ||
+          requestId != _mobileSearchId ||
+          category != _eventCategory) {
+        return;
+      }
+      setState(() {
+        _referenceLoading = false;
+        _referenceMatches = [];
+        _referenceError = _message(error);
+      });
+    }
+  }
+
+  Widget _buildReferenceStep() => Form(
+    key: _locationFormKey,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _categorySummary(),
+              _StepHeading(number: '2', title: 'Select $_referenceDoctype'),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _mobileController,
+                enabled: !_saving,
+                keyboardType: TextInputType.phone,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9+ ]')),
+                ],
+                decoration: _decoration(
+                  'Mobile number',
+                  hint: 'Search $_referenceDoctype by mobile number',
+                  prefixIcon: const Icon(Icons.phone_outlined),
+                ).copyWith(
+                  helperText: _mobileSearchMessage,
+                  helperMaxLines: 2,
+                  suffixIcon:
+                      _referenceLoading
+                          ? const Padding(
+                            padding: EdgeInsets.all(14),
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                          : null,
+                ),
+                onChanged: _onReferenceMobileChanged,
+              ),
+              if (_referenceError != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _referenceError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+                TextButton(
+                  onPressed:
+                      () => _onReferenceMobileChanged(_mobileController.text),
+                  child: const Text('Retry document search'),
+                ),
+              ],
+              const SizedBox(height: 13),
+              Autocomplete<Map<String, dynamic>>(
+                key: ValueKey('reference-$_referenceDoctype-$_mobileSearchId'),
+                initialValue: TextEditingValue(text: _referenceQuery),
+                displayStringForOption: _referenceLabel,
+                optionsBuilder: (value) {
+                  final query = value.text.trim().toLowerCase();
+                  return (_referenceMatches ?? _references).where(
+                    (row) => _referenceLabel(row).toLowerCase().contains(query),
+                  );
+                },
+                onSelected: _selectReference,
+                fieldViewBuilder: (
+                  context,
+                  controller,
+                  focusNode,
+                  onSubmitted,
+                ) {
+                  _referenceFieldController = controller;
+                  _referenceFocusNode = focusNode;
+                  return TextFormField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    enabled: !_saving,
+                    decoration: _decoration(
+                      '$_referenceDoctype *',
+                      hint: 'Search and select $_referenceDoctype',
+                    ),
+                    onChanged:
+                        (value) => setState(() {
+                          _referenceQuery = value;
+                          _selectedReference = null;
+                        }),
+                    onFieldSubmitted: (_) => onSubmitted(),
+                    validator:
+                        (_) =>
+                            _selectedReference == null
+                                ? 'Select a $_referenceDoctype from suggestions.'
+                                : null,
+                  );
+                },
+              ),
+              const SizedBox(height: 13),
+              TextFormField(
+                key: ValueKey(
+                  'reference-detail-$_referenceDoctype-${_selectedReference?['name']}-$_referenceDetail',
+                ),
+                initialValue: _referenceDetail,
+                readOnly: true,
+                decoration: _decoration(
+                  _referenceDetailLabel,
+                  hint: 'Filled from the selected document',
+                ),
+              ),
+              const SizedBox(height: 13),
+              ..._locationFields(),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        _primaryButton(
+          label: 'Continue to event details',
+          onPressed: _saving || _referenceLoading ? null : _saveLocation,
+        ),
+      ],
+    ),
   );
 
   Widget _buildLocationStep() {
+    if (_referenceEvent) return _buildReferenceStep();
     if (_opportunities.isEmpty) {
-      return _emptyMessage(
-        _error ?? 'No opportunities were found.',
-        canRetry: _error != null,
+      return Column(
+        children: [
+          _categorySummary(),
+          _emptyMessage(
+            _error ?? 'No opportunities were found.',
+            canRetry: _error != null,
+          ),
+        ],
       );
     }
     return Form(
@@ -891,7 +1394,8 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const _StepHeading(number: '1', title: 'Customer location'),
+                _categorySummary(),
+                const _StepHeading(number: '2', title: 'Customer location'),
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _mobileController,
@@ -947,24 +1451,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                     text: _initialOpportunityQuery ?? '',
                   ),
                   displayStringForOption: _opportunityLabel,
-                  optionsBuilder: (textEditingValue) {
-                    // A mobile search narrows the list to its matches.
-                    final source = _mobileMatches ?? _opportunities;
-                    final query = textEditingValue.text.trim().toLowerCase();
-                    if (query.isEmpty) return source;
-                    return source.where((opportunity) {
-                      final label =
-                          _opportunityLabel(opportunity).toLowerCase();
-                      final name =
-                          opportunity['name']?.toString().toLowerCase() ?? '';
-                      final party =
-                          opportunity['party_name']?.toString().toLowerCase() ??
-                          '';
-                      return label.contains(query) ||
-                          party.contains(query) ||
-                          name.contains(query);
-                    });
-                  },
+                  optionsBuilder: _searchOpportunityOptions,
                   onSelected: _selectOpportunity,
                   fieldViewBuilder: (
                     context,
@@ -982,15 +1469,17 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                         'Opportunity *',
                         hint:
                             _mobileMatches == null
-                                ? 'Type to search opportunities'
+                                ? 'Search by Opportunity ID or name'
                                 : 'Choose from mobile number matches',
                         prefixIcon: const Icon(Icons.search_rounded),
-                      ),
+                      ).copyWith(errorText: _opportunitySearchError),
                       onChanged: (_) {
-                        if (_opportunity != null) {
+                        if (_opportunity != null ||
+                            _opportunitySearchError != null) {
                           setState(() {
                             _opportunity = null;
                             _product = null;
+                            _opportunitySearchError = null;
                           });
                         }
                       },
@@ -1022,14 +1511,26 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                               itemBuilder: (context, index) {
                                 final opportunity = options.elementAt(index);
                                 final label = _opportunityLabel(opportunity);
-                                final party =
-                                    opportunity['party_name']
+                                final opportunityId =
+                                    opportunity['name']?.toString() ?? '';
+                                final contact =
+                                    opportunity['contact_mobile']
                                         ?.toString()
                                         .trim() ??
                                     '';
+                                final phone =
+                                    opportunity['phone']?.toString().trim() ??
+                                    '';
+                                final number =
+                                    contact.isNotEmpty ? contact : phone;
                                 return ListTile(
                                   title: Text(label),
-                                  subtitle: party.isEmpty ? null : Text(party),
+                                  subtitle: Text(
+                                    [
+                                      opportunityId,
+                                      if (number.isNotEmpty) number,
+                                    ].join(' · '),
+                                  ),
                                   onTap: () => onSelected(opportunity),
                                 );
                               },
@@ -1039,64 +1540,38 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                       ),
                 ),
                 const SizedBox(height: 13),
-                DropdownButtonFormField<String>(
-                  key: ValueKey('product-$_opportunity-$_product'),
-                  initialValue: _product,
-                  isExpanded: true,
-                  hint: const Text('Select product enquired'),
-                  decoration: _decoration(
-                    'Product enquired',
-                    hint: 'Select product enquired',
-                    prefixIcon: const Icon(Icons.inventory_2_outlined),
-                  ),
-                  items: [
-                    const DropdownMenuItem(
-                      value: '',
-                      child: Text('Select product enquired'),
+                BusinessPolicyField(
+                  policy: _businessPolicy,
+                  name: 'product_enquired',
+                  child: DropdownButtonFormField<String>(
+                    key: ValueKey('product-$_opportunity-$_product'),
+                    initialValue: _product,
+                    isExpanded: true,
+                    hint: const Text('Select product enquired'),
+                    decoration: _decoration(
+                      'Product enquired',
+                      hint: 'Select product enquired',
+                      prefixIcon: const Icon(Icons.inventory_2_outlined),
                     ),
-                    for (final product in _productOptions)
-                      DropdownMenuItem(
-                        value: product,
-                        child: Text(product, overflow: TextOverflow.ellipsis),
+                    items: [
+                      const DropdownMenuItem(
+                        value: '',
+                        child: Text('Select product enquired'),
                       ),
-                  ],
-                  onChanged: (value) => setState(() => _product = value),
-                ),
-                const SizedBox(height: 13),
-                TextFormField(
-                  controller: _mapLinkController,
-                  enabled: !_saving,
-                  keyboardType: TextInputType.url,
-                  onChanged: _onMapLinkChanged,
-                  onFieldSubmitted: (_) => _previewMapLink(),
-                  textInputAction: TextInputAction.next,
-                  decoration: _decoration(
-                    'Customer map link *',
-                    hint: 'Paste a Google Maps link',
-                    prefixIcon: const Icon(Icons.link_rounded),
+                      for (final product in _productOptions)
+                        DropdownMenuItem(
+                          value: product,
+                          child: Text(product, overflow: TextOverflow.ellipsis),
+                        ),
+                    ],
+                    onChanged: (value) => setState(() => _product = value),
+                    validator:
+                        (value) =>
+                            _businessPolicy.validate('product_enquired', value),
                   ),
-                  validator:
-                      (value) =>
-                          value == null || value.trim().isEmpty
-                              ? 'Map link is required.'
-                              : null,
                 ),
                 const SizedBox(height: 13),
-                DropdownButtonFormField<String>(
-                  value: _locationType,
-                  isExpanded: true,
-                  decoration: _decoration('Location type *'),
-                  items: [
-                    for (final type in _siteLocationTypes)
-                      DropdownMenuItem(value: type, child: Text(type)),
-                  ],
-                  onChanged: (value) => setState(() => _locationType = value),
-                  validator:
-                      (value) =>
-                          value == null ? 'Select a location type.' : null,
-                ),
-                const SizedBox(height: 10),
-                _locationMapPicker(),
+                ..._locationFields(),
                 const SizedBox(height: 10),
                 const Text(
                   'The map link will be resolved to latitude and longitude and saved with this opportunity location.',
@@ -1134,19 +1609,35 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const _StepHeading(number: '2', title: 'Event details'),
+                _categorySummary(),
+                const _StepHeading(number: '3', title: 'Event details'),
                 const SizedBox(height: 14),
-                _linkedInfo(
-                  Icons.business_outlined,
-                  _opportunityLabel(opportunity),
-                  opportunity['party_name']?.toString() ?? '',
-                ),
+                if (!_directEvent && !_referenceEvent)
+                  _linkedInfo(
+                    Icons.business_outlined,
+                    _opportunityLabel(opportunity),
+                    opportunity['party_name']?.toString() ?? '',
+                  ),
+                if (_referenceEvent && _selectedReference != null) ...[
+                  _linkedInfo(
+                    Icons.description_outlined,
+                    _referenceDoctype!,
+                    _referenceLabel(_selectedReference!),
+                  ),
+                  const SizedBox(height: 10),
+                  _linkedInfo(
+                    Icons.business_outlined,
+                    _referenceDetailLabel,
+                    _referenceDetail,
+                  ),
+                ],
                 const SizedBox(height: 10),
-                _linkedInfo(
-                  Icons.place_outlined,
-                  locationLabel,
-                  _mapLinkController.text.trim(),
-                ),
+                if (!_directEvent)
+                  _linkedInfo(
+                    Icons.place_outlined,
+                    locationLabel,
+                    _mapLinkController.text.trim(),
+                  ),
                 if (_product?.isNotEmpty ?? false) ...[
                   const SizedBox(height: 10),
                   _linkedInfo(
@@ -1162,31 +1653,14 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
           _sectionCard(
             child: Column(
               children: [
-                DropdownButtonFormField<String>(
-                  initialValue: _eventCategory,
-                  isExpanded: true,
-                  hint: const Text('Select event category'),
-                  decoration: _decoration('Event category *'),
-                  items: [
-                    for (final category in _eventCategories)
-                      DropdownMenuItem(
-                        value: category,
-                        child: Text(category, overflow: TextOverflow.ellipsis),
-                      ),
-                  ],
-                  onChanged: (value) => setState(() => _eventCategory = value),
-                  validator:
-                      (value) => value == null ? 'Select a category.' : null,
-                ),
-                const SizedBox(height: 13),
                 FormField<DateTime>(
                   initialValue: _visitDate,
                   validator: (_) {
                     if (_visitDate == null) return 'Date is required.';
                     if (_visitDate!.isBefore(
-                      DateUtils.dateOnly(DateTime.now()),
+                      _schedulePolicy.firstDate(DateTime.now()),
                     )) {
-                      return 'The visit date cannot be in the past.';
+                      return 'Choose a date within the permitted booking range.';
                     }
                     return null;
                   },
@@ -1227,36 +1701,50 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                 const SizedBox(height: 13),
                 _timeField(isEnd: true),
                 const SizedBox(height: 13),
-                TextFormField(
-                  key: ValueKey('assignee-$_opportunity-$_assignedTo'),
-                  initialValue:
-                      _assignedTo == _currentUser
-                          ? 'Assign to me ($_currentUser)'
-                          : _assignedTo ?? '',
-                  readOnly: true,
-                  decoration: _decoration('Assigned to *').copyWith(
-                    hintText: 'Search and select a user',
-                    suffixIcon: const Icon(Icons.search_rounded),
+                BusinessPolicyField(
+                  policy: _businessPolicy,
+                  name: 'assigned_to',
+                  child: TextFormField(
+                    key: ValueKey('assignee-$_opportunity-$_assignedTo'),
+                    initialValue:
+                        _assignedTo == _currentUser
+                            ? 'Assign to me ($_currentUser)'
+                            : _assignedTo ?? '',
+                    readOnly: true,
+                    decoration: _decoration('Assigned to *').copyWith(
+                      hintText: 'Search and select a user',
+                      suffixIcon: const Icon(Icons.search_rounded),
+                    ),
+                    onTap: _pickAssignee,
+                    validator:
+                        (_) =>
+                            _assignedTo == null ? 'Choose an assignee.' : null,
                   ),
-                  onTap: _pickAssignee,
-                  validator:
-                      (_) => _assignedTo == null ? 'Choose an assignee.' : null,
                 ),
                 const SizedBox(height: 13),
-                TextFormField(
-                  controller: _summaryController,
-                  textCapitalization: TextCapitalization.sentences,
-                  maxLines: 2,
-                  maxLength: 140,
-                  decoration: _decoration(
-                    'Summary *',
-                    hint: 'Describe the visit',
+                BusinessPolicyField(
+                  policy: _businessPolicy,
+                  name: 'summary',
+                  child: TextFormField(
+                    controller: _summaryController,
+                    textCapitalization: TextCapitalization.sentences,
+                    maxLines: 2,
+                    maxLength: _businessPolicy.maxLength('summary', 140),
+                    readOnly: _businessPolicy.readOnly('summary'),
+                    decoration: _decoration(
+                      _businessPolicy.required('summary', true)
+                          ? 'Summary *'
+                          : 'Summary',
+                      hint: 'Describe the visit',
+                    ),
+                    validator:
+                        (value) => _businessPolicy.validate(
+                          'summary',
+                          value,
+                          legacyRequired: true,
+                          requiredMessage: 'Summary is required.',
+                        ),
                   ),
-                  validator:
-                      (value) =>
-                          value == null || value.trim().isEmpty
-                              ? 'Summary is required.'
-                              : null,
                 ),
               ],
             ),
@@ -1267,15 +1755,16 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
             onPressed: _saving ? null : _createEvent,
           ),
           const SizedBox(height: 8),
-          Center(
-            child: TextButton.icon(
-              onPressed:
-                  _saving ? null : () => setState(() => _eventStep = false),
-              icon: const Icon(Icons.arrow_back_rounded),
-              label: const Text('Edit customer location'),
-              style: TextButton.styleFrom(foregroundColor: _visitBlue),
+          if (!_directEvent)
+            Center(
+              child: TextButton.icon(
+                onPressed:
+                    _saving ? null : () => setState(() => _eventStep = false),
+                icon: const Icon(Icons.arrow_back_rounded),
+                label: const Text('Edit customer location'),
+                style: TextButton.styleFrom(foregroundColor: _visitBlue),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -1290,11 +1779,14 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
         if (value == null) {
           return isEnd ? 'Select an end time.' : 'Select a start time.';
         }
-        if (!isEnd && value.isBefore(DateTime.now())) {
+        if (!isEnd &&
+            !_schedulePolicy.allowPast &&
+            value.isBefore(DateTime.now())) {
           return 'The start time cannot be in the past.';
         }
         if (isEnd) {
           return SiteVisitSchedule.validate(
+            policy: _schedulePolicy,
             start: _startsOn,
             end: _endsOn,
             now: DateTime.now(),
@@ -1313,7 +1805,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
               ).copyWith(errorText: field.errorText),
               child: Text(
                 value == null
-                    ? 'Select time (15-minute intervals)'
+                    ? 'Select time (${_schedulePolicy.intervalMinutes}-minute intervals)'
                     : _timeLabel(value),
                 style: TextStyle(
                   color: value == null ? _visitMuted : _visitInk,
@@ -1534,7 +2026,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
       appBar: brandAppBar(
         elevation: 0,
         title: Text(
-          _eventStep ? 'Event Details' : 'New Visit',
+          !_categoryStep && _eventStep ? 'Event Details' : 'New Visit',
           style: const TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.w800,
@@ -1543,7 +2035,12 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(4),
           child: LinearProgressIndicator(
-            value: _eventStep ? 1 : 0.5,
+            value:
+                _categoryStep
+                    ? 0.33
+                    : _eventStep
+                    ? 1
+                    : 0.66,
             minHeight: 3,
             backgroundColor: const Color(0xFFEAF0F8),
             color: _visitBlue,
@@ -1551,7 +2048,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
         ),
       ),
       body: PullToRefresh(
-        enabled: !_loading && !_saving,
+        enabled: !_loading && !_saving && !_referenceLoading,
         onRefresh: _refreshOptions,
         child:
             _loading
@@ -1560,7 +2057,11 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
                     child:
-                        _eventStep ? _buildEventStep() : _buildLocationStep(),
+                        _categoryStep
+                            ? _buildCategoryStep()
+                            : _eventStep
+                            ? _buildEventStep()
+                            : _buildLocationStep(),
                   ),
                 ),
       ),

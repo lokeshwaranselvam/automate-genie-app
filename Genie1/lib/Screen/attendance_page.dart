@@ -434,23 +434,6 @@ class AttendancePage extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 52,
-              child: ElevatedButton.icon(
-                onPressed: onLeaveApplication,
-                icon: const Icon(Icons.event_available_outlined, size: 19),
-                label: const Text(
-                  'Leave Application',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: BrandColors.ink,
-                  foregroundColor: Colors.white,
-                  shape: const StadiumBorder(),
-                ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
-              ),
-            ),
           ],
         ),
       ),

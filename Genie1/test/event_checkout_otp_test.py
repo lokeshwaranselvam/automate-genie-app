@@ -1,3 +1,4 @@
+from test.business_policy_stub import install as install_business_policy
 """Attachment-only checkout and report contracts, without a live ERP."""
 import ast
 from datetime import datetime
@@ -13,10 +14,10 @@ class Row(dict):
     __setattr__ = dict.__setitem__
 
 class EventCheckoutAttachmentTest(unittest.TestCase):
-    def run_checkout(self, filename, attachment=True, checked_in=True, checked_out=False, otp=None):
+    def run_checkout(self, filename, attachment=True, checked_in=True, checked_out=False, otp=None, photo_required=False):
         doc = Row(custom_check_in='2026-10-16 09:00:00' if checked_in else None,
                   custom_check_out='2026-10-16 10:00:00' if checked_out else None,
-                  custom_otp='historical', custom_whats_app=None)
+                  custom_otp='historical', custom_whats_app=None, owner='sales@example.test', starts_on='2026-10-16')
         doc.save = Mock()
         def exists(doctype, filters):
             if doctype == 'File':
@@ -28,23 +29,29 @@ class EventCheckoutAttachmentTest(unittest.TestCase):
             self.assertEqual(doctype, 'Visit')
             return False
         frappe = SimpleNamespace(
+            session=Row(user='sales@example.test'),
+            utils=SimpleNamespace(today=lambda: '2026-10-16'),
             get_doc=Mock(return_value=doc),
-            db=SimpleNamespace(exists=Mock(side_effect=exists), rollback=Mock()),
+            db=SimpleNamespace(exists=Mock(side_effect=exists), get_value=Mock(return_value=None), rollback=Mock()),
             log_error=Mock(), get_traceback=lambda: 'trace',
         )
-        tree = ast.parse((ROOT / 'backend_patches' / filename).read_text(encoding='utf-8'))
+        source = (ROOT / 'backend_patches' / filename).read_text(encoding='utf-8')
+        source = source.replace('        from frappe.utils.safe_exec import call_whitelisted_function', '')
+        bridge = install_business_policy(frappe)
+        if photo_required: bridge.overrides['"min_count": 0'] = '"min_count": 1'
+        tree = ast.parse(source)
         node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'event_checkout')
         node.decorator_list = []
-        namespace = dict(frappe=frappe, now_datetime=lambda: datetime(2026, 10, 16, 10))
+        namespace = dict(frappe=frappe, now_datetime=lambda: datetime(2026, 10, 16, 10), call_whitelisted_function=bridge)
         exec(compile(ast.Module(body=[node], type_ignores=[]), filename, 'exec'), namespace)
         result = namespace['event_checkout']('sales@example.test', 'EVENT-1',
             custom_otp=otp, address='Site', working_hrs='01:00')
         return result, doc, frappe
 
     def test_missing_attachment_blocks_before_visit_lookup_or_checkout_writes(self):
-        for filename in ['api.py', 'api_single_device_updated.py']:
+        for filename in ['api_utils.py', 'api_single_device_updated.py']:
             with self.subTest(filename=filename):
-                result, doc, frappe = self.run_checkout(filename, attachment=False)
+                result, doc, frappe = self.run_checkout(filename, attachment=False, photo_required=True)
                 self.assertEqual(result['status'], 'error')
                 self.assertIn('Attach a visit photo', result['message'])
                 doc.save.assert_not_called()
@@ -52,7 +59,7 @@ class EventCheckoutAttachmentTest(unittest.TestCase):
                 self.assertEqual(frappe.db.exists.call_count, 1)
 
     def test_attachment_allows_checkout_without_any_otp_configuration(self):
-        for filename in ['api.py', 'api_single_device_updated.py']:
+        for filename in ['api_utils.py', 'api_single_device_updated.py']:
             for otp in [None, '', 'wrong', 123]:
                 with self.subTest(filename=filename, legacy_otp=otp):
                     result, doc, _ = self.run_checkout(filename, otp=otp)
@@ -63,8 +70,17 @@ class EventCheckoutAttachmentTest(unittest.TestCase):
                     self.assertEqual(doc.custom_duration, '01:00')
                     doc.save.assert_called_once_with(ignore_permissions=True)
 
+    def test_photo_requirement_disabled_allows_missing_attachment_without_file_query(self):
+        for filename in ['api_utils.py', 'api_single_device_updated.py']:
+            result, doc, frappe = self.run_checkout(filename, attachment=False)
+            self.assertEqual(result['status'], 'success')
+            self.assertEqual(doc.status, 'Completed')
+            self.assertEqual(doc.custom_otp, 'historical')
+            self.assertEqual(frappe.db.exists.call_args_list[0].args[0], 'Visit')
+            self.assertEqual(frappe.db.exists.call_count, 1)
+
     def test_existing_checkin_and_completed_guards_are_preserved(self):
-        for filename in ['api.py', 'api_single_device_updated.py']:
+        for filename in ['api_utils.py', 'api_single_device_updated.py']:
             for kwargs, message in [({'checked_in': False}, 'Cannot check out before check-in'),
                                     ({'checked_out': True}, 'Already Checked Out')]:
                 result, doc, frappe = self.run_checkout(filename, **kwargs)
@@ -73,7 +89,7 @@ class EventCheckoutAttachmentTest(unittest.TestCase):
                 doc.save.assert_not_called()
 
 class EventVisitReportWithoutOtpTest(unittest.TestCase):
-    def report(self, params=None, owner='sales@example.test', description='', otp='0123', clear_on_save=False, expected_otp='0123'):
+    def report(self, params=None, owner='sales@example.test', description='', otp='0123', clear_on_save=False, expected_otp='0123', outcomes=None, allow_edit=False):
         event = Row(name='EVENT-1', owner=owner, description=description, custom_otp=otp, custom_whats_app=expected_otp, event_category='Site Visit')
         self.last_event = event
         event.save = Mock()
@@ -90,6 +106,14 @@ class EventVisitReportWithoutOtpTest(unittest.TestCase):
         )
         self.last_frappe = frappe
         script = (ROOT / 'frappe_server_scripts/event_visit_report_api.py').read_text()
+        if outcomes is not None:
+            script = script.replace('allowed_outcomes = ["Interested", "Not Interested", "Follow-up Required"]',
+                                    'allowed_outcomes = ' + repr(outcomes))
+        if allow_edit:
+            script = script.replace('allow_report_edit_after_submit = False', 'allow_report_edit_after_submit = True')
+        policy_call = install_business_policy(frappe)
+        if outcomes is not None: policy_call.overrides['["Interested", "Not Interested", "Follow-up Required"]'] = repr(outcomes)
+        if allow_edit: policy_call.overrides['"allow_edit_after_submit": False'] = '"allow_edit_after_submit": True'
         exec(compile(script, 'event_visit_report_api.py', 'exec'), {'frappe': frappe})
         if (params or {}).get('action', 'get') == 'get':
             frappe.get_all.assert_called_once_with(
@@ -103,8 +127,37 @@ class EventVisitReportWithoutOtpTest(unittest.TestCase):
         return response['message'], event
 
 
+    def test_api_outcomes_and_editability_control_report_without_changing_otp(self):
+        result, event = self.report(outcomes=['Needs Quote'])
+        self.assertEqual(result['outcomes'], ['Needs Quote'])
+        self.assertTrue(result['can_edit_report'])
+        result, event = self.report(dict(action='save', observation='Visited', outcome='Needs Quote'), outcomes=['Needs Quote'])
+        self.assertEqual(result['outcome'], 'Needs Quote')
+        self.assertFalse(result['can_edit_report'])
+        self.assertEqual(event.custom_otp, '0123')
+
+    def test_retired_outcomes_do_not_unlock_historical_submitted_reports(self):
+        result, _ = self.report(description='observation : Visited\nOutcome: Interested', outcomes=['Needs Quote'])
+        self.assertTrue(result['is_submitted'])
+        self.assertFalse(result['can_edit_report'])
+        self.assertEqual(result['outcome'], 'Interested')
+
+    def test_explicit_api_edit_permission_allows_resubmission(self):
+        result, event = self.report(dict(action='save', observation='Updated', outcome='Interested'),
+                                   description='observation : Visited\nOutcome: Interested', allow_edit=True)
+        self.assertTrue(result['can_edit_report'])
+        self.assertEqual(event.description, 'observation : Updated\nOutcome: Interested')
+
     def test_get_preserves_report_options_and_historical_data(self):
         result, event = self.report(description='observation : Visited\nOutcome: Interested')
+        self.assertIs(result['requires_saved_location'], False)
+        self.assertIs(result['visit_geofencing_enabled'], False)
+        self.assertIs(result['requires_checkout_photo'], False)
+        self.assertEqual(result['visit_checkin_radius_meters'], 100)
+        self.assertEqual(result['visit_monitoring_radius_meters'], 200)
+        self.assertIs(result['visit_monitoring_enabled'], True)
+        self.assertEqual(result['checkout_location_categories'], ['Site Visit', 'Installation', 'Complaint Visit'])
+        self.assertEqual(result['checkout_location_visit_types'], ['New'])
         self.assertTrue(result['is_submitted'])
         self.assertEqual(result['observation'], 'Visited')
         self.assertEqual(result['outcome'], 'Interested')
@@ -118,6 +171,14 @@ class EventVisitReportWithoutOtpTest(unittest.TestCase):
             result, event = self.report(dict(action='save', observation='Visited',
                                             outcome='Interested', **params), expected_otp=None)
             self.assertTrue(result['is_submitted'])
+            self.assertIs(result['requires_saved_location'], False)
+            self.assertIs(result['visit_geofencing_enabled'], False)
+            self.assertIs(result['requires_checkout_photo'], False)
+            self.assertEqual(result['visit_checkin_radius_meters'], 100)
+            self.assertEqual(result['visit_monitoring_radius_meters'], 200)
+            self.assertIs(result['visit_monitoring_enabled'], True)
+            self.assertEqual(result['checkout_location_categories'], ['Site Visit', 'Installation', 'Complaint Visit'])
+            self.assertEqual(result['checkout_location_visit_types'], ['New'])
             self.assertEqual(event.description, 'observation : Visited\nOutcome: Interested')
             self.assertEqual(event.custom_otp, '0123')
             event.save.assert_called_once_with(ignore_permissions=True)
@@ -158,7 +219,7 @@ class EventOtpVerificationTest(unittest.TestCase):
         return namespace, frappe, random
 
     def test_generation_uses_four_digits_and_existing_verification_still_matches(self):
-        for filename in ['api.py', 'api_single_device_updated.py']:
+        for filename in ['api_utils.py', 'api_single_device_updated.py']:
             with self.subTest(filename=filename):
                 api, frappe, random = self.load(filename)
                 self.assertEqual(api['verify_otp']('0123', 'EVENT-1')['status'], 'success')
@@ -168,7 +229,7 @@ class EventOtpVerificationTest(unittest.TestCase):
                 self.assertEqual(frappe.get_doc.return_value.custom_otp, 1234)
 
     def test_invalid_verification_codes_are_rejected_before_database_lookup(self):
-        for filename in ['api.py', 'api_single_device_updated.py']:
+        for filename in ['api_utils.py', 'api_single_device_updated.py']:
             api, frappe, _ = self.load(filename)
             for otp in ['123', '12345', '123456', '12a4']:
                 self.assertEqual(api['verify_otp'](otp, 'EVENT-1')['status'], 'error')

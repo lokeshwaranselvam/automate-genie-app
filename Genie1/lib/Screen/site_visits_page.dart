@@ -22,9 +22,10 @@ const _visitMuted = Color(0xFF7B8492);
 enum _VisitTab { scheduled, completed, overdue }
 
 class SiteVisitsPage extends StatefulWidget {
-  const SiteVisitsPage({super.key, this.onVisitsUpdated});
+  const SiteVisitsPage({super.key, this.onVisitsUpdated, this.initialEventId});
 
   final ValueChanged<List<Map<String, dynamic>>>? onVisitsUpdated;
+  final String? initialEventId;
 
   @override
   State<SiteVisitsPage> createState() => _SiteVisitsPageState();
@@ -41,6 +42,7 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
   DateTimeRange? get _dateRange => _dateRanges[_tab];
   bool _canCreateVisit = false;
   int _permissionRequestId = 0;
+  bool _initialVisitOpened = false;
 
   @override
   void initState() {
@@ -109,6 +111,7 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
         _loading = false;
       });
       widget.onVisitsUpdated?.call(visits);
+      _openInitialVisit();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -118,12 +121,49 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     }
   }
 
+  void _openInitialVisit() {
+    final id = widget.initialEventId?.trim() ?? '';
+    if (_initialVisitOpened || id.isEmpty) return;
+    Map<String, dynamic>? target;
+    for (final visit in _visits) {
+      if (_id(visit) == id) {
+        target = visit;
+        break;
+      }
+    }
+    final visit = target;
+    if (visit != null) {
+      _initialVisitOpened = true;
+      setState(() {
+        _tab =
+            _isCompleted(visit)
+                ? _VisitTab.completed
+                : _isOverdue(visit)
+                ? _VisitTab.overdue
+                : _VisitTab.scheduled;
+      });
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (visit == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not find this visit. Refresh and try again.'),
+          ),
+        );
+        return;
+      }
+      unawaited(_openVisit(visit));
+    });
+  }
+
   Future<void> _loadCreationPermission() async {
     final requestId = ++_permissionRequestId;
     setState(() => _canCreateVisit = false);
     var allowed = false;
     try {
-      allowed = await SiteVisitCreationApi.canCreateVisit();
+      final access = await SiteVisitCreationApi.homeQuickActionAccess();
+      allowed = access.canCreateVisit && access.featureVisibility['new_visit'] != false;
     } catch (error) {
       debugPrint('Could not check site visit creation permission: $error');
     }

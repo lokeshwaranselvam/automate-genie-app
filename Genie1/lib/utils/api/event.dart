@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../api_business_policy.dart';
 import '../event_location_selection.dart';
 import '../event_otp.dart';
 import 'package:flutter/src/widgets/framework.dart';
@@ -9,6 +10,50 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class Event {
+  static Future<ApiBusinessPolicy> getBusinessPolicy(
+    String feature, {
+    String? eventId,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final site = dotenv.env['SITE_URL'] ?? '';
+    final user =
+        prefs.getString('session_username') ?? prefs.getString('email');
+    final sid = prefs.getString('session_sid');
+    final response = await http
+        .get(
+          Uri.parse(site)
+              .resolve('/api/method/mobile_business_policy')
+              .replace(
+                queryParameters: {
+                  'feature': feature,
+                  if (eventId != null) 'event_id': eventId,
+                },
+              ),
+          headers: {
+            'Accept': 'application/json',
+            'Authorization': prefs.getString('token') ?? '',
+            if (sid != null) 'Cookie': 'sid=$sid',
+          },
+        )
+        .timeout(const Duration(seconds: 15));
+    final body = jsonDecode(response.body);
+    final raw =
+        body is Map && body['message'] is Map
+            ? body['message']['policy']
+            : null;
+    if (response.statusCode != 200 ||
+        raw is! Map ||
+        raw['current_user'] != user ||
+        prefs.getString('session_sid') != sid ||
+        (prefs.getString('session_username') ?? prefs.getString('email')) !=
+            user) {
+      throw StateError(
+        'ERP could not verify the current business policy. Refresh and try again.',
+      );
+    }
+    return ApiBusinessPolicy.fromApi(raw);
+  }
+
   static String? token;
 
   static late SharedPreferences prefs;

@@ -4,6 +4,63 @@ import 'package:homegenie/utils/site_visit_schedule.dart';
 void main() {
   final date = DateTime(2026, 10, 12);
 
+  test(
+    'API changes slot interval, past-time allowance and earliest booking date',
+    () {
+      final policy = SiteVisitSchedulePolicy.fromApi({
+        'interval_minutes': 30,
+        'allow_past': true,
+        'earliest_booking_date': '2026-10-10',
+      });
+      final slots = SiteVisitSchedule.slots(
+        date: date,
+        now: DateTime(2026, 10, 13),
+        policy: policy,
+      );
+      expect(slots.length, 48);
+      expect(slots[1], DateTime(2026, 10, 12, 0, 30));
+      expect(
+        SiteVisitSchedule.validate(
+          start: date,
+          end: date.add(const Duration(minutes: 30)),
+          now: DateTime(2026, 10, 13),
+          policy: policy,
+        ),
+        isNull,
+      );
+      expect(
+        SiteVisitSchedule.slots(
+          date: DateTime(2026, 10, 9),
+          now: date,
+          policy: policy,
+        ),
+        isEmpty,
+      );
+      expect(
+        SiteVisitSchedule.validate(
+          start: date.add(const Duration(minutes: 15)),
+          end: date.add(const Duration(minutes: 30)),
+          now: date,
+          policy: policy,
+        ),
+        isNotNull,
+      );
+    },
+  );
+
+  test('invalid API interval cannot create an empty or infinite slot loop', () {
+    for (final interval in [0, -1, 7, 90, '30']) {
+      expect(
+        () => SiteVisitSchedulePolicy.fromApi({
+          'interval_minutes': interval,
+          'allow_past': false,
+          'earliest_booking_date': '',
+        }),
+        throwsFormatException,
+      );
+    }
+  });
+
   test('today only offers future quarter-hour slots', () {
     final slots = SiteVisitSchedule.slots(
       date: date,

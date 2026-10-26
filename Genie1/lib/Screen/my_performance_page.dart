@@ -168,11 +168,9 @@ class _MyPerformancePageState extends State<MyPerformancePage>
     metrics: const [
       ('Leads Created', 'leads'),
       ('Site Visits', 'site_visits'),
-      ('Quotations', 'quotations'),
-      ('Orders', 'orders'),
     ],
     definition:
-        'Leads Created counts records whose Lead Owner is your user, matching My Leads, grouped by creation date. Conversions counts those same leads currently marked Converted, grouped by lead creation date. Site Visits counts actual event visits for your Employee. Quotations and Orders count your submitted documents by transaction date; drafts and cancellations are excluded.',
+        'Leads Created counts records whose Lead Owner is your user, matching My Leads, grouped by creation date. Conversions counts those same leads currently marked Converted, grouped by lead creation date. Site Visits counts actual event visits for your Employee.',
   );
 
   void _showDefinitions() {
@@ -518,11 +516,12 @@ class _MyPerformancePageState extends State<MyPerformancePage>
                     ),
                   ],
                 ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 16,
+                  runSpacing: 8,
                   children: [
                     _legend(section.firstLabel, _leadColor),
-                    const SizedBox(width: 16),
                     _legend(section.secondLabel, _conversionColor),
                   ],
                 ),

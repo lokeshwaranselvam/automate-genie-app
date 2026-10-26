@@ -42,6 +42,9 @@ void main() {
         bool showAddLead = true,
         bool showNewVisit = true,
         bool showPending = true,
+        bool showTasks = true,
+        bool showAttendance = true,
+        bool showNewTask = true,
         ({int pending, int inProgress, int completed})? taskSummary,
       }) => RepaintBoundary(
         key: previewKey,
@@ -74,6 +77,9 @@ void main() {
               showVisits: showAddLead,
               showPending: showPending,
               showSchedule: showAddLead,
+              showTasks: showTasks,
+              showAttendance: showAttendance,
+              showNewTask: showNewTask,
               taskSummary: taskSummary,
               schedule: schedule,
               onRefresh: () async => calls.add('refresh'),
@@ -93,6 +99,7 @@ void main() {
               onTap: (index) => calls.add('nav-$index'),
               showLeads: showAddLead,
               showVisits: showNewVisit,
+              showTasks: showTasks,
             ),
           ),
         ),
@@ -140,6 +147,15 @@ void main() {
       }
       await tester.tap(find.text('Tasks'));
       expect(calls.last, 'nav-1');
+      await tester.pumpWidget(
+        screen(showTasks: false, showAttendance: false, showNewTask: false),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Tasks Today'), findsNothing);
+      expect(find.text('Tasks'), findsNothing);
+      expect(find.text('Attendance'), findsNothing);
+      expect(find.text('New Task'), findsNothing);
+      expect(find.text('My Leads'), findsOneWidget);
       await tester.pumpWidget(
         screen(
           name: 'Another Employee',

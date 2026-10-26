@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,11 +12,42 @@ void main() {
   final calls = <String>[];
   var nativeActive = false;
 
+  var session = 0;
+  void trackingTest(String name, Future<void> Function() body) {
+    test(
+      name,
+      () => http.runWithClient(
+        body,
+        () => MockClient((request) async {
+          if (request.url.path.endsWith('frappe.auth.get_logged_user')) {
+            return http.Response(
+              jsonEncode({'message': 'employee@example.test'}),
+              200,
+            );
+          }
+          if (request.url.path.endsWith('mobile_site_visit')) {
+            return http.Response(
+              jsonEncode({
+                'message': {
+                  'current_user': 'employee@example.test',
+                  'can_track': true,
+                },
+              }),
+              200,
+            );
+          }
+          throw StateError('Unexpected request: ${request.url.path}');
+        }),
+      ),
+    );
+  }
+
   setUp(() {
+    session++;
     dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
     SharedPreferences.setMockInitialValues({
       'email': 'employee@example.test',
-      'session_sid': 'test-session',
+      'session_sid': 'test-session-$session',
       'token': 'token key:secret',
     });
     calls.clear();
@@ -40,15 +74,18 @@ void main() {
         .setMockMethodCallHandler(LiveLocationService.platform, null);
   });
 
-  test('event restart cannot start live tracking without attendance', () async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('with_event', true);
-    await LiveLocationService().startTracking();
-    expect(calls, ['stopLocationTracking']);
-    expect(nativeActive, isFalse);
-  });
+  trackingTest(
+    'event restart cannot start live tracking without attendance',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('with_event', true);
+      await LiveLocationService().startTracking();
+      expect(calls, ['stopLocationTracking']);
+      expect(nativeActive, isFalse);
+    },
+  );
 
-  test('successful current attendance permits live tracking', () async {
+  trackingTest('successful current attendance permits live tracking', () async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_employee_checked_in', true);
     await LiveLocationService().startTracking();
@@ -56,7 +93,7 @@ void main() {
     expect(nativeActive, isTrue);
   });
 
-  test(
+  trackingTest(
     'previous-day state stops tracking and event restart stays stopped',
     () async {
       final prefs = await SharedPreferences.getInstance();
@@ -76,12 +113,15 @@ void main() {
     },
   );
 
-  test('resume of active attendance does not duplicate native start', () async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('is_employee_checked_in', true);
-    nativeActive = true;
-    await LiveLocationService().ensureTracking();
-    expect(calls, ['isLocationTracking']);
-    expect(nativeActive, isTrue);
-  });
+  trackingTest(
+    'resume of active attendance does not duplicate native start',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('is_employee_checked_in', true);
+      nativeActive = true;
+      await LiveLocationService().ensureTracking();
+      expect(calls, ['isLocationTracking']);
+      expect(nativeActive, isTrue);
+    },
+  );
 }
