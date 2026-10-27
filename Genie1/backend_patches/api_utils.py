@@ -9,10 +9,10 @@ from frappe.utils import nowdate,getdate
 from frappe.core.doctype.user.user import generate_keys
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
-def login(usr, pwd, device_key=None, platform=None):
+def login(usr, pwd, device_key=None, platform=None, android_id=None):
     # Keep this public method path; implementation is isolated from visits and attendance.
     from itgenie.mobile_auth import login as mobile_login
-    return mobile_login(usr, pwd, device_key, platform=platform)
+    return mobile_login(usr, pwd, device_key, platform=platform, android_id=android_id)
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])

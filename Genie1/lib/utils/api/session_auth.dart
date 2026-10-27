@@ -55,6 +55,7 @@ class SessionAuthApi {
     await MobileLoginDevice.completePendingLogout();
     final apiBase = dotenv.env['URL']?.trim() ?? '';
     if (apiBase.isEmpty) throw StateError('URL is not configured in .env');
+    final androidId = await MobileLoginDevice.androidId();
     final response = await http
         .post(
           Uri.parse('$apiBase.login'),
@@ -66,6 +67,7 @@ class SessionAuthApi {
             'usr': username,
             'pwd': password,
             'device_key': await MobileLoginDevice.key(),
+            if (androidId != null) 'android_id': androidId,
             if (defaultTargetPlatform == TargetPlatform.android)
               'platform': 'android'
             else if (defaultTargetPlatform == TargetPlatform.iOS)
@@ -106,6 +108,11 @@ class SessionAuthApi {
     if (data is! Map || data['single_device_login'] != true) {
       throw StateError(
         'The ERP mobile login update is required. Contact your administrator.',
+      );
+    }
+    if (androidId != null && data['android_device_binding'] != true) {
+      throw StateError(
+        'The ERP Android device-binding update is required. Contact your administrator.',
       );
     }
     final token = data['token']?.toString().trim() ?? '';

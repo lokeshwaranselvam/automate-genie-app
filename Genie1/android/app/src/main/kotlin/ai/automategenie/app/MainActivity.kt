@@ -2,6 +2,7 @@ package ai.automategenie.app
 
 import android.content.Intent
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -14,6 +15,27 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "ai.automategenie.app/mobile_device")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "androidId") {
+                    result.notImplemented()
+                } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                    // Older Android keeps the existing installation-only binding.
+                    result.success(null)
+                } else {
+                    try {
+                        val id = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+                        if (id.isNullOrBlank()) {
+                            result.error("DEVICE_ID_UNAVAILABLE", "Unable to identify this Android device.", null)
+                        } else {
+                            result.success(id)
+                        }
+                    } catch (e: Exception) {
+                        result.error("DEVICE_ID_UNAVAILABLE", "Unable to identify this Android device.", null)
+                    }
+                }
+            }
 
         // Recording Service Channel (unchanged for backward compatibility)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, RECORDING_CHANNEL)

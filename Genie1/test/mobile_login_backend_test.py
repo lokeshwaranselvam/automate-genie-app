@@ -1,5 +1,6 @@
 """Behavior tests for the custom-app mobile login guard, without a live ERP."""
 import copy
+import ast
 from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 from pathlib import Path
@@ -40,6 +41,10 @@ class MobileLoginBackendTest(unittest.TestCase):
         self.mutexes = {}
         self.created_sessions = []
         self.deleted_sessions = []
+        self.transaction_session_deletes = []
+        self.after_commit = []
+        self.after_rollback = []
+        self.cache_deletes = []
         self.events = []
         self.counter = 0
         self.mapping = True
@@ -80,7 +85,8 @@ class MobileLoginBackendTest(unittest.TestCase):
                 return filters
             self.assertEqual(doctype, 'FCM Device')
             row = next((r for r in self.bindings.values()
-                        if r.employee == filters['employee']), None)
+                        if (r.name == filters if isinstance(filters, str)
+                            else r.employee == filters['employee'])), None)
             return copy.deepcopy(row)
 
         def set_value(doctype, name, values):
@@ -120,11 +126,15 @@ class MobileLoginBackendTest(unittest.TestCase):
             rollback=lambda: None, exists=lambda *args: True,
             get_value=get_value,
             set_value=set_value,
-            delete=lambda dt, filters: self.bindings.pop(filters['name'], None),
+            delete=lambda dt, filters: self.transaction_session_deletes.append(filters)
+                if dt == 'Sessions' else self.bindings.pop(filters['name'], None),
+            after_commit=SimpleNamespace(add=self.after_commit.append),
+            after_rollback=SimpleNamespace(add=self.after_rollback.append),
         )
         frappe = ModuleType('frappe')
         frappe.local = self.context
         frappe.session = self.context
+        frappe.cache = SimpleNamespace(hdel=lambda *args: self.cache_deletes.append(args))
         frappe.db = self.db
         frappe.ValidationError = ValueError
         frappe.throw = lambda message, exc: (_ for _ in ()).throw(exc(message))
@@ -164,12 +174,12 @@ class MobileLoginBackendTest(unittest.TestCase):
                                      'frappe.utils.password': password}):
             spec.loader.exec_module(self.module)
 
-    def login(self, device, password='correct', platform='android', user=None):
+    def login(self, device, password='correct', platform='android', user=None, android_id=None):
         self.context.site = 'erp.example.test'
         self.context.response = {}
         self.context.sid = 'Guest'
         self.context.user = 'Guest'
-        self.module.login(user or self.user, password, device, platform=platform)
+        self.module.login(user or self.user, password, device, platform=platform, android_id=android_id)
         return self.context.response.copy()
 
     def logout(self, device):
@@ -484,6 +494,190 @@ class MobileLoginBackendTest(unittest.TestCase):
                 self.module.reset_device(self.user)
         self.assertEqual(self.bindings[self.user], original)
         self.assertEqual(self.deleted_sessions, [])
+
+    def test_android_reinstall_rotates_key_and_access_after_full_login(self):
+        first = self.login('a' * 43, android_id='a1b2c3d4e5f67890')
+        row = self.bindings[self.user]
+        android_hash = row.custom_mobile_android_id_hash
+        row.update(device_id='old-notification-id', fcm_token='old-fcm', is_active=1)
+        second = self.login('b' * 43, android_id='a1b2c3d4e5f67890')
+        self.assertTrue(second['android_device_binding'])
+        self.assertNotEqual(first['token'], second['token'])
+        self.assertEqual(row.custom_mobile_android_id_hash, android_hash)
+        self.assertEqual(row.custom_mobile_device_hash, self.module._device_hash('b' * 43))
+        self.assertEqual(self.deleted_sessions, ['sid-1'])
+        self.assertIsNone(row.device_id)
+        self.assertEqual(row.is_active, 0)
+        self.assertEqual(row.fcm_token, 'old-fcm')
+        self.assertEqual(self.logout('a' * 43)['http_status_code'], 403)
+        self.assertEqual(self.logout('b' * 43)['message']['status'], 'success')
+        self.assertEqual(row.custom_mobile_android_id_hash, android_hash)
+
+    def test_different_android_id_rejected_even_with_same_private_key(self):
+        self.login('a' * 43, android_id='a1b2c3d4e5f67890')
+        original = copy.deepcopy(self.bindings[self.user])
+        secret = self.accounts[self.user].api_secret
+        for key in ('a' * 43, 'b' * 43):
+            self.assertEqual(self.login(key, android_id='1234567890abcdef')['http_status_code'], 409)
+        self.assertEqual(self.bindings[self.user], original)
+        self.assertEqual(self.accounts[self.user].api_secret, secret)
+        self.assertEqual(len(self.created_sessions), 1)
+
+    def test_legacy_migration_requires_original_key(self):
+        self.login('a' * 43)
+        self.assertEqual(self.login('b' * 43, android_id='a1b2c3d4e5f67890')['http_status_code'], 409)
+        self.assertFalse(self.bindings[self.user].custom_mobile_android_id_hash)
+        old_token = self.accounts[self.user].api_secret
+        self.assertTrue(self.login('a' * 43, android_id='a1b2c3d4e5f67890')['android_device_binding'])
+        self.assertEqual(self.accounts[self.user].api_secret, old_token)
+        self.assertTrue(self.login('b' * 43, android_id='a1b2c3d4e5f67890')['single_device_login'])
+
+    def test_old_client_can_retry_its_original_key_but_not_bypass_android_binding(self):
+        self.login('a' * 43, android_id='a1b2c3d4e5f67890')
+        for platform in ('android', 'ios', None):
+            self.assertTrue(self.login('a' * 43, platform=platform)['single_device_login'])
+            self.assertEqual(self.login('b' * 43, platform=platform)['http_status_code'], 409)
+        self.assertTrue(self.bindings[self.user].custom_mobile_android_id_hash)
+
+    def test_wrong_password_and_incomplete_frappe_login_cannot_rebind_android(self):
+        self.login('a' * 43, android_id='a1b2c3d4e5f67890')
+        original = copy.deepcopy(self.bindings[self.user])
+        with self.assertRaisesRegex(ValueError, 'password'):
+            self.login('b' * 43, password='wrong', android_id='a1b2c3d4e5f67890')
+        with patch.object(self.module.LoginManager, 'login', return_value=False):
+            self.login('b' * 43, android_id='a1b2c3d4e5f67890')
+        self.assertEqual(self.bindings[self.user], original)
+        self.assertEqual(len(self.created_sessions), 1)
+
+    def test_android_recovery_retains_employee_and_office_mapping_validation(self):
+        self.login('a' * 43, android_id='a1b2c3d4e5f67890')
+        original = copy.deepcopy(self.bindings[self.user])
+        self.mapping = False
+        self.assertEqual(self.login('b' * 43, android_id='a1b2c3d4e5f67890')['http_status_code'], 403)
+        self.assertEqual(self.bindings[self.user], original)
+
+    def test_android_id_cannot_be_claimed_by_second_user_after_reinstall(self):
+        other = self.add_second_user()
+        self.login('a' * 43, android_id='a1b2c3d4e5f67890')
+        self.logout('a' * 43)
+        result = self.login('b' * 43, user=other, android_id='a1b2c3d4e5f67890')
+        self.assertEqual(result['http_status_code'], 409)
+        self.assertNotIn(other, self.bindings)
+
+    def test_competing_users_with_different_keys_cannot_share_android_id(self):
+        other = self.add_second_user()
+        self.barrier = threading.Barrier(2)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(
+                lambda args: self.login(args[0], user=args[1], android_id='a1b2c3d4e5f67890'),
+                [('a' * 43, self.user), ('b' * 43, other)],
+            ))
+        self.assertEqual(sum(r.get('single_device_login', False) for r in results), 1)
+        self.assertEqual(sum(r.get('http_status_code') == 409 for r in results), 1)
+        self.assertEqual(len(self.bindings), 1)
+        self.assertEqual(self.events.count('lock'), self.events.count('unlock'))
+
+    def test_android_identifier_validation_and_case_normalization(self):
+        for value in ('', '0', '0000000000000000', '9774d56d682e549c',
+                      'a' * 17, [], 123, 'not-an-id'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'identifier'):
+                self.login('a' * 43, android_id=value)
+        with self.assertRaises(ValueError):
+            self.login('a' * 43, platform='ios', android_id='a1b2c3d4e5f67890')
+        self.assertEqual(self.created_sessions, [])
+        self.login('a' * 43, android_id=' A1B2C3D4E5F67890 ')
+        row = self.bindings[self.user]
+        self.assertEqual(len(row.custom_mobile_android_id_hash), 64)
+        self.assertNotEqual(row.custom_mobile_android_id_hash, 'a1b2c3d4e5f67890')
+        self.assertTrue(self.login('b' * 43, android_id='a1b2c3d4e5f67890')['single_device_login'])
+
+    def test_android_reset_clears_both_hashes_and_allows_different_phone(self):
+        self.login('a' * 43, android_id='a1b2c3d4e5f67890')
+        self.module.reset_device(self.user)
+        self.assertIsNone(self.bindings[self.user].custom_mobile_android_id_hash)
+        self.assertIsNone(self.bindings[self.user].custom_mobile_device_hash)
+        self.assertTrue(self.login('b' * 43, android_id='1234567890abcdef')['single_device_login'])
+
+    def test_admin_deletion_revokes_access_without_committing_inside_hook(self):
+        self.login('a' * 43, android_id='a1b2c3d4e5f67890')
+        row = self.bindings[self.user]
+        old_secret = self.accounts[self.user].api_secret
+        self.events.clear()
+        self.module.on_device_trash(row)
+        self.assertNotEqual(self.accounts[self.user].api_secret, old_secret)
+        self.assertEqual(self.transaction_session_deletes, [{'sid': 'sid-1', 'user': self.user}])
+        self.assertNotIn('commit', self.events)
+        self.assertEqual(self.deleted_sessions, [])  # No committing delete_session API.
+        self.assertEqual(self.cache_deletes, [])  # Invalidate only after commit.
+        self.assertEqual(self.events.count('lock'), 1)
+        self.assertEqual(self.events.count('unlock'), 0)
+        self.bindings.pop(self.user)  # Frappe performs the actual document delete.
+        for callback in self.after_commit:
+            callback()
+        self.assertEqual(self.cache_deletes, [('session', 'sid-1'), ('last_db_session_update', 'sid-1')])
+        self.assertEqual(self.events.count('unlock'), 1)
+        self.assertTrue(self.login('b' * 43, android_id='1234567890abcdef')['single_device_login'])
+
+    def test_managed_device_delete_requires_admin_and_unmanaged_delete_unchanged(self):
+        self.login('a' * 43, android_id='a1b2c3d4e5f67890')
+        with patch.object(self.module.frappe, 'only_for', side_effect=PermissionError('System Manager')):
+            with self.assertRaises(PermissionError):
+                self.module.on_device_trash(self.bindings[self.user])
+            self.module.on_device_trash(Row(user=self.user))  # Unbound metadata only.
+        self.assertEqual(self.transaction_session_deletes, [])
+        self.assertEqual(self.after_commit, [])
+
+    def test_delete_failure_registers_rollback_unlock(self):
+        self.login('a' * 43, android_id='a1b2c3d4e5f67890')
+        self.events.clear()
+        with patch.object(self.module.frappe, 'get_doc', side_effect=ValueError('save failed')):
+            with self.assertRaisesRegex(ValueError, 'save failed'):
+                self.module.on_device_trash(self.bindings[self.user])
+        self.assertNotIn('commit', self.events)
+        for callback in self.after_rollback:
+            callback()
+        self.assertEqual(self.events.count('lock'), self.events.count('unlock'))
+        self.assertEqual(self.transaction_session_deletes, [])
+
+    def test_reinstall_notification_registration_passes_existing_save_guard(self):
+        self.login('a' * 43, android_id='a1b2c3d4e5f67890')
+        self.bindings[self.user].update(device_id='old-id', fcm_token='old-token', is_active=1)
+        self.login('b' * 43, android_id='a1b2c3d4e5f67890')
+        row = self.bindings[self.user]
+        new_doc = Row(row, device_id='new-id', is_active=1)
+        new_doc['is_new'] = lambda: False
+        guard_path = Path(__file__).resolve().parents[1] / 'frappe_server_scripts/fcm_device_validation.py'
+        original_get_value = self.db.get_value
+        with patch.object(self.db, 'get_value', side_effect=lambda dt, filters, fields, **kw:
+                          row if dt == 'FCM Device' else original_get_value(dt, filters, fields, **kw)), \
+                patch.object(self.db, 'exists', return_value=False):
+            exec(compile(guard_path.read_text(), str(guard_path), 'exec'),
+                 {'doc': new_doc, 'frappe': self.module.frappe})
+
+    def test_missing_new_android_field_fails_before_creating_a_session(self):
+        self.meta.has_field = lambda name: name != 'custom_mobile_android_id_hash'
+        result = self.login('a' * 43, android_id='a1b2c3d4e5f67890')
+        self.assertEqual(result['http_status_code'], 503)
+        self.assertEqual(self.created_sessions, [])
+        self.assertEqual(self.bindings, {})
+
+    def test_both_public_login_delegates_forward_android_identifier(self):
+        target = ModuleType('itgenie.mobile_auth')
+        calls = []
+        target.login = lambda *args, **kwargs: calls.append((args, kwargs)) or 'delegated'
+        for name in ('api_utils.py', 'api_single_device_updated.py'):
+            path = Path(__file__).resolve().parents[1] / 'backend_patches' / name
+            function = next(node for node in ast.parse(path.read_text(encoding='utf-8')).body
+                            if isinstance(node, ast.FunctionDef) and node.name == 'login')
+            function.decorator_list = []
+            namespace = {}
+            exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), 'exec'), namespace)
+            with patch.dict(sys.modules, {'itgenie.mobile_auth': target}):
+                self.assertEqual(namespace['login'](
+                    self.user, 'correct', 'a' * 43, platform='android',
+                    android_id='a1b2c3d4e5f67890'), 'delegated')
+            self.assertEqual(calls[-1], ((self.user, 'correct', 'a' * 43),
+                                        {'platform': 'android', 'android_id': 'a1b2c3d4e5f67890'}))
 
 
 if __name__ == '__main__':

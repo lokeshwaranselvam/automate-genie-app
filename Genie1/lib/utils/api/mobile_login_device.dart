@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 /// An installation credential, not a hardware ID. Kept across prefs.clear().
@@ -12,6 +14,27 @@ class MobileLoginDevice {
   static const _activeName = 'genie_active_mobile_binding';
   static Future<String>? _keyRequest;
   static Future<void>? _logoutRequest;
+
+  static const _deviceChannel = MethodChannel(
+    'ai.automategenie.app/mobile_device',
+  );
+
+  /// A recognition signal, never a replacement for the private logout key.
+  /// Null means iOS/web or Android below 8; keep their existing binding flow.
+  static Future<String?> androidId() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return null;
+    final value = await _deviceChannel.invokeMethod<String>('androidId');
+    if (value == null) return null;
+    final id = value.trim().toLowerCase();
+    if (!RegExp(r'^[0-9a-f]{1,16}$').hasMatch(id) ||
+        RegExp(r'^0+$').hasMatch(id) ||
+        id == '9774d56d682e549c') {
+      throw StateError(
+        'Unable to identify this Android device. Contact your administrator.',
+      );
+    }
+    return id;
+  }
 
   static Future<String> key() async {
     final request = _keyRequest ??= _loadKey();
