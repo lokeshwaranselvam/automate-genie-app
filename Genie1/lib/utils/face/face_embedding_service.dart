@@ -9,6 +9,7 @@ import 'package:image/image.dart' as image;
 import 'face_alignment.dart';
 import 'face_image_quality.dart';
 import 'face_performance_trace.dart';
+import 'primary_face.dart';
 
 class FaceEmbeddingException implements Exception {
   final String message;
@@ -97,14 +98,18 @@ class FaceEmbeddingService {
           InputImage.fromFilePath(uprightFile.path),
         ),
       );
-      if (faces.length != 1) {
+      final face = selectPrimaryFace(
+        faces,
+        prepared.width.toDouble(),
+        prepared.height.toDouble(),
+      );
+      if (face == null) {
         throw FaceEmbeddingException(
           faces.isEmpty
               ? 'Keep your face clearly visible and try again.'
-              : 'Only one person can be visible in the selfie.',
+              : 'Keep your face closest to the camera. Move other people farther behind you.',
         );
       }
-      final face = faces.single;
       validateFaceQuality(
         face,
         prepared.width,

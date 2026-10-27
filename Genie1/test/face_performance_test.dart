@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:homegenie/Screen/face_capture_page.dart';
 import 'package:homegenie/utils/api/face_auth_api.dart';
 import 'package:homegenie/utils/face/face_auth_flow.dart';
 import 'package:homegenie/utils/face/face_embedding_service.dart';
@@ -138,6 +140,66 @@ Future<void> withPhoto(
 }
 
 void main() {
+  for (final action in ['enroll', 'attendance_in', 'attendance_out']) {
+    testWidgets(
+      '$action camera enables blur while attendance retains raw photos',
+      (tester) async {
+        const channel = MethodChannel('google_mlkit_face_detector');
+        final messenger = tester.binding.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(channel, (_) async => null);
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        final harness = FlowHarness();
+        await harness.primeTemplate();
+        late BuildContext context;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (value) {
+                context = value;
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        );
+        final flow = FaceAuthFlow(
+          api: harness.api,
+          cache: harness.cache,
+          embed: (_) async => fixture.embedding(),
+          warmUp: () async {},
+        );
+        final pending =
+            action == 'enroll'
+                ? flow.enroll(
+                  context,
+                  const FaceEnrollmentStatus(
+                    currentUser: fixture.account,
+                    csrfToken: 'face-csrf',
+                    minimumSimilarity: .5,
+                  ),
+                )
+                : flow.verify(
+                  context: context,
+                  action: action,
+                  refreshLocation: () async => location(),
+                );
+        await tester.pumpAndSettle();
+        final page = tester.widget<FaceCapturePage>(
+          find.byType(FaceCapturePage),
+        );
+        expect(page.portraitBackgroundBlur, isTrue);
+        expect(page.blurCapturedPhoto, action == 'enroll');
+        expect(page.validatePhotoInCallback, isTrue);
+        expect(page.validateCapture, isNotNull);
+        Navigator.of(tester.element(find.byType(FaceCapturePage))).pop();
+        await tester.pumpAndSettle();
+        expect(await pending, isNull);
+        expect(harness.posts, isEmpty);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+  }
+
   testWidgets('camera opens while the cold reference is still being prepared', (
     tester,
   ) async {

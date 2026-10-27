@@ -1,8 +1,9 @@
-# Single-phone mobile login rollout
+# Permanent single-device mobile login
 
 This is **unrestricted custom Frappe application Python**, not a restricted
-Server Script. Install both backend and Flutter changes. The app deliberately
-refuses login if the backend does not confirm `single_device_login: true`.
+Server Script. The current app already sends the required login credential;
+this permanent-binding update requires no Flutter changes or APK rebuild.
+The app refuses login if the backend does not confirm `single_device_login: true`.
 Nothing has been installed on the live ERP by the local code changes.
 
 ## Behavior
@@ -10,38 +11,81 @@ Nothing has been installed on the live ERP by the local code changes.
 - A successful mobile login binds the user to a random 256-bit installation
   credential held in Flutter Secure Storage. No hardware ID is collected.
 - A different installation receives HTTP 409 before session creation or API
-  secret rotation. The first phone's credentials continue working.
+  secret rotation, with `Wrong User`. The first phone's credentials continue working.
+- The same installation cannot be bound to a second user, including after
+  logout. Device and user advisory locks prevent concurrent first-claim races.
 - A same-installation retry still requires the user's password and uses the
   same API token. Its old mobile SID is replaced so lost responses are recoverable.
 - Login stores the installation hash and SID in the employee-keyed `FCM Device`.
   Logout checks the installation credential, revokes the mobile SID and API
-  secret, then clears the login fields while retaining the notification row. Retry is safe if the response was lost.
+  secret, then clears the SID and disables delivery while retaining the device
+  hash and notification row. Retry is safe if the response was lost.
 - The binding does not expire with inactivity or an expired browser session.
-  This implements the requested restriction **until explicit logout**.
+  The binding is **permanent until a System Manager explicitly resets it**.
 - The app keeps a pending logout in secure storage through emergency local
   cleanup and completes it before another login. Normal logout retains local
-  credentials and shows an error if ERP cannot confirm release.
+  credentials and shows an error if ERP cannot confirm sign-out.
 - Existing Employee/office mapping validations, Frappe password/IP/hour/2FA
   policies, visit APIs, attendance, face verification and location flows remain.
   The Flutter login UI still does not implement interactive Frappe 2FA; such
   accounts cannot complete mobile login until that separate flow is implemented.
 
-## Deploy backend first
+## Update the existing deployment
+
+1. Back up the deployed helper and replace only:
+
+   ```text
+   backend_patches/mobile_auth.py -> apps/itgenie/itgenie/mobile_auth.py
+   ```
+
+   Keep the existing `itgenie.api.login` and `mobile_logout` delegates, their
+   response formats, and all other API methods. The delegate code is shown below.
+2. Run `bench restart` so the new login guard is active.
+3. Replace the supplied **FCM Device / Before Save** script's code with
+   `frappe_server_scripts/fcm_device_validation.py`. Keep that hook enabled.
+   The revised restricted script permits the initial inactive row without a
+   notification `device_id`, preserves the user/Employee mapping, allows the
+   first notification ID assignment, and prevents later ID changes or sharing.
+   The permanent login check is in the custom app helper, not this save hook.
+   The original hook would reject the first inactive login row, so deploy both
+   files in the same rollout. Keep unrelated document hooks enabled.
+4. No new fields or installer rerun are needed if
+   `custom_mobile_device_hash` and `custom_mobile_session_id` already exist.
+   The app still sends its private `device_key` during login. Its separate
+   notification `device_id` and rotating FCM token remain metadata.
+5. Verify Phone A first login and same-phone retry, Phone B rejection, logout
+   on A followed by continued B rejection, and successful A login again.
+   Verify a second employee cannot claim installation A. Then perform the
+   administrator reset below and verify an explicitly approved replacement.
+
+Existing nonempty device hashes remain the permanent owners. A row whose hash
+was cleared under the old logout policy is bound on its next successful login.
+The old notification `device_id` cannot reconstruct the private installation
+credential; do not claim these historical rows have already been permanently
+verified. Coordinate the first login for those employees. If legacy rows have
+the same nonempty hash under different users, verify ownership and use the
+administrator reset for the incorrect rows; do not silently reassign them.
+
+This binds an **app installation**, not an unchangeable hardware serial number.
+Reinstallation or secure-storage loss can change its credential and requires
+an administrator reset for the previously bound user.
+
+## First installation, if the earlier login guard is absent
 
 The public mobile API module is `itgenie.api`. MariaDB is required;
 the code uses connection-scoped advisory locks that survive Frappe's internal
 login commits. Redis cache eviction does not remove the durable device binding.
 
-1. Back up any existing destination files and deploy the complete API and helper:
+1. Back up the deployed files, add the login/logout delegates shown below to
+   the existing API module, and deploy the helper:
 
    ```text
-   backend_patches/api.py         -> apps/itgenie/itgenie/api.py
    backend_patches/mobile_auth.py -> apps/itgenie/itgenie/mobile_auth.py
    ```
 
    The `itgenie` app must be available in this bench and installed on the target site.
-   Compare the API against the current live version and preserve any newer live
-   business logic. All app calls using `URL` will now use this complete module.
+   Preserve every other live API function. Do not replace a complete API module
+   merely to install this device check.
 2. From the bench directory, add the two fields to the existing `FCM Device`:
 
    ```sh
@@ -63,7 +107,7 @@ login commits. Redis cache eviction does not remove the durable device binding.
    Login reuses the Employee's FCM row, or inserts an inactive row without an FCM
    token if none exists. A new phone claim disables old push delivery until the
    app registers its current notification token. Same-phone retries preserve
-   notification activation. Logout clears the binding and disables push delivery,
+   notification activation. Logout retains the binding and disables push delivery,
    without deleting the FCM row, token, platform or version metadata.
 
    Ensure the deployed `itgenie.fcm.devices.register_device` updates an existing
@@ -87,7 +131,8 @@ login commits. Redis cache eviction does not remove the durable device binding.
    build to register their phone. Coordinate this rollout: historical tokens
    alone cannot tell the server which physical phone should own a new binding.
 5. Test Phone A login, Phone B rejection for the same user, continued visits on
-   A, logout on A, then successful login on B. Also test a separate employee on
+   A, logout on A, then continued rejection on B. After an administrator reset,
+   the replacement phone can bind. Also test a separate employee on
    another phone, normal attendance, leads, and temporary network loss at logout.
 
 This restriction covers the Genie mobile login endpoint. Standard ERP desktop
@@ -107,7 +152,9 @@ reset_device("employee@example.com")
 ```
 
 This is not a public endpoint. It revokes the old credentials and releases the
-binding. The next phone can then log in. Avoid manually deleting the row: that
+binding, clearing the old notification `device_id` while retaining the FCM row
+and its token/version metadata with delivery disabled. The next approved phone
+can then log in and set its notification ID. Avoid manually deleting the row: that
 would skip credential revocation.
 
 The API secret is the existing User-level Frappe secret, as in the prior mobile
@@ -126,6 +173,11 @@ current live `apps/itgenie/itgenie/api.py`; preserve every other live method:
 def login(usr, pwd, device_key=None, platform=None):
     from itgenie.mobile_auth import login as mobile_login
     return mobile_login(usr, pwd, device_key, platform=platform)
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def mobile_logout(user, device_key):
+    from itgenie.mobile_auth import logout as release_mobile_session
+    return release_mobile_session(user, device_key)
 ```
 
 The backend validates the supplied platform and sets it on the FCM Device row
@@ -134,14 +186,16 @@ without deleting device/session records. For old clients that omit the optional
 parameter, an existing platform is retained; a missing platform defaults to
 Android for legacy compatibility. Platform metadata is not a device credential.
 No changes to `itgenie.lead_calling.mobile_api.register_device` are required.
-After deploying the backend, run `bench restart`, rebuild/reinstall Flutter,
-and sign in again. No new fields or installer rerun are needed for this update.
+For the current app, deploy the helper and run `bench restart`; rebuilding or
+reinstalling Flutter is unnecessary. The first-installation steps above apply
+only to older builds that do not already send an installation credential.
 
 ## Local checks
 
 ```sh
 python -m unittest discover -s test -p mobile_login_backend_test.py
 python -m unittest discover -s test -p fcm_device_registration_test.py
+python -m unittest discover -s test -p fcm_device_validation_test.py
 flutter test test/single_device_login_test.dart
 ```
 

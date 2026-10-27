@@ -14,16 +14,23 @@ import 'package:permission_handler/permission_handler.dart';
 import '../utils/face/face_blink_controller.dart';
 import '../utils/face/face_image_quality.dart';
 import '../utils/face/face_performance_trace.dart';
+import '../utils/face/portrait_blur_preview.dart';
+import '../utils/face/portrait_blur_service.dart';
+import '../utils/face/primary_face.dart';
 
-/// Returns a raw JPEG only after one continuous blink and a clear eyes-open
-/// photo. [validateCapture] returns null to accept, or guidance to retry.
+/// Validates a raw JPEG after one continuous blink and a clear eyes-open photo.
+/// [validateCapture] returns null to accept, or guidance to retry. Enrollment
+/// can apply a cosmetic portrait effect only after validation has accepted it.
 class FaceCapturePage extends StatefulWidget {
   const FaceCapturePage({
     super.key,
     required this.title,
     this.validateCapture,
     this.validatePhotoInCallback = false,
-  }) : assert(!validatePhotoInCallback || validateCapture != null);
+    this.portraitBackgroundBlur = false,
+    this.blurCapturedPhoto = false,
+  }) : assert(!validatePhotoInCallback || validateCapture != null),
+       assert(!blurCapturedPhoto || portraitBackgroundBlur);
 
   final String title;
   final Future<String?> Function(File rawPhoto)? validateCapture;
@@ -31,6 +38,12 @@ class FaceCapturePage extends StatefulWidget {
   /// The attendance callback performs all final-photo quality checks and
   /// matching on one upright image. Standalone captures retain local checks.
   final bool validatePhotoInCallback;
+
+  /// Cosmetic preview effect. Face checks always receive original frames.
+  final bool portraitBackgroundBlur;
+
+  /// Enrollment can also blur its accepted photo; attendance keeps the raw file.
+  final bool blurCapturedPhoto;
 
   @override
   State<FaceCapturePage> createState() => _FaceCapturePageState();
@@ -42,16 +55,19 @@ class _FaceCapturePageState extends State<FaceCapturePage>
   final _blink = FaceBlinkController();
   final _clock = Stopwatch()..start();
   static const _timing = FacePerformanceTrace();
-  final _detector = FaceDetector(
+  late final _detector = FaceDetector(
     options: FaceDetectorOptions(
       enableClassification: true,
       enableLandmarks: true,
       enableTracking: true,
       performanceMode: FaceDetectorMode.fast,
-      minFaceSize: 0.15,
+      // Find smaller background faces for the cosmetic exclusion mask. Main
+      // face size, blink, pose and final-photo quality thresholds stay intact.
+      minFaceSize: widget.portraitBackgroundBlur ? 0.05 : 0.15,
     ),
   );
   CameraController? _camera;
+  PortraitBlurService? _portrait;
   Future<void> _cameraOperations = Future<void>.value();
   Future<void>? _frameWork;
   Timer? _timer;
@@ -71,6 +87,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
   @override
   void initState() {
     super.initState();
+    if (widget.portraitBackgroundBlur) _portrait = PortraitBlurService();
     WidgetsBinding.instance.addObserver(this);
     _queueStart();
   }
@@ -96,7 +113,12 @@ class _FaceCapturePageState extends State<FaceCapturePage>
     _timer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _queueStop();
-    unawaited(_cameraOperations.then((_) => _detector.close()));
+    unawaited(
+      _cameraOperations.then((_) async {
+        await _portrait?.close();
+        await _detector.close();
+      }),
+    );
     super.dispose();
   }
 
@@ -107,6 +129,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
         .then((_) async {
           await _releaseCamera();
           if (!_validSession(session)) return;
+          _portrait?.resetPreview();
           await _initializeCamera(session);
         })
         .catchError((Object error) {
@@ -243,18 +266,23 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       final faces = await _detector.processImage(input);
       if (!_validSession(session)) return;
       _detectorFailures = 0;
-      final face = faces.length == 1 ? faces.single : null;
       final rotation = input.metadata!.rotation;
       final rotated =
           rotation == InputImageRotation.rotation90deg ||
           rotation == InputImageRotation.rotation270deg;
       final width = (rotated ? frame.height : frame.width).toDouble();
       final height = (rotated ? frame.width : frame.height).toDouble();
+      final face =
+          widget.portraitBackgroundBlur
+              ? selectPrimaryFace(faces, width, height)
+              : (faces.length == 1 ? faces.single : null);
+      _portrait?.updatePreview(input, faces, width, height);
+      if (widget.blurCapturedPhoto) _portrait?.warmUpPhotoSegmentation(input);
       final rect = face?.boundingBox;
       final previousProgress = _blink.progress;
       final progress = _blink.observe(
         FaceBlinkSample(
-          faceCount: faces.length,
+          faceCount: face == null ? faces.length : 1,
           leftEyeOpen: face?.leftEyeOpenProbability,
           rightEyeOpen: face?.rightEyeOpenProbability,
           yaw: face?.headEulerAngleY,
@@ -356,6 +384,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
     if (camera == null || _capturing || !_validSession(session)) return;
     setState(() => _capturing = true);
     File? photo;
+    File? portrait;
     bool accepted = false;
     try {
       _timer?.cancel();
@@ -369,15 +398,22 @@ class _FaceCapturePageState extends State<FaceCapturePage>
           InputImage.fromFilePath(photo.path),
         );
         if (!_validSession(session)) return;
-        if (faces.length != 1) {
+        final information = await compute(
+          _jpegInformation,
+          await photo.readAsBytes(),
+        );
+        if (!_validSession(session)) return;
+        final face =
+            widget.portraitBackgroundBlur && information != null
+                ? selectPrimaryFace(
+                  faces,
+                  information['width']!,
+                  information['height']!,
+                )
+                : (faces.length == 1 ? faces.single : null);
+        if (face == null) {
           error = 'Keep only your face in the camera and try again.';
         } else {
-          final face = faces.single;
-          final information = await compute(
-            _jpegInformation,
-            await photo.readAsBytes(),
-          );
-          if (!_validSession(session)) return;
           final yaw = face.headEulerAngleY;
           final pitch = face.headEulerAngleX;
           if (information == null || information['brightness']! < 35) {
@@ -404,10 +440,15 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       if (error != null) {
         setState(() => _retryMessage = error);
       } else {
-        if (!mounted) return;
+        // Keep the original photo as the input to every existing face check.
+        // Only an accepted enrollment photograph receives the cosmetic effect.
+        if (widget.blurCapturedPhoto) {
+          portrait = await _portrait?.blurAcceptedPhoto(photo, _detector);
+        }
+        if (!mounted || !_validSession(session)) return;
         accepted = true;
         _completed = true;
-        Navigator.of(context).pop<File>(photo);
+        Navigator.of(context).pop<File>(portrait ?? photo);
       }
     } catch (_) {
       if (_validSession(session)) {
@@ -417,7 +458,15 @@ class _FaceCapturePageState extends State<FaceCapturePage>
         );
       }
     } finally {
-      if (!accepted && photo != null) {
+      if (portrait != null && portrait.path != photo?.path && !accepted) {
+        try {
+          if (await portrait.exists()) await portrait.delete();
+        } on FileSystemException {
+          // Remove only this capture's cancelled cosmetic output.
+        }
+      }
+      if (photo != null &&
+          (!accepted || (portrait != null && portrait.path != photo.path))) {
         try {
           if (await photo.exists()) await photo.delete();
         } on FileSystemException {
@@ -472,7 +521,19 @@ class _FaceCapturePageState extends State<FaceCapturePage>
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        if (previewReady) Center(child: CameraPreview(camera)),
+                        if (previewReady)
+                          Center(
+                            child:
+                                _portrait == null
+                                    ? CameraPreview(camera)
+                                    : AspectRatio(
+                                      aspectRatio: 1 / camera.value.aspectRatio,
+                                      child: PortraitBlurPreview(
+                                        mask: _portrait!.previewMask,
+                                        child: CameraPreview(camera),
+                                      ),
+                                    ),
+                          ),
                         if (previewReady)
                           IgnorePointer(
                             child: CustomPaint(
@@ -565,7 +626,11 @@ Map<String, double>? _jpegInformation(Uint8List bytes) {
   final decoded = img.decodeImage(bytes);
   if (decoded == null) return null;
   final image = img.bakeOrientation(decoded);
-  return {'brightness': faceCenterBrightness(image)};
+  return {
+    'brightness': faceCenterBrightness(image),
+    'width': image.width.toDouble(),
+    'height': image.height.toDouble(),
+  };
 }
 
 class _FaceGuidePainter extends CustomPainter {

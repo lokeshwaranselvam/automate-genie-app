@@ -57,7 +57,8 @@ class FaceAuthFlow {
        _warmUp =
            warmUp ??
            (embed == null ? FaceEmbeddingService.instance.warmUp : _noWarmUp),
-       _capture = capture ?? _openCamera;
+       _capture = capture ?? _openCamera,
+       _enrollmentCapture = capture ?? _openEnrollmentCamera;
 
   static final instance = FaceAuthFlow();
   final FaceAuthApi api;
@@ -66,6 +67,7 @@ class FaceAuthFlow {
   final Future<List<double>> Function(File) _captureEmbed;
   final Future<void> Function() _warmUp;
   final FaceCapture _capture;
+  final FaceCapture _enrollmentCapture;
   final _templateLoads = <String, Future<List<double>>>{};
   static const _timing = FacePerformanceTrace();
 
@@ -74,17 +76,26 @@ class FaceAuthFlow {
   static Future<File?> _openCamera(
     BuildContext context,
     String title,
-    Future<String?> Function(File) validate,
-  ) => Navigator.of(context, rootNavigator: true).push<File>(
+    Future<String?> Function(File) validate, {
+    bool blurCapturedPhoto = false,
+  }) => Navigator.of(context, rootNavigator: true).push<File>(
     MaterialPageRoute(
       builder:
           (_) => FaceCapturePage(
             title: title,
             validateCapture: validate,
             validatePhotoInCallback: true,
+            portraitBackgroundBlur: true,
+            blurCapturedPhoto: blurCapturedPhoto,
           ),
     ),
   );
+
+  static Future<File?> _openEnrollmentCamera(
+    BuildContext context,
+    String title,
+    Future<String?> Function(File) validate,
+  ) => _openCamera(context, title, validate, blurCapturedPhoto: true);
 
   String _identity(FaceEnrollmentStatus status) => jsonEncode([
     api.site.toString(),
@@ -148,16 +159,18 @@ class FaceAuthFlow {
   ) async {
     if (status.enrolled) return status;
     _warmUp().ignore();
-    final photo = await _capture(context, 'Set up your attendance selfie', (
-      photo,
-    ) async {
-      try {
-        await _captureEmbed(photo);
-        return null;
-      } catch (error) {
-        return error.toString();
-      }
-    });
+    final photo = await _enrollmentCapture(
+      context,
+      'Set up your attendance selfie',
+      (photo) async {
+        try {
+          await _captureEmbed(photo);
+          return null;
+        } catch (error) {
+          return error.toString();
+        }
+      },
+    );
     if (photo == null) return null;
     try {
       if (!context.mounted) return null;

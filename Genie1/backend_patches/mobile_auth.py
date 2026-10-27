@@ -1,4 +1,4 @@
-"""Single-installation mobile login for the custom Frappe app (not Safe Exec).
+"""Permanent installation binding for the custom Frappe app (not Safe Exec).
 
 Deploy to apps/itgenie/itgenie/mobile_auth.py; run install() before replacing api.login.
 MariaDB advisory locks intentionally survive commits made inside Frappe login.
@@ -115,10 +115,10 @@ def _device_hash(device_key):
 
 
 @contextmanager
-def _user_lock(user):
+def _binding_lock(identity, namespace="genie"):
     # Connection-scoped MariaDB mutex: unlike SELECT FOR UPDATE it survives
     # the commits in Session.start(), session cleanup, and CSRF initialization.
-    name = hashlib.sha256((frappe.local.site + ":genie:" + user).encode()).hexdigest()
+    name = hashlib.sha256((frappe.local.site + ":" + namespace + ":" + identity).encode()).hexdigest()
     result = frappe.db.sql("SELECT GET_LOCK(%s, 10)", (name,))
     if not result or result[0][0] != 1:
         frappe.throw("Another sign-in is being processed. Please retry.", frappe.ValidationError)
@@ -129,6 +129,16 @@ def _user_lock(user):
         yield
     finally:
         frappe.db.sql("SELECT RELEASE_LOCK(%s)", (name,))
+
+
+def _user_lock(user):
+    # Preserve the established user-lock name for existing deployments.
+    return _binding_lock(user)
+
+
+def _device_lock(device_hash):
+    # Two different users claiming one installation must also serialize.
+    return _binding_lock(device_hash, namespace="genie-device")
 
 
 def _error(message, code):
@@ -155,14 +165,20 @@ def login(usr, pwd, device_key=None, platform=None):
     user = manager.user  # Canonical ID, including logins using Employee/User aliases.
     if not _setup_ready():
         return _error("Mobile login setup is incomplete. Contact your administrator.", 503)
-    with _user_lock(user):
+    # Always take the device lock first. Logout/reset take only the user lock;
+    # neither waits on a device lock while holding a user lock.
+    with _device_lock(device_hash), _user_lock(user):
         # Read after mutex acquisition; don't use a stale cached document.
         binding = _binding(user)
         if binding and binding["device_hash"] and not hmac.compare_digest(binding["device_hash"], device_hash):
-            return _error(
-                "This account is already signed in on another phone. "
-                "Log out from that phone first, then sign in here.", 409,
-            )
+            return _error("Wrong User", 409)
+        other_device = frappe.get_all(
+            DOCTYPE,
+            filters={HASH_FIELD: device_hash, "user": ["!=", user]},
+            fields=["name"], limit_page_length=1,
+        )
+        if other_device:
+            return _error("Wrong User", 409)
         employees = frappe.get_all(
             "Employee", filters={"user_id": user, "status": "Active"},
             fields=["name"], limit_page_length=2,
@@ -216,8 +232,9 @@ def logout(user, device_key):
     """A 256-bit installation credential allows logout even after SID expiry.
 
     The app calls this without cookies or API headers; the installation key is
-    the bearer credential. A different phone cannot release someone else's lock.
-    The empty-row case is idempotent for a lost logout response.
+    the bearer credential. A different phone cannot sign this account out.
+    Logout revokes the session/token but retains permanent device ownership.
+    A repeated logout with no active SID is idempotent.
     """
     device_hash = _device_hash(device_key)
     if not isinstance(user, str) or not user or len(user) > 140:
@@ -233,16 +250,22 @@ def logout(user, device_key):
     frappe.local.response["message"] = {"status": "success"}
 
 
-def _release(user, binding):
+def _release(user, binding, clear_binding=False):
+    if not binding["session_id"] and not clear_binding:
+        return
     # Revoke the token too: merely deleting an SID leaves API-token calls valid.
     account = frappe.get_doc("User", user)
     account.api_secret = frappe.generate_hash(length=32)
     account.save(ignore_permissions=True)
     _revoke_session(binding["session_id"], user)
-    # Release the binding without deleting the notification registration row.
-    frappe.db.set_value(DOCTYPE, binding["name"], {
-        HASH_FIELD: None, SESSION_FIELD: None, "is_active": 0,
-    })
+    # Normal logout keeps ownership. Only the administrator reset clears it.
+    values = {SESSION_FIELD: None, "is_active": 0}
+    if clear_binding:
+        values[HASH_FIELD] = None
+        # Permit the approved replacement's first notification registration.
+        # Keep the FCM token/version metadata, with delivery disabled above.
+        values["device_id"] = None
+    frappe.db.set_value(DOCTYPE, binding["name"], values)
     frappe.db.commit()
 
 
@@ -252,4 +275,4 @@ def reset_device(user):
     with _user_lock(user):
         binding = _binding(user)
         if binding and binding["device_hash"]:
-            _release(user, binding)
+            _release(user, binding, clear_binding=True)

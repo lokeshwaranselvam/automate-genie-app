@@ -37,6 +37,7 @@ class MobileLoginBackendTest(unittest.TestCase):
                                        api_secret='old-secret', full_name='Employee')}
         self.context = Context()
         self.mutex = threading.RLock()
+        self.mutexes = {}
         self.created_sessions = []
         self.deleted_sessions = []
         self.events = []
@@ -63,18 +64,20 @@ class MobileLoginBackendTest(unittest.TestCase):
                 test.db.commit()
 
         def sql(query, params):
+            with self.mutex:
+                mutex = self.mutexes.setdefault(params[0], threading.RLock())
             if 'GET_LOCK' in query:
-                test.mutex.acquire()
+                mutex.acquire()
                 test.events.append('lock')
                 return [(1,)]
             test.events.append('unlock')
-            test.mutex.release()
+            mutex.release()
             return [(1,)]
 
         def get_value(doctype, filters, fields, **kwargs):
             self.events.append('read')
             if doctype == 'Employee':
-                return 'EMP-1'
+                return filters
             self.assertEqual(doctype, 'FCM Device')
             row = next((r for r in self.bindings.values()
                         if r.employee == filters['employee']), None)
@@ -87,8 +90,8 @@ class MobileLoginBackendTest(unittest.TestCase):
 
         def get_doc(doctype, user=None):
             if doctype == 'Employee':
-                self.assertEqual(user, 'EMP-1')
-                return Row(name='EMP-1', custom_office_type_mapping=(
+                self.assertIn(user, ('EMP-1', 'EMP-2'))
+                return Row(name=user, custom_office_type_mapping=(
                     [Row(office_type='Head Office')] if self.mapping else []))
             if isinstance(doctype, dict):
                 values = Row(doctype)
@@ -132,14 +135,18 @@ class MobileLoginBackendTest(unittest.TestCase):
         frappe.get_meta = lambda dt: self.meta
         def get_all(doctype, **kwargs):
             if doctype == 'FCM Device':
+                filters = kwargs['filters']
+                expected = filters['user']
                 return [copy.deepcopy(r) for r in self.bindings.values()
-                        if r.user == kwargs['filters']['user']][:2]
+                        if (r.user != expected[1] if isinstance(expected, list) else r.user == expected)
+                        and all(r.get(field) == value for field, value in filters.items() if field != 'user')
+                        ][:kwargs.get('limit_page_length', 2)]
             self.assertEqual(doctype, 'Employee')
             # Child Table fields are not scalar columns in tabEmployee.
             if 'custom_office_type_mapping' in kwargs.get('fields', []):
                 raise ValueError('Unknown column custom_office_type_mapping')
             self.assertEqual(kwargs['fields'], ['name'])
-            return [Row(name='EMP-1')]
+            return [Row(name='EMP-1' if kwargs['filters']['user_id'] == self.user else 'EMP-2')]
         frappe.get_all = get_all
         frappe.generate_hash = lambda length: secrets.token_hex(length)[:length]
         frappe.only_for = lambda role: None
@@ -157,12 +164,12 @@ class MobileLoginBackendTest(unittest.TestCase):
                                      'frappe.utils.password': password}):
             spec.loader.exec_module(self.module)
 
-    def login(self, device, password='correct', platform='android'):
+    def login(self, device, password='correct', platform='android', user=None):
         self.context.site = 'erp.example.test'
         self.context.response = {}
         self.context.sid = 'Guest'
         self.context.user = 'Guest'
-        self.module.login(self.user, password, device, platform=platform)
+        self.module.login(user or self.user, password, device, platform=platform)
         return self.context.response.copy()
 
     def logout(self, device):
@@ -178,7 +185,7 @@ class MobileLoginBackendTest(unittest.TestCase):
         second = self.login('b' * 43)
         self.assertTrue(first['single_device_login'])
         self.assertEqual(second['http_status_code'], 409)
-        self.assertIn('another phone', second['message']['message'])
+        self.assertEqual(second['message']['message'], 'Wrong User')
         self.assertEqual(self.accounts[self.user].api_secret, secret)
         self.assertEqual(self.bindings[self.user].custom_mobile_session_id, sid)
         self.assertEqual(len(self.created_sessions), 1)
@@ -198,16 +205,22 @@ class MobileLoginBackendTest(unittest.TestCase):
         self.assertEqual(self.deleted_sessions, ['sid-1'])
         self.assertEqual(self.bindings[self.user].custom_mobile_session_id, 'sid-2')
 
-    def test_logout_releases_binding_revokes_credentials_and_allows_other_phone(self):
+    def test_logout_retains_binding_revokes_credentials_and_blocks_other_phone(self):
         self.login('a' * 43)
         old_secret = self.accounts[self.user].api_secret
+        device_hash = self.bindings[self.user].custom_mobile_device_hash
         # Logout uses the installation capability, including after SID expiry.
         self.context.sid = 'Guest'
         self.assertEqual(self.logout('a' * 43)['message']['status'], 'success')
-        self.assertIsNone(self.bindings[self.user].custom_mobile_device_hash)
+        self.assertEqual(self.bindings[self.user].custom_mobile_device_hash, device_hash)
+        self.assertIsNone(self.bindings[self.user].custom_mobile_session_id)
         self.assertNotEqual(old_secret, self.accounts[self.user].api_secret)
         self.assertEqual(self.deleted_sessions, ['sid-1'])
-        self.assertTrue(self.login('b' * 43)['single_device_login'])
+        result = self.login('b' * 43)
+        self.assertEqual(result['http_status_code'], 409)
+        self.assertEqual(result['message']['message'], 'Wrong User')
+        self.assertEqual(len(self.created_sessions), 1)
+        self.assertTrue(self.login('a' * 43)['single_device_login'])
 
     def test_another_phone_cannot_release_binding(self):
         self.login('a' * 43)
@@ -219,8 +232,10 @@ class MobileLoginBackendTest(unittest.TestCase):
     def test_lost_logout_response_can_be_retried(self):
         self.login('a' * 43)
         self.logout('a' * 43)
+        secret = self.accounts[self.user].api_secret
         self.assertEqual(self.logout('a' * 43)['message']['status'], 'success')
         self.assertEqual(len(self.deleted_sessions), 1)
+        self.assertEqual(self.accounts[self.user].api_secret, secret)
 
     def test_bad_password_and_old_build_do_not_change_active_phone(self):
         self.login('a' * 43)
@@ -248,9 +263,8 @@ class MobileLoginBackendTest(unittest.TestCase):
         self.assertEqual(len(self.created_sessions), 1)
         self.assertEqual(len(self.bindings), 1)
         self.assertEqual(self.events.count('lock'), self.events.count('unlock'))
-        for index, event in enumerate(self.events):
-            if event == 'lock':
-                self.assertEqual(self.events[index + 1], 'commit')
+        self.assertEqual(self.events.count('lock'), 4)  # device + user per login
+        self.assertGreaterEqual(self.events.count('commit'), self.events.count('lock'))
 
     def test_admin_reset_releases_lost_phone(self):
         self.login('a' * 43)
@@ -294,7 +308,7 @@ class MobileLoginBackendTest(unittest.TestCase):
         self.assertEqual(self.bindings[self.user].platform, 'ios')
         self.logout('a' * 43)
         self.bindings[self.user]['platform'] = None
-        self.login('b' * 43, platform=None)
+        self.login('a' * 43, platform=None)
         self.assertEqual(self.bindings[self.user].platform, 'android')
 
     def test_first_login_seeds_android_for_registration_platform_lookup(self):
@@ -307,6 +321,29 @@ class MobileLoginBackendTest(unittest.TestCase):
         matching = [r for r in self.bindings.values()
                     if r.user == self.user and r.platform == 'android']
         self.assertEqual(len(matching), 1)
+
+    def test_first_login_insert_passes_the_restricted_notification_save_guard(self):
+        guard_path = Path(__file__).resolve().parents[1] / 'frappe_server_scripts/fcm_device_validation.py'
+        guard = compile(guard_path.read_text(), str(guard_path), 'exec')
+        get_doc = self.module.frappe.get_doc
+        guarded_inserts = []
+
+        def guarded_doc(doctype, user=None):
+            document = get_doc(doctype, user)
+            if isinstance(doctype, dict) and doctype.get('doctype') == 'FCM Device':
+                original_insert = document.insert
+                def insert(**kwargs):
+                    doc = SimpleNamespace(get=doctype.get, name=doctype['employee'], is_new=lambda: True)
+                    exec(guard, {'doc': doc, 'frappe': self.module.frappe})
+                    guarded_inserts.append(doctype['employee'])
+                    return original_insert(**kwargs)
+                document.insert = insert
+            return document
+
+        with patch.object(self.module.frappe, 'get_doc', side_effect=guarded_doc):
+            self.assertTrue(self.login('a' * 43)['single_device_login'])
+        self.assertEqual(guarded_inserts, ['EMP-1'])
+        self.assertTrue(self.bindings[self.user].custom_mobile_device_hash)
 
     def test_same_phone_login_repairs_existing_blank_platform(self):
         self.login('a' * 43)
@@ -381,6 +418,72 @@ class MobileLoginBackendTest(unittest.TestCase):
         with patch.dict(sys.modules, {custom_fields.__name__: custom_fields}):
             with self.assertRaisesRegex(ValueError, 'permission level 1'):
                 self.module.install()
+
+    def add_second_user(self):
+        other = 'other@example.test'
+        self.accounts[other] = Row(name=other, api_key='other-key',
+                                   api_secret='other-secret', full_name='Other Employee')
+        return other
+
+    def test_same_device_cannot_be_claimed_by_a_second_user_after_logout(self):
+        other = self.add_second_user()
+        self.login('a' * 43)
+        self.logout('a' * 43)
+        result = self.login('a' * 43, user=other)
+        self.assertEqual(result['http_status_code'], 409)
+        self.assertEqual(result['message']['message'], 'Wrong User')
+        self.assertEqual(len(self.created_sessions), 1)
+        self.assertNotIn(other, self.bindings)
+        self.assertEqual(self.accounts[other].api_secret, 'other-secret')
+
+    def test_same_device_cannot_be_claimed_by_a_second_user_while_active(self):
+        other = self.add_second_user()
+        self.login('a' * 43)
+        first = copy.deepcopy(self.bindings[self.user])
+        self.assertEqual(self.login('a' * 43, user=other)['http_status_code'], 409)
+        self.assertEqual(self.bindings[self.user], first)
+        self.assertEqual(self.deleted_sessions, [])
+
+    def test_different_users_can_use_their_own_devices(self):
+        other = self.add_second_user()
+        self.assertTrue(self.login('a' * 43)['single_device_login'])
+        self.assertTrue(self.login('b' * 43, user=other)['single_device_login'])
+        self.assertEqual(self.bindings[self.user].employee, 'EMP-1')
+        self.assertEqual(self.bindings[other].employee, 'EMP-2')
+
+    def test_two_accounts_racing_for_one_device_have_only_one_winner(self):
+        other = self.add_second_user()
+        self.barrier = threading.Barrier(2)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda user: self.login('a' * 43, user=user), [self.user, other]))
+        self.assertEqual(sum(r.get('single_device_login', False) for r in results), 1)
+        self.assertEqual(sum(r.get('http_status_code') == 409 for r in results), 1)
+        self.assertEqual(len(self.bindings), 1)
+        self.assertEqual(len(self.created_sessions), 1)
+        self.assertEqual(self.events.count('lock'), self.events.count('unlock'))
+
+    def test_admin_can_reset_a_signed_out_device_before_reassignment(self):
+        other = self.add_second_user()
+        self.login('a' * 43)
+        self.bindings[self.user].update(device_id='old-fcm-id', fcm_token='old-fcm-token', app_version='1')
+        self.logout('a' * 43)
+        self.assertEqual(self.bindings[self.user].device_id, 'old-fcm-id')
+        self.module.reset_device(self.user)
+        self.assertIsNone(self.bindings[self.user].custom_mobile_device_hash)
+        self.assertIsNone(self.bindings[self.user].device_id)
+        self.assertEqual(self.bindings[self.user].fcm_token, 'old-fcm-token')
+        self.assertEqual(self.bindings[self.user].app_version, '1')
+        self.assertEqual(self.bindings[self.user].is_active, 0)
+        self.assertTrue(self.login('a' * 43, user=other)['single_device_login'])
+
+    def test_ordinary_user_cannot_clear_permanent_binding(self):
+        self.login('a' * 43)
+        original = copy.deepcopy(self.bindings[self.user])
+        with patch.object(self.module.frappe, 'only_for', side_effect=PermissionError('System Manager required')):
+            with self.assertRaises(PermissionError):
+                self.module.reset_device(self.user)
+        self.assertEqual(self.bindings[self.user], original)
+        self.assertEqual(self.deleted_sessions, [])
 
 
 if __name__ == '__main__':
