@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // mount. This tests list loading, ID matching, tab selection and return behavior.
 class _VisitObserver extends NavigatorObserver {
   final opened = <String>[];
+  final hiddenActions = <bool>[];
 
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
@@ -20,6 +21,7 @@ class _VisitObserver extends NavigatorObserver {
     final page = route.builder(navigator!.context);
     if (page is EventDetails) {
       opened.add(page.eventid);
+      hiddenActions.add(page.hideVisitActions);
       Future.microtask(() => navigator!.removeRoute(route));
     }
   }
@@ -82,6 +84,7 @@ void main() {
             );
           } else {
             expect(observer.opened, [target]);
+            expect(observer.hiddenActions, [target == 'C1' || target == 'H1']);
             final subject =
                 rows.firstWhere((row) => row['name'] == target)['subject']!;
             expect(find.text(subject), findsWidgets);

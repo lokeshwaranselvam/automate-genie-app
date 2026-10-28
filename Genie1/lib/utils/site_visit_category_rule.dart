@@ -73,7 +73,6 @@ class SiteVisitCategoryRule {
           'map_link',
           'latitude',
           'longitude',
-          'location_type',
         ],
       ],
     });

@@ -142,7 +142,7 @@ Future<void> withPhoto(
 void main() {
   for (final action in ['enroll', 'attendance_in', 'attendance_out']) {
     testWidgets(
-      '$action camera enables blur while attendance retains raw photos',
+      '$action camera retains main-person selection and raw-photo validation',
       (tester) async {
         const channel = MethodChannel('google_mlkit_face_detector');
         final messenger = tester.binding.defaultBinaryMessenger;
@@ -186,8 +186,7 @@ void main() {
         final page = tester.widget<FaceCapturePage>(
           find.byType(FaceCapturePage),
         );
-        expect(page.portraitBackgroundBlur, isTrue);
-        expect(page.blurCapturedPhoto, action == 'enroll');
+        expect(page.usePrimaryFaceSelection, isTrue);
         expect(page.validatePhotoInCallback, isTrue);
         expect(page.validateCapture, isNotNull);
         Navigator.of(tester.element(find.byType(FaceCapturePage))).pop();

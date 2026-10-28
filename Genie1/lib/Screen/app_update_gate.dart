@@ -63,12 +63,14 @@ class _AppUpdateGateState extends State<AppUpdateGate> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Image.asset(
-                      'assets/images/logoAG.png',
-                      height: 90,
-                      semanticLabel: 'automategenie.ai',
-                    ),
-                    const SizedBox(height: 32),
+                    if (!_checking) ...[
+                      Image.asset(
+                        'assets/images/logoAG.png',
+                        height: 90,
+                        semanticLabel: 'automategenie.ai',
+                      ),
+                      const SizedBox(height: 32),
+                    ],
                     if (_checking) ...[
                       const AgPathLoadingIndicator(size: 80),
                       const SizedBox(height: 16),

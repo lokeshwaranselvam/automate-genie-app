@@ -767,22 +767,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.15.1"
-  google_mlkit_selfie_segmentation:
-    dependency: "direct main"
-    description:
-      name: google_mlkit_selfie_segmentation
-      sha256: cd814bb3e8c59b896a346cd20a9d93ca9f03c10f24b38405fc683aa942fcd0fa
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.12.1"
-  google_mlkit_subject_segmentation:
-    dependency: "direct main"
-    description:
-      name: google_mlkit_subject_segmentation
-      sha256: "845fb24bd5279ae4fca741c7a1242373843bfa4c5aaad474e8d05645b78cb32b"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.2.1"
   html:
     dependency: transitive
     description:

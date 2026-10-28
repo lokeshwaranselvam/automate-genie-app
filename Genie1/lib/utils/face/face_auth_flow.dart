@@ -58,7 +58,7 @@ class FaceAuthFlow {
            warmUp ??
            (embed == null ? FaceEmbeddingService.instance.warmUp : _noWarmUp),
        _capture = capture ?? _openCamera,
-       _enrollmentCapture = capture ?? _openEnrollmentCamera;
+       _enrollmentCapture = capture ?? _openCamera;
 
   static final instance = FaceAuthFlow();
   final FaceAuthApi api;
@@ -76,26 +76,18 @@ class FaceAuthFlow {
   static Future<File?> _openCamera(
     BuildContext context,
     String title,
-    Future<String?> Function(File) validate, {
-    bool blurCapturedPhoto = false,
-  }) => Navigator.of(context, rootNavigator: true).push<File>(
+    Future<String?> Function(File) validate,
+  ) => Navigator.of(context, rootNavigator: true).push<File>(
     MaterialPageRoute(
       builder:
           (_) => FaceCapturePage(
             title: title,
             validateCapture: validate,
             validatePhotoInCallback: true,
-            portraitBackgroundBlur: true,
-            blurCapturedPhoto: blurCapturedPhoto,
+            usePrimaryFaceSelection: true,
           ),
     ),
   );
-
-  static Future<File?> _openEnrollmentCamera(
-    BuildContext context,
-    String title,
-    Future<String?> Function(File) validate,
-  ) => _openCamera(context, title, validate, blurCapturedPhoto: true);
 
   String _identity(FaceEnrollmentStatus status) => jsonEncode([
     api.site.toString(),

@@ -7,6 +7,7 @@ if not user or user == "Guest":
 
 # Supported business configuration. ERP mandatory fields/permissions still apply.
 policies = {
+    "attendance": {"fields": {}, "rules": {}},
     "navigation": {
         "fields": {},
         "rules": {"pending_drawer": False},
@@ -33,6 +34,7 @@ policies = {
             "summary": {"required": True, "visible": True, "read_only": False, "max_length": 140},
             "product_enquired": {"required": False, "visible": True, "read_only": False},
             "assigned_to": {"required": True, "visible": True, "read_only": False},
+            "location_type": {"required": False, "visible": True, "read_only": False},
         },
         "rules": {
             "location_types": ["Site", "Home", "Others"],
@@ -47,7 +49,7 @@ policies = {
             "checkout_location_categories": ["Site Visit", "Installation", "Complaint Visit"],
             "checkout_location_visit_types": ["New"],
         },
-        "uploads": {"min_count": 0, "max_count": 0, "max_bytes": 0, "extensions": []},
+        "uploads": {"min_count": 1, "max_count": 0, "max_bytes": 0, "extensions": []},
     },
     "visit_report": {
         "fields": {
@@ -109,6 +111,66 @@ for section in ["fields", "rules", "uploads"]:
 policy["version"] = 1
 policy["current_user"] = user
 
+if feature == "attendance":
+    # Self-service display only: never accept a client-supplied employee/user.
+    attendance_date = frappe.utils.today()
+    employees = frappe.get_all("Employee", filters={"user_id": user, "status": "Active"},
+        fields=["name", "default_shift"], limit_page_length=2)
+    attendance_shift = ""
+    shift_source = ""
+    checkin_location = ""
+    attendance_status = {"attendance_records_verified": False}
+    if len(employees) == 1:
+        employee = employees[0]
+        requests = frappe.get_all("Shift Request", filters={
+            "employee": employee.name, "docstatus": 1, "status": "Approved",
+            "from_date": ["<=", attendance_date],
+        }, or_filters=[["to_date", ">=", attendance_date], ["to_date", "is", "not set"]],
+            fields=["shift_type"], order_by="from_date desc, modified desc, name desc", limit_page_length=1)
+        if requests and requests[0].shift_type:
+            attendance_shift = requests[0].shift_type
+            shift_source = "shift_request"
+        elif employee.default_shift:
+            attendance_shift = employee.default_shift
+            shift_source = "employee_default"
+        # Table MultiSelect values live in child rows, not an Employee column.
+        office_mappings = frappe.get_all("Employee Office Type Mapping", filters={
+            "parent": employee.name, "parenttype": "Employee", "parentfield": "custom_office_type_mapping",
+        }, fields=["office_type"], order_by="idx asc", limit_page_length=100)
+        office_names = []
+        for mapping in office_mappings:
+            office_name = (mapping.get("office_type") or "").strip()
+            if office_name and office_name not in office_names:
+                office_names.append(office_name)
+        checkin_location = ", ".join(office_names)
+        # Attendance data stays server-owned; location comes from Employee.
+        latest_logs = frappe.get_all("Employee Checkin", filters=[
+            ["employee", "=", employee.name],
+            ["time", ">=", attendance_date + " 00:00:00"],
+            ["time", "<", str(frappe.utils.add_days(attendance_date, 1)) + " 00:00:00"],
+        ], fields=["log_type", "time"], order_by="time desc, creation desc", limit_page_length=1000)
+        in_logs = [row for row in latest_logs if row.log_type == "IN"]
+        out_logs = [row for row in latest_logs if row.log_type == "OUT"]
+        previous_logs = []
+        if not latest_logs:
+            previous_logs = frappe.get_all("Employee Checkin", filters=[
+                ["employee", "=", employee.name], ["time", "<", attendance_date + " 00:00:00"],
+            ], fields=["log_type", "time"], order_by="time desc, creation desc", limit_page_length=1)
+        previous_pending = bool(previous_logs and previous_logs[0].log_type == "IN")
+        active = bool(in_logs and latest_logs[0].log_type == "IN")
+        completed = bool(in_logs and out_logs and not active)
+        attendance_status = {
+            "attendance_records_verified": not any(row.log_type not in ["IN", "OUT"] for row in latest_logs),
+            "attendance_status_source": "business_policy",
+            "checked_in": active, "checked_out": completed, "completed_today": completed,
+            "check_in_exists_today": bool(in_logs), "check_out_exists_today": bool(out_logs),
+            "previous_checkout_pending": previous_pending,
+            "check_in_time": str(in_logs[0].time) if in_logs else str(previous_logs[0].time) if previous_pending else "",
+            "check_out_time": str(out_logs[0].time) if completed else "",
+        }
+    policy["attendance"] = {"shift": attendance_shift, "shift_source": shift_source,
+        "date": attendance_date, "checkin_location": checkin_location, "status": attendance_status}
+
 if feature == "leave":
     year = frappe.utils.getdate(frappe.utils.today()).year
     if not policy["rules"]["earliest_date"]:
@@ -121,6 +183,13 @@ if feature == "leave":
 if feature == "visit" and frappe.form_dict.get("event_id"):
     event_id = str(frappe.form_dict.get("event_id"))
     event = frappe.get_doc("Event", event_id)
+    category = (event.get("event_category") or "").strip().lower()
+    optional_attachment_categories = [
+        "other", "others", "bank", "head office", "head office ch",
+        "timbe office", "timbe / bioman office ch", "measurement", "installation", "collection",
+    ]
+    if category in optional_attachment_categories:
+        policy["uploads"]["min_count"] = 0
     assigned = event.owner == user or event.get("assigned_to") == user or ('"' + user + '"') in str(event.get("_assign") or "")
     for table in ["event_participants", "participants"]:
         for row in event.get(table) or []:

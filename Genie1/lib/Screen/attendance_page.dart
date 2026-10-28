@@ -74,6 +74,10 @@ class AttendancePage extends StatelessWidget {
   }
 
   String _shift() {
+    // The business-policy API owns Shift Request/default-shift selection.
+    if (status.containsKey('attendance_shift')) {
+      return _firstValue(['attendance_shift'], fallback: 'Not assigned');
+    }
     final direct = _firstValue([
       'default_shift',
       'shift_time',
@@ -139,7 +143,7 @@ class AttendancePage extends StatelessWidget {
       'office_name',
       'location_name',
       'office',
-    ], fallback: checkedIn ? 'Office' : 'Select at check-in');
+    ], fallback: checkedIn ? 'Location unavailable' : 'Select at check-in');
     final address = _firstValue(
       ['check_in_address', 'checkin_address', 'address'],
       fallback:

@@ -76,6 +76,7 @@ class Warning extends StatelessWidget {
       _ => Icons.info_outline,
     };
     final title = switch (request.type) {
+      'Session Expired' => 'Session Expired',
       'Warning' => 'Warning',
       'Error' => 'Something went wrong',
       'Success' => 'Success',
@@ -85,11 +86,11 @@ class Warning extends StatelessWidget {
     showDialog<void>(
       context: request.context,
       useRootNavigator: true,
-      barrierDismissible: true,
+      barrierDismissible: request.type != 'Session Expired',
       barrierColor: Colors.black54,
       builder: (dialogContext) {
         final screenHeight = MediaQuery.sizeOf(dialogContext).height;
-        return Dialog(
+        final dialog = Dialog(
           elevation: 12,
           insetPadding: const EdgeInsets.symmetric(
             horizontal: 32,
@@ -108,7 +109,7 @@ class Warning extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Align(
+                  if (request.type != 'Session Expired') Align(
                     alignment: Alignment.centerRight,
                     child: IconButton(
                       tooltip: 'Close',
@@ -196,6 +197,10 @@ class Warning extends StatelessWidget {
               ),
             ),
           ),
+        );
+        return PopScope(
+          canPop: request.type != 'Session Expired',
+          child: dialog,
         );
       },
     ).whenComplete(() {

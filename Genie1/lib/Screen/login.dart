@@ -1,3 +1,4 @@
+import '../utils/storage_diagnostics.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
@@ -45,11 +46,11 @@ class _LoginState extends State<Login> {
 
   Future<void> _restoreRememberedLogin() async {
     try {
-      final remember = await _secureStorage.read(key: _rememberKey) == 'true';
+      final remember = await StorageDiagnostics.read(_secureStorage, key: _rememberKey) == 'true';
       if (!remember) return;
 
-      final username = await _secureStorage.read(key: _usernameKey);
-      final password = await _secureStorage.read(key: _passwordKey);
+      final username = await StorageDiagnostics.read(_secureStorage, key: _usernameKey);
+      final password = await StorageDiagnostics.read(_secureStorage, key: _passwordKey);
       if (!mounted) return;
 
       setState(() => _rememberMe = true);
@@ -70,7 +71,7 @@ class _LoginState extends State<Login> {
         return;
       }
 
-      await _secureStorage.write(key: _rememberKey, value: 'true');
+      await StorageDiagnostics.write(_secureStorage, key: _rememberKey, value: 'true');
       await _saveRememberedLogin();
     } catch (error) {
       debugPrint('Could not update remembered login: $error');
@@ -80,11 +81,11 @@ class _LoginState extends State<Login> {
   Future<void> _saveRememberedLogin() async {
     if (!_rememberMe) return;
     try {
-      await _secureStorage.write(
+      await StorageDiagnostics.write(_secureStorage,
         key: _usernameKey,
         value: _emailController.text.trim(),
       );
-      await _secureStorage.write(
+      await StorageDiagnostics.write(_secureStorage,
         key: _passwordKey,
         value: _passwordController.text,
       );

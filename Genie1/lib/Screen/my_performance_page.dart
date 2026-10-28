@@ -167,10 +167,10 @@ class _MyPerformancePageState extends State<MyPerformancePage>
     secondLabel: 'Conversions',
     metrics: const [
       ('Leads Created', 'leads'),
-      ('Site Visits', 'site_visits'),
+      ('Completed Visits', 'site_visits'),
     ],
     definition:
-        'Leads Created counts records whose Lead Owner is your user, matching My Leads, grouped by creation date. Conversions counts those same leads currently marked Converted, grouped by lead creation date. Site Visits counts actual event visits for your Employee.',
+        'Leads Created counts records whose Lead Owner is your user, matching My Leads, grouped by creation date. Conversions counts those same leads currently marked Converted, grouped by lead creation date. Completed Visits counts the same events as Visits > Completed, grouped by completion date.',
   );
 
   void _showDefinitions() {

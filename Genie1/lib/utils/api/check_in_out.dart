@@ -5,6 +5,37 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'session_auth.dart';
 import '../face/face_performance_trace.dart';
 
+class AttendanceAuthenticationException implements Exception {
+  const AttendanceAuthenticationException();
+
+  static void checkResponse(http.Response response) {
+    if (response.statusCode == 401) {
+      throw const AttendanceAuthenticationException();
+    }
+    // A plain 403 is often a document/field permission denial, not expiry.
+    if (response.statusCode < 400 || response.statusCode >= 500) return;
+    dynamic body;
+    try {
+      body = jsonDecode(response.body);
+    } catch (_) {
+      return;
+    }
+    if (body is! Map) return;
+    final type = body['exc_type']?.toString().split('.').last;
+    final exception = body['exception']?.toString() ?? '';
+    if (type == 'AuthenticationError' ||
+        type == 'SessionExpired' ||
+        exception.startsWith('frappe.exceptions.AuthenticationError:') ||
+        exception.startsWith('frappe.exceptions.SessionExpired:')) {
+      throw const AttendanceAuthenticationException();
+    }
+  }
+
+  @override
+  String toString() =>
+      'Your login credentials are no longer valid. Please sign in again.';
+}
+
 class Check {
   static Future<http.Response> _sendAttendance(
     Uri uri,
@@ -105,6 +136,63 @@ class Check {
   static Future<Map<String, dynamic>> getStatus(
     String email, {
     bool recordsFirst = false,
+    bool includeShift = false,
+  }) async {
+    if (!includeShift) return _getStatus(email, recordsFirst: recordsFirst);
+    return _readAttendanceShift();
+  }
+
+  static Future<Map<String, dynamic>> _readAttendanceShift() async {
+    try {
+      final site = dotenv.env['SITE_URL']?.trim() ?? '';
+      if (site.isEmpty) return {'attendance_records_verified': false};
+      final prefs = await SharedPreferences.getInstance();
+      final base = Uri.parse(site.endsWith('/') ? site : '$site/');
+      final response = await http
+          .get(
+            base
+                .resolve('api/method/mobile_business_policy')
+                .replace(
+                  queryParameters: {'feature': 'attendance', 'action': 'get'},
+                ),
+            headers: {
+              'Authorization': prefs.getString('token') ?? '',
+              'Cache-Control': 'no-cache, no-store',
+            },
+          )
+          .timeout(const Duration(seconds: 12));
+      AttendanceAuthenticationException.checkResponse(response);
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        // Frappe wraps the API Server Script's flags in message.
+        final message = body is Map ? body['message'] : null;
+        final policy = message is Map ? message['policy'] : null;
+        final attendance = policy is Map ? policy['attendance'] : null;
+        if (attendance is Map && attendance['shift'] is String) {
+          final location = attendance['checkin_location'];
+          final status = attendance['status'];
+          if (status is! Map ||
+              status['attendance_records_verified'] is! bool) {
+            return {'attendance_records_verified': false};
+          }
+          return {
+            ...Map<String, dynamic>.from(status),
+            'attendance_shift': attendance['shift'],
+            if (location is String) 'office_type': location.trim(),
+          };
+        }
+      }
+    } on AttendanceAuthenticationException {
+      rethrow;
+    } catch (_) {
+      // Unavailable status must leave the existing attendance retry flow active.
+    }
+    return {'attendance_records_verified': false};
+  }
+
+  static Future<Map<String, dynamic>> _getStatus(
+    String email, {
+    bool recordsFirst = false,
   }) async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final auth = prefs.getString('token') ?? '';
@@ -150,6 +238,7 @@ class Check {
           ),
     ]);
     final response = results[0] as http.Response;
+    AttendanceAuthenticationException.checkResponse(response);
     Map<String, dynamic> status = {};
     if (response.statusCode == 200) {
       try {
@@ -205,6 +294,7 @@ class Check {
             headers: headers,
           )
           .timeout(const Duration(seconds: 12));
+      AttendanceAuthenticationException.checkResponse(response);
       if (doctype == 'Employee' &&
           (response.statusCode == 403 || response.statusCode == 417)) {
         // Optional profile metadata must not break attendance record lookup.
@@ -239,6 +329,7 @@ class Check {
             )
             .timeout(const Duration(seconds: 12));
       }
+      AttendanceAuthenticationException.checkResponse(response);
       if (response.statusCode != 200) {
         throw StateError('Attendance records unavailable.');
       }
@@ -331,6 +422,8 @@ class Check {
         if (hasIn) 'check_in_time': ins.first['time'],
         if (completed) 'check_out_time': outs.first['time'],
       };
+    } on AttendanceAuthenticationException {
+      rethrow;
     } catch (_) {
       return null;
     }

@@ -181,6 +181,16 @@ class SiteVisitApiTest(unittest.TestCase):
             with self.subTest(start=start), self.assertRaises(ValueError):
                 self.run_api(starts_on=start, ends_on=end)
 
+    def test_sales_manager_menu_permissions_do_not_require_an_event_id(self):
+        self.configure_category_policy(['Sales Manager'], 'Other Company')
+        result = self.run_api(action='can_create', event_id='')
+        self.assertEqual(result['current_user'], self.user)
+        self.assertTrue(result['can_create'])
+        self.assertTrue(result['can_create_lead'])
+        self.assertTrue(result['can_view_opportunities'])
+        self.assertTrue(result['feature_visibility']['new_visit'])
+        self.frappe.get_doc.assert_not_called()
+
     def test_tracking_eligibility_comes_from_session_roles_and_not_request_user(self):
         for roles, expected in [(['Sales User'], True), (['Designer'], True), (['Sales Manager'], False),
                                 (['Employee'], False), ([], False)]:
@@ -203,6 +213,44 @@ class SiteVisitApiTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Sales Manager'):
             self.run_api()
         self.frappe.new_doc.assert_not_called()
+
+    def test_location_type_is_optional_in_category_rules_for_all_creators(self):
+        result = self.run_api(action="get")
+        self.assertFalse(result["business_policy"]["fields"]["location_type"]["required"])
+        for rule in result["event_category_rules"].values():
+            self.assertNotIn("location_type", rule["required_fields"])
+
+    def test_opportunity_location_accepts_blank_type_without_skipping_permissions(self):
+        self.opportunity.save = Mock()
+        self.frappe.utils.flt = float
+        self.run_api(action="save_location", map_link=self.location.location,
+                     location_type="", latitude="13", longitude="80")
+        self.assertEqual(self.opportunity.locations[-1].location_type, "")
+        self.opportunity.save.assert_called_once_with()
+        for invalid in ["Unknown", "site"]:
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "valid location type"):
+                self.run_api(action="save_location", map_link=self.location.location,
+                             location_type=invalid, latitude="13", longitude="80")
+
+    def test_reference_events_allow_blank_type_but_reject_invalid_supplied_type(self):
+        for category, doctype in [("Measurement", "Measurement"), ("Installation", "Installation Note")]:
+            params = dict(category=category, opportunity="", location_row="", product_enquired="",
+                          reference_doctype=doctype, reference_name=self.reference_rows[doctype][0].name,
+                          map_link=self.location.location, latitude="13", longitude="80", location_type="")
+            with self.subTest(category=category):
+                result = self.run_api(**params)
+                self.assertEqual(result["location_type"], "")
+                self.assertEqual(self.event.location, "")
+                self.assertIn("13.0,80.0", self.event.custom_validate)
+                self.reference_rows[doctype][0].check_permission.assert_called_with("read")
+                with self.assertRaisesRegex(ValueError, "valid location type"):
+                    self.run_api(**dict(params, location_type="Unknown"))
+
+    def test_opportunity_event_preserves_an_existing_blank_location_type(self):
+        self.location.location_type = ""
+        result = self.run_api()
+        self.assertEqual(result["location_type"], "")
+        self.assertEqual(self.event.custom_validate, self.location.location)
 
     def test_selected_home_type_is_saved_without_optional_custom_type_field(self):
         self.location.location_type = "Home"
@@ -604,7 +652,44 @@ class SiteVisitApiTest(unittest.TestCase):
                                         if call.args[0] == "Employee"]
                     self.assertEqual(len(employee_queries), 1)
                     self.assertEqual(employee_queries[0].args,
-                                     ("Employee", {"user_id": self.user}, "company"))
+                                     ("Employee", {"user_id": self.user, "status": "Active"}, "company"))
+
+    def test_active_homegenie_employee_takes_priority_over_old_timbe_company(self):
+        for roles in [["Sales Manager"], ["Sales Manager", "Accounts User"],
+                      ["Sales Manager", "Accounts User", "Delivery Manager"]]:
+            with self.subTest(roles=roles):
+                self.configure_category_policy(roles, "Homegenie Building Products Private Limited")
+                self.frappe.db.get_value.side_effect = lambda doctype, filters, *args, **kwargs: (
+                    ("Homegenie Building Products Private Limited" if filters.get("status") == "Active"
+                     else "Timbe Windows Private Limited") if doctype == "Employee"
+                    else Row(name=self.user, full_name="Sales")
+                )
+                result = self.run_api(action="get")
+                expected = {"Measurement", "Site Visit", "Collection", "Installation", "Complaint Visit"}
+                if "Accounts User" in roles:
+                    expected.update(["Bank", "Other"])
+                if "Delivery Manager" in roles:
+                    expected.add("Maintenance")
+                self.assertEqual(set(result["event_categories"]), expected)
+
+    def test_active_timbe_employee_does_not_inherit_old_homegenie_categories(self):
+        self.configure_category_policy(["Sales Manager"], "Timbe Windows Private Limited")
+        self.frappe.db.get_value.side_effect = lambda doctype, filters, *args, **kwargs: (
+            ("Timbe Windows Private Limited" if filters.get("status") == "Active"
+             else "Homegenie Building Products Private Limited") if doctype == "Employee"
+            else Row(name=self.user, full_name="Sales")
+        )
+        self.assertEqual(set(self.run_api(action="get")["event_categories"]),
+                         {"Measurement", "Site Visit", "Collection"})
+
+    def test_missing_active_company_keeps_the_previous_company_fallback(self):
+        self.configure_category_policy(["Sales Manager"], "Homegenie Building Products Private Limited")
+        self.frappe.db.get_value.side_effect = lambda doctype, filters, *args, **kwargs: (
+            (None if filters.get("status") == "Active" else "Homegenie Building Products Private Limited")
+            if doctype == "Employee" else Row(name=self.user, full_name="Sales")
+        )
+        self.assertEqual(set(self.run_api(action="get")["event_categories"]),
+                         {"Measurement", "Site Visit", "Collection", "Installation", "Complaint Visit"})
 
     def test_accounts_categories_without_other_creation_roles_keep_existing_policy(self):
         for roles in [["Accounts User"],

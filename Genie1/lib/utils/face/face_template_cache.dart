@@ -1,3 +1,4 @@
+import '../storage_diagnostics.dart';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -19,7 +20,7 @@ class FaceTemplateCache {
   Future<List<double>?> read(String identity) => _serialized(() async {
     final generation = _generation;
     try {
-      final raw = await _storage.read(key: _key);
+      final raw = await StorageDiagnostics.read(_storage, key: _key);
       if (generation != _generation) return null;
       if (raw == null) return null;
       final data = jsonDecode(raw);
@@ -54,7 +55,7 @@ class FaceTemplateCache {
   }) => _serialized(() async {
     if (expectedGeneration != null && expectedGeneration != _generation) return;
     try {
-      await _storage.write(
+      await StorageDiagnostics.write(_storage,
         key: _key,
         value: jsonEncode({'identity': identity, 'embedding': embedding}),
       );

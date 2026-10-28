@@ -69,16 +69,18 @@ class PerformanceApi {
   PerformanceApi({
     http.Client? client,
     Uri? site,
+    Uri? visitMethods,
     Future<String?> Function()? sessionId,
     Future<String?> Function()? savedUser,
   }) : _client = client ?? http.Client(),
        _site = site,
+       _visitMethods = visitMethods,
        _sessionId = sessionId ?? SessionAuthApi.getSessionId,
        _savedUser = savedUser ?? SessionAuthApi.getSavedSessionUser;
 
   static final instance = PerformanceApi();
   final http.Client _client;
-  final Uri? _site;
+  final Uri? _site, _visitMethods;
   final Future<String?> Function() _sessionId, _savedUser;
 
   /// Checks the roles of the authenticated ERP session, never locally saved roles.
@@ -122,7 +124,7 @@ class PerformanceApi {
       );
     }
     // Share Home's server-verified Sales User OR Sales Manager capability.
-    // Performance aggregation still enforces its own server permissions.
+    // Record reads still enforce the authenticated ERP permissions.
     return message['can_create_lead'] == true;
   }
 
@@ -137,51 +139,7 @@ class PerformanceApi {
       throw StateError('SITE_URL is not configured.');
     }
     final base = _site ?? Uri.parse(value.endsWith('/') ? value : '$value/');
-    final key =
-        '${month.year.toString().padLeft(4, '0')}-${month.month.toString().padLeft(2, '0')}';
-    final request = http.Request(
-      'GET',
-      base
-          .resolve('api/method/mobile_employee_performance')
-          .replace(queryParameters: {'month': key}),
-    )..followRedirects = false;
-    request.headers.addAll({
-      'Accept': 'application/json',
-      'Cookie': 'sid=$sid',
-      'Cache-Control': 'no-cache, no-store',
-    });
-    final response = await (() async {
-      return http.Response.fromStream(await _client.send(request));
-    })().timeout(const Duration(seconds: 30));
-    if (response.statusCode != 200) {
-      if (response.statusCode == 401 || response.statusCode == 403) {
-        throw StateError('Your ERP session expired. Please sign in again.');
-      }
-      if (response.statusCode == 404 || response.statusCode == 417) {
-        // Older sites may not have the aggregation script installed, or may
-        // reject its restricted execution. Read real, permission-filtered ERP
-        // records instead; never substitute preview/sample data.
-        return _loadResources(base, month, user, sid);
-      }
-      throw StateError(
-        'Could not load My Performance (${response.statusCode}). '
-        'Confirm the mobile_employee_performance API is installed, then retry.',
-      );
-    }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map || decoded['message'] is! Map) {
-      throw const FormatException('ERP returned invalid performance data.');
-    }
-    final result = PerformanceData.fromJson(
-      Map<String, dynamic>.from(decoded['message'] as Map),
-    );
-    if (result.user != user ||
-        result.month != key ||
-        await _savedUser() != user ||
-        await _sessionId() != sid) {
-      throw StateError('Your account or month changed. Reload My Performance.');
-    }
-    return result;
+    return _loadResources(base, month, user, sid);
   }
 
   Future<void> _assertSession(String user, String sid) async {
@@ -252,6 +210,104 @@ class PerformanceApi {
     return null;
   }
 
+  // Use the same sources, ID merge, completion rules and date fallback as
+  // SiteVisitsPage's Completed tab. Do not require a readable Employee record.
+  Future<List<Map<String, dynamic>>?> _completedVisitRecords(
+    Uri base,
+    String user,
+    String sid,
+  ) async {
+    final methods =
+        _visitMethods ?? Uri.tryParse(dotenv.env['URL']?.trim() ?? '');
+    if (methods == null ||
+        methods.scheme != base.scheme ||
+        methods.host != base.host ||
+        methods.port != base.port ||
+        methods.hasQuery ||
+        methods.hasFragment) {
+      return null;
+    }
+    Future<List<Map<String, dynamic>>?> read(
+      String method,
+      Map<String, String> query,
+    ) async {
+      await _assertSession(user, sid);
+      final request = http.Request(
+        'GET',
+        methods.replace(
+          path: '${methods.path}.$method',
+          queryParameters: {'user': user, ...query},
+        ),
+      )..followRedirects = false;
+      request.headers.addAll({
+        'Accept': 'application/json',
+        'Cookie': 'sid=$sid',
+        'Cache-Control': 'no-cache, no-store',
+      });
+      final response = await (() async =>
+              http.Response.fromStream(await _client.send(request)))()
+          .timeout(const Duration(seconds: 20));
+      await _assertSession(user, sid);
+      if (response.statusCode == 401) {
+        throw StateError('Your ERP session expired. Please sign in again.');
+      }
+      if ({403, 404, 417}.contains(response.statusCode)) return null;
+      if (response.statusCode != 200) {
+        throw StateError('Could not load completed visits. Please retry.');
+      }
+      final body = jsonDecode(response.body);
+      final message = body is Map ? body['message'] : null;
+      if (message is! List || message.any((row) => row is! Map)) return null;
+      final rows =
+          message.map((row) => Map<String, dynamic>.from(row as Map)).toList();
+      if (rows.any((row) => row['status'] == 'Error')) return null;
+      return rows;
+    }
+
+    final now = DateTime.now();
+    final today =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    // Match the Visits page's full history window so a visit created/scheduled
+    // in an earlier month still counts in the month it actually completed.
+    final results = await Future.wait([
+      read('event_list', {}),
+      read('history_list', {'from_date': '2000-01-01', 'to_date': today}),
+    ]);
+    if (results.any((rows) => rows == null)) return null;
+    final byId = <String, Map<String, dynamic>>{};
+    for (var source = 0; source < results.length; source++) {
+      for (final row in results[source]!) {
+        final id = (row['name'] ?? row['event_id'] ?? '').toString().trim();
+        if (id.isEmpty) return null;
+        byId[id] = {
+          ...?byId[id],
+          ...row,
+          if (source == 1) '_visit_completed_history': true,
+        };
+      }
+    }
+    final completed = <Map<String, dynamic>>[];
+    for (final row in byId.values) {
+      final checkout = row['custom_check_out']?.toString().trim() ?? '';
+      final end = row['ends_on']?.toString().trim() ?? '';
+      final status = row['status']?.toString().toLowerCase() ?? '';
+      final isCompleted =
+          row['_visit_completed_history'] == true ||
+          checkout.isNotEmpty ||
+          (end.isNotEmpty && status == 'completed') ||
+          status == 'closed';
+      if (!isCompleted) continue;
+      final date =
+          DateTime.tryParse(
+            (row['custom_check_out'] ?? row['ends_on'])?.toString() ?? '',
+          )?.toLocal() ??
+          DateTime.tryParse(row['starts_on']?.toString() ?? '')?.toLocal();
+      if (date == null) return null;
+      completed.add({'completed_at': date.toIso8601String()});
+    }
+    return completed;
+  }
+
   Future<PerformanceData> _loadResources(
     Uri base,
     DateTime month,
@@ -279,48 +335,13 @@ class PerformanceApi {
       _records(base, user, sid, 'Sales Order', [
         'transaction_date',
       ], filters('owner', 'transaction_date', 1)),
-      _records(
-        base,
-        user,
-        sid,
-        'Employee',
-        ['name'],
-        [
-          ['user_id', '=', user],
-          ['status', '=', 'Active'],
-        ],
-      ),
+      _completedVisitRecords(base, user, sid),
     ]);
-    final employees = streams[3];
-    final employee =
-        employees != null && employees.length == 1
-            ? employees.first['name']
-            : null;
-    final visits =
-        employee is String && employee.isNotEmpty
-            ? await _records(
-              base,
-              user,
-              sid,
-              'Visit',
-              ['custom_check_in_time'],
-              [
-                ['employee', '=', employee],
-                [
-                  'event_id',
-                  'not in',
-                  ['', 'Employee Checked In', 'Employee Checked Out'],
-                ],
-                ['custom_check_in_time', '>=', start],
-                ['custom_check_in_time', '<', end],
-                ['docstatus', '!=', 2],
-              ],
-            )
-            : null;
+    final visits = streams[3];
     final sources = [streams[0], visits, streams[1], streams[2]];
     if (sources.every((rows) => rows == null)) {
       throw StateError(
-        'Performance data is unavailable for this account. Ask your administrator to update mobile_employee_performance or allow access to your sales records.',
+        'Performance data is unavailable for this account. Ask your administrator to check access to your sales records.',
       );
     }
     const metrics = ['leads', 'site_visits', 'quotations', 'orders'];
@@ -348,7 +369,7 @@ class PerformanceApi {
             row[i == 0
                 ? 'creation'
                 : i == 1
-                ? 'custom_check_in_time'
+                ? 'completed_at'
                 : 'transaction_date'];
         final date = DateTime.tryParse(raw?.toString() ?? '');
         if (date == null) {

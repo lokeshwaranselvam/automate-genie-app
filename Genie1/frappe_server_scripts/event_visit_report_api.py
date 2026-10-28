@@ -42,7 +42,7 @@ for participant_field in ["event_participants", "participants"]:
 if not is_assigned:
     frappe.throw("This Event is not assigned to your user.")
 
-visit_policy = frappe.call("mobile_business_policy", feature="visit", action="get", event_id="")["policy"]
+visit_policy = frappe.call("mobile_business_policy", feature="visit", action="get", event_id=event_id)["policy"]
 report_policy = frappe.call("mobile_business_policy", feature="visit_report", action="get", event_id="")["policy"]
 requires_saved_location = visit_policy["rules"]["requires_saved_location"]
 visit_geofencing_enabled = visit_policy["rules"]["visit_geofencing_enabled"]

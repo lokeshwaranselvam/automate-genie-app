@@ -33,6 +33,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../utils/widget/action_bottom.dart';
 import '../utils/widget/warning.dart';
+import '../utils/widget/attendance_session_notice.dart';
 import '../utils/api/check_in_out.dart';
 import '../utils/api/session_auth.dart';
 import '../utils/api/session_web_links_api.dart';
@@ -112,6 +113,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   bool _attendanceStatusVerified = false;
   bool _attendanceStatusRefreshing = false;
   String? _attendanceStatusError;
+  final _attendanceSessionNotice = AttendanceSessionNotice();
   int _attendanceStatusRequestId = 0;
   int _attendanceActionRevision = 0;
   Timer? _attendanceStatusRefreshTimer;
@@ -629,11 +631,13 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }) async {
     if (!mounted ||
         !_prefsInitialized ||
+        _attendanceSessionNotice.isShown ||
         (_attendanceStatusRefreshing && !force)) {
       return;
     }
     final email = prefs.getString('email');
     if (email == null || email.isEmpty) return;
+    final requestToken = prefs.getString('token');
     final requestId = ++_attendanceStatusRequestId;
     final actionRevision = _attendanceActionRevision;
     _attendanceStatusRefreshing = true;
@@ -641,9 +645,14 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         mounted &&
         requestId == _attendanceStatusRequestId &&
         actionRevision == _attendanceActionRevision &&
-        prefs.getString('email') == email;
+        prefs.getString('email') == email &&
+        prefs.getString('token') == requestToken;
     try {
-      final response = await Check.getStatus(email, recordsFirst: recordsFirst);
+      final response = await Check.getStatus(
+        email,
+        recordsFirst: recordsFirst,
+        includeShift: _attendancePageOpen,
+      );
       if (!isCurrent()) return;
       if (response['attendance_records_verified'] != true) {
         throw StateError('Attendance records could not be verified.');
@@ -686,6 +695,18 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         // native service as well as updating the UI and cached attendance.
         unawaited(LiveLocationService().stopTracking());
       }
+    } on AttendanceAuthenticationException {
+      if (!isCurrent()) return;
+      setState(() {
+        _attendanceStatusVerified = false;
+        _attendanceStatusError = null;
+      });
+      _attendanceSessionNotice.show(
+        context,
+        onAcknowledged: () {
+          unawaited(_returnToLoginAfterAttendanceExpiry(email, requestToken));
+        },
+      );
     } catch (_) {
       if (!isCurrent()) return;
       // An unavailable/malformed response is not evidence of deleted records.
@@ -699,6 +720,34 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         _attendanceStatusRefreshing = false;
       }
     }
+  }
+
+  Future<void> _returnToLoginAfterAttendanceExpiry(
+    String email,
+    String? rejectedToken,
+  ) async {
+    bool sameLogin() =>
+        mounted &&
+        prefs.getString('email') == email &&
+        prefs.getString('token') == rejectedToken;
+    if (!sameLogin()) return;
+    _attendanceStatusRefreshTimer?.cancel();
+    try {
+      await LiveLocationService.stopForSignOut();
+    } catch (_) {
+      debugPrint('Could not stop tracking while returning to login.');
+    }
+    if (!sameLogin()) return;
+    // Clear only this app's local login. A remote logout could revoke a newer
+    // valid session belonging to the same account on the other installation.
+    await SessionAuthApi.clearSession();
+    if (!sameLogin()) return;
+    await prefs.clear();
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const Login()),
+      (route) => false,
+    );
   }
 
   Future<void> _saveAttendanceCompletion(bool completed) async {
@@ -1743,7 +1792,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         'attendance records before camera',
         () => _getStatusFromServer(force: true, recordsFirst: true),
       );
-      if (!mounted) return null;
+      if (!mounted || _attendanceSessionNotice.isShown) return null;
       if (!_attendanceStatusVerified) {
         Warning.show(
           context,
@@ -1761,7 +1810,11 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   Future<void> _performAttendanceAction() async {
-    if (_isActionLoading || _attendanceChooserOpen) return;
+    if (_isActionLoading ||
+        _attendanceChooserOpen ||
+        _attendanceSessionNotice.isShown) {
+      return;
+    }
     _attendanceChooserOpen = true;
     try {
       await Action_Bottom.show(
@@ -1802,7 +1855,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       completedToday: _attendanceCompletedToday,
       statusError: _attendanceStatusError,
       loading: _isLoading,
-      actionLoading: _isActionLoading,
+      actionLoading: _isActionLoading || _attendanceSessionNotice.isShown,
       status: _attendanceStatusDetails,
       position: mapPosition,
       accuracy: _position?.accuracy,

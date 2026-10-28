@@ -196,8 +196,8 @@ Future<void> continueToEvent(
   if (mapLink != null) {
     await tester.enterText(field('Customer map link *'), mapLink);
   }
-  await tester.ensureVisible(dropdown('Location type *'));
-  await tester.tap(dropdown('Location type *'));
+  await tester.ensureVisible(dropdown('Location type'));
+  await tester.tap(dropdown('Location type'));
   await tester.pumpAndSettle();
   await tester.tap(find.text('Site').last);
   await tester.pumpAndSettle();
@@ -207,6 +207,44 @@ Future<void> continueToEvent(
 }
 
 void main() {
+  testWidgets('location can be saved without type while map remains required', (
+    tester,
+  ) async {
+    final requests = <http.Request>[];
+    await withForm(
+      tester,
+      [
+        {'name': 'OPP-1', 'title': 'Customer'},
+      ],
+      () async {
+        expect(dropdown('Location type'), findsOneWidget);
+        await tester.ensureVisible(find.text('Save location and continue'));
+        await tester.tap(find.text('Save location and continue'));
+        await tester.pumpAndSettle();
+        expect(find.text('Map link is required.'), findsOneWidget);
+        expect(requests.where((r) => r.method == 'POST'), isEmpty);
+
+        await tester.ensureVisible(field('Customer map link *'));
+        await tester.enterText(
+          field('Customer map link *'),
+          'https://maps.google.com/?q=13,80',
+        );
+        await tester.ensureVisible(find.text('Save location and continue'));
+        await tester.tap(find.text('Save location and continue'));
+        await tester.pumpAndSettle();
+        final saved = requests.singleWhere(
+          (r) =>
+              r.method == 'POST' && r.bodyFields['action'] == 'save_location',
+        );
+        expect(saved.bodyFields['location_type'], '');
+        expect(saved.bodyFields['latitude'], '13.0');
+        expect(saved.bodyFields['longitude'], '80.0');
+        expect(find.text('Event Details'), findsOneWidget);
+      },
+      requests: requests,
+    );
+  });
+
   testWidgets('API supplies event location type choices', (tester) async {
     await withForm(
       tester,
@@ -520,11 +558,13 @@ void main() {
               field('Customer map link *'),
               'https://www.google.com/maps?q=13.085,80.21',
             );
-            await tester.ensureVisible(dropdown('Location type *'));
-            await tester.tap(dropdown('Location type *'));
-            await tester.pumpAndSettle();
-            await tester.tap(find.text('Site').last);
-            await tester.pumpAndSettle();
+            if (category != 'Measurement') {
+              await tester.ensureVisible(dropdown('Location type'));
+              await tester.tap(dropdown('Location type'));
+              await tester.pumpAndSettle();
+              await tester.tap(find.text('Site').last);
+              await tester.pumpAndSettle();
+            }
             await tester.ensureVisible(find.text('Continue to event details'));
             await tester.tap(find.text('Continue to event details'));
             await tester.pumpAndSettle();
@@ -564,6 +604,10 @@ void main() {
             final post =
                 requests.singleWhere((r) => r.method == 'POST').bodyFields;
             expect(post['reference_doctype'], doctype);
+            expect(
+              post['location_type'],
+              category == 'Measurement' ? isNull : 'Site',
+            );
             expect(post['reference_name'], 'SOURCE-PHONE');
             expect(post['opportunity'], '');
             expect(post['location_row'], '');
@@ -642,7 +686,7 @@ void main() {
           expect(dropdown('Product enquired'), findsNothing);
           expect(field('Search location'), findsNothing);
           expect(field('Customer map link *'), findsNothing);
-          expect(dropdown('Location type *'), findsNothing);
+          expect(dropdown('Location type'), findsNothing);
           expect(find.byType(GoogleMap), findsNothing);
           await tester.ensureVisible(find.text('Select visit date'));
           await tester.tap(find.text('Select visit date'));

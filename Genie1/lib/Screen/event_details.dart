@@ -43,8 +43,13 @@ import '../utils/widget/completed_visit_attachments.dart';
 
 class EventDetails extends StatefulWidget {
   final String eventid;
+  final bool hideVisitActions;
 
-  const EventDetails({super.key, required this.eventid});
+  const EventDetails({
+    super.key,
+    required this.eventid,
+    this.hideVisitActions = false,
+  });
 
   @override
   State<EventDetails> createState() => _EventDetailsState();
@@ -85,6 +90,12 @@ class _EventDetailsState extends State<EventDetails> {
   bool _isUploadingPhoto = false;
   // Photos already uploaded to this Event for checkout.
   int _uploadedCheckoutPhotos = 0;
+  int _savedVisitPhotoCount = 0;
+
+  // Display state only; checkout/upload validation keeps its existing rules.
+  bool get _checklistHasPhotos =>
+      _capturedPhotos.isNotEmpty ||
+      (_visitCheckedOut ? _savedVisitPhotoCount > 0 : _uploadedCheckoutPhotos > 0);
 
   // ── Geofence ───────────────────────────────────────────────────────────────
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -1879,8 +1890,7 @@ class _EventDetailsState extends State<EventDetails> {
       ('Site visit started', checkIn.isNotEmpty, checkIn),
       (
         'Photos captured',
-        _capturedPhotos.isNotEmpty ||
-            (_visitCheckedOut && _requiresPhotoBeforeCheckout()),
+        _checklistHasPhotos,
         _capturedPhotos.isNotEmpty
             ? '${_capturedPhotos.length} photo(s) ready'
             : '',
@@ -1999,8 +2009,7 @@ class _EventDetailsState extends State<EventDetails> {
     final completedChecklistCount =
         [
           checkedIn,
-          _capturedPhotos.isNotEmpty ||
-              (checkedOut && _requiresPhotoBeforeCheckout()),
+          _checklistHasPhotos,
           checkedIn,
           checkedOut,
         ].where((value) => value).length;
@@ -2194,9 +2203,7 @@ class _EventDetailsState extends State<EventDetails> {
                     _visitChecklistRow('Site visit started', checkedIn),
                     _visitChecklistRow(
                       'Photos captured',
-                      _capturedPhotos.isNotEmpty ||
-                          _uploadedCheckoutPhotos > 0 ||
-                          (checkedOut && _requiresPhotoBeforeCheckout()),
+                      _checklistHasPhotos,
                     ),
                     _visitChecklistRow('Customer location verified', checkedIn),
                     _visitChecklistRow('Site visit completed', checkedOut),
@@ -2205,6 +2212,10 @@ class _EventDetailsState extends State<EventDetails> {
                       CompletedVisitAttachments(
                         key: ValueKey(widget.eventid),
                         eventId: widget.eventid,
+                        onImageCountLoaded: (count) {
+                          if (!mounted || count == _savedVisitPhotoCount) return;
+                          setState(() => _savedVisitPhotoCount = count);
+                        },
                       )
                     else ...[
                       Row(
@@ -2384,97 +2395,100 @@ class _EventDetailsState extends State<EventDetails> {
                   ],
                 ),
               ),
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: Container(
-          color: Colors.white,
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-          child: Row(
-            children: [
-              Expanded(
-                child: Tooltip(
-                  message:
-                      _visitBusinessPolicy.data['actions'] is Map
-                          ? (_visitBusinessPolicy.actionBlockReason(
-                                'check_in',
-                              ) ??
-                              '')
-                          : '',
-                  child: ElevatedButton(
-                    onPressed:
-                        _canUseVisitActions &&
-                                _visitActionAllowed(
+      bottomNavigationBar: Visibility(
+        visible: !widget.hideVisitActions,
+        child: SafeArea(
+          top: false,
+          child: Container(
+            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Tooltip(
+                    message:
+                        _visitBusinessPolicy.data['actions'] is Map
+                            ? (_visitBusinessPolicy.actionBlockReason(
                                   'check_in',
-                                  !checkedIn && !checkedOut,
-                                ) &&
-                                !_isActionInProgress
-                            ? () => _handleVisitCheckInOut(action: 'check_in')
-                            : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: BrandColors.ink,
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor:
-                          checkedIn ? const Color(0xFFE8F6EF) : Colors.black12,
-                      disabledForegroundColor:
-                          checkedIn ? const Color(0xFF219653) : Colors.black45,
-                      minimumSize: const Size.fromHeight(46),
-                      shape: const StadiumBorder(),
-                    ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
-                    child: const Text(
-                      'Check In',
-                      style: TextStyle(fontWeight: FontWeight.w700),
+                                ) ??
+                                '')
+                            : '',
+                    child: ElevatedButton(
+                      onPressed:
+                          _canUseVisitActions &&
+                                  _visitActionAllowed(
+                                    'check_in',
+                                    !checkedIn && !checkedOut,
+                                  ) &&
+                                  !_isActionInProgress
+                              ? () => _handleVisitCheckInOut(action: 'check_in')
+                              : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: BrandColors.ink,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor:
+                            checkedIn ? const Color(0xFFE8F6EF) : Colors.black12,
+                        disabledForegroundColor:
+                            checkedIn ? const Color(0xFF219653) : Colors.black45,
+                        minimumSize: const Size.fromHeight(46),
+                        shape: const StadiumBorder(),
+                      ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
+                      child: const Text(
+                        'Check In',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Tooltip(
-                  message:
-                      _visitBusinessPolicy.data['actions'] is Map
-                          ? (_visitBusinessPolicy.actionBlockReason(
-                                'check_out',
-                              ) ??
-                              '')
-                          : '',
-                  child: ElevatedButton(
-                    onPressed:
-                        _canUseVisitActions &&
-                                _visitActionAllowed(
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Tooltip(
+                    message:
+                        _visitBusinessPolicy.data['actions'] is Map
+                            ? (_visitBusinessPolicy.actionBlockReason(
                                   'check_out',
-                                  checkedIn && !checkedOut,
-                                ) &&
-                                !_isActionInProgress
-                            ? () => _handleVisitCheckInOut(action: 'check_out')
-                            : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: BrandColors.ink,
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor:
-                          checkedOut ? const Color(0xFFE8F6EF) : Colors.black12,
-                      disabledForegroundColor:
-                          checkedOut ? const Color(0xFF219653) : Colors.black45,
-                      minimumSize: const Size.fromHeight(46),
-                      shape: const StadiumBorder(),
-                    ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
-                    child:
-                        _isActionInProgress
-                            ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
+                                ) ??
+                                '')
+                            : '',
+                    child: ElevatedButton(
+                      onPressed:
+                          _canUseVisitActions &&
+                                  _visitActionAllowed(
+                                    'check_out',
+                                    checkedIn && !checkedOut,
+                                  ) &&
+                                  !_isActionInProgress
+                              ? () => _handleVisitCheckInOut(action: 'check_out')
+                              : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: BrandColors.ink,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor:
+                            checkedOut ? const Color(0xFFE8F6EF) : Colors.black12,
+                        disabledForegroundColor:
+                            checkedOut ? const Color(0xFF219653) : Colors.black45,
+                        minimumSize: const Size.fromHeight(46),
+                        shape: const StadiumBorder(),
+                      ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
+                      child:
+                          _isActionInProgress
+                              ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                              : const Text(
+                                'Check Out',
+                                style: TextStyle(fontWeight: FontWeight.w700),
                               ),
-                            )
-                            : const Text(
-                              'Check Out',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

@@ -1,3 +1,4 @@
+import '../storage_diagnostics.dart';
 import 'dart:convert';
 import 'dart:math';
 
@@ -46,7 +47,7 @@ class MobileLoginDevice {
   }
 
   static Future<String> _loadKey() async {
-    final saved = await _storage.read(key: _keyName);
+    final saved = await StorageDiagnostics.read(_storage, key: _keyName);
     if (saved != null && RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(saved)) {
       return saved;
     }
@@ -54,14 +55,14 @@ class MobileLoginDevice {
     final value = base64UrlEncode(
       List<int>.generate(32, (_) => random.nextInt(256)),
     ).replaceAll('=', '');
-    await _storage.write(key: _keyName, value: value);
+    await StorageDiagnostics.write(_storage, key: _keyName, value: value);
     return value;
   }
 
   static Future<void> logout(Uri endpoint, String user) async {
     // Persist before the network call. Enrollment's emergency local cleanup
     // must not lose the ability to release the server binding after an outage.
-    await _storage.write(
+    await StorageDiagnostics.write(_storage,
       key: _pendingName,
       value: jsonEncode({'endpoint': endpoint.toString(), 'user': user}),
     );
@@ -69,17 +70,17 @@ class MobileLoginDevice {
   }
 
   static Future<void> rememberSession(Uri endpoint, String user) async {
-    final previous = await _storage.read(key: _activeName);
+    final previous = await StorageDiagnostics.read(_storage, key: _activeName);
     final value = jsonEncode({'endpoint': endpoint.toString(), 'user': user});
     if (previous != null && previous != value) {
       final old = jsonDecode(previous) as Map;
       await logout(Uri.parse(old['endpoint'] as String), old['user'] as String);
     }
-    await _storage.write(key: _activeName, value: value);
+    await StorageDiagnostics.write(_storage, key: _activeName, value: value);
   }
 
   static Future<bool> logoutRememberedSession() async {
-    final active = await _storage.read(key: _activeName);
+    final active = await StorageDiagnostics.read(_storage, key: _activeName);
     if (active == null) return false;
     final data = jsonDecode(active) as Map;
     await logout(Uri.parse(data['endpoint'] as String), data['user'] as String);
@@ -96,7 +97,7 @@ class MobileLoginDevice {
   }
 
   static Future<void> _completePendingLogout() async {
-    final pending = await _storage.read(key: _pendingName);
+    final pending = await StorageDiagnostics.read(_storage, key: _pendingName);
     if (pending == null) return;
     final data = jsonDecode(pending) as Map;
     final response = await http
@@ -126,7 +127,7 @@ class MobileLoginDevice {
       );
     }
     await _storage.delete(key: _pendingName);
-    if (await _storage.read(key: _activeName) == pending) {
+    if (await StorageDiagnostics.read(_storage, key: _activeName) == pending) {
       await _storage.delete(key: _activeName);
     }
   }

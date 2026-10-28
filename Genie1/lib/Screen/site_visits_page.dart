@@ -297,7 +297,12 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     final id = _id(visit);
     if (id.isEmpty) return;
     await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => EventDetails(eventid: id)),
+      MaterialPageRoute<void>(
+        builder: (_) => EventDetails(
+          eventid: id,
+          hideVisitActions: _isCompleted(visit),
+        ),
+      ),
     );
     if (mounted) await _refresh();
   }

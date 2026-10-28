@@ -13,11 +13,11 @@
 # plus the Event map fields; company remains a read-only reference detail.
 # POST /api/method/mobile_site_visit
 #   action=save_location, opportunity, map_link, latitude, longitude,
-#   location_type
+#   location_type (optional)
 #   action=create_event, opportunity, location_row, summary, starts_on, ends_on,
 #   assigned_to, category, product_enquired (optional)
 #   Other/Bank/Head Office/Timbe office/Collection omit location fields.
-#   Measurement/Installation send map_link, latitude, longitude, location_type.
+#   Measurement/Installation send map_link, latitude, longitude; location_type is optional.
 
 action = (frappe.form_dict.get("action") or "get").strip().lower()
 current_user = frappe.session.user
@@ -65,7 +65,7 @@ if action != "can_create" and not can_create_visit:
     frappe.throw("Only users with the Sales Manager role, Accounts User role, SCM Manager role, or Delivery Manager role can create site visits.")
 
 business_policy = None
-if action in ["get", "create_event"]:
+if action in ["get", "save_location", "create_event"]:
     business_policy = frappe.call("mobile_business_policy", feature="visit", action="get", event_id="")["policy"]
 
 # Combine category grants from every applicable creation role.
@@ -74,9 +74,16 @@ if action in ["get", "create_event"]:
 # or the selected customer's/reference document's company.
 allowed_category_names = None
 if action in ["get", "get_references", "create_event"]:
+    # Match mobile login's active Employee before considering legacy records.
+    # An old/inactive record from another company must not narrow this list.
     employee_company = frappe.db.get_value(
-        "Employee", {"user_id": current_user}, "company",
+        "Employee", {"user_id": current_user, "status": "Active"}, "company",
     )
+    if not employee_company:
+        # Preserve existing behavior for users without an active company mapping.
+        employee_company = frappe.db.get_value(
+            "Employee", {"user_id": current_user}, "company",
+        )
     allowed_category_names = []
     if has_sales_manager_role:
         if employee_company in [
@@ -602,8 +609,10 @@ elif action == "save_location":
     latitude = frappe.utils.flt(frappe.form_dict.get("latitude"))
     longitude = frappe.utils.flt(frappe.form_dict.get("longitude"))
 
-    if not opportunity_name or not map_link or not location_type:
-        frappe.throw("Opportunity, map link, and location type are required.")
+    if not opportunity_name or not map_link:
+        frappe.throw("Opportunity and map link are required.")
+    if not location_type and (business_policy["fields"].get("location_type") or {}).get("required", False):
+        frappe.throw("Choose a location type.")
     if latitude < -90 or latitude > 90 or longitude < -180 or longitude > 180:
         frappe.throw("The map link must resolve to valid coordinates.")
 
@@ -614,7 +623,7 @@ elif action == "save_location":
     location_type_config = get_location_types()
     allowed_types = location_type_config["options"]
     location_type_free_text = location_type_config["free_text"]
-    if not location_type_free_text and location_type not in allowed_types:
+    if location_type and not location_type_free_text and location_type not in allowed_types:
         frappe.throw("Choose a valid location type.")
 
     location_table = get_opportunity_location_table()
@@ -721,7 +730,9 @@ elif action == "create_event":
         longitude = float(longitude_value)
         if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
             frappe.throw("Choose valid Event coordinates.")
-        if location_type not in business_policy["rules"]["location_types"]:
+        if not location_type and (business_policy["fields"].get("location_type") or {}).get("required", False):
+            frappe.throw("Choose a location type.")
+        if location_type and location_type not in business_policy["rules"]["location_types"]:
             frappe.throw("Choose a valid location type.")
         # Embed resolved coordinates so eventSelectedLocations can read
         # custom_validate directly, even when the original link was shortened.
@@ -781,7 +792,7 @@ elif action == "create_event":
     if product_enquired and "custom_product_enquired" not in event_fields:
         frappe.throw("Event is missing its custom_product_enquired field.")
     if saved_location:
-        if "location" not in event_fields and "custom_location_type" not in event_fields:
+        if saved_location["location_type"] and "location" not in event_fields and "custom_location_type" not in event_fields:
             frappe.throw("Event needs a location field to save the selected Home/Site/Others type.")
         if "custom_location" not in event_fields and "custom_validate" not in event_fields:
             frappe.throw("Event needs a map location field to save the selected customer coordinates.")

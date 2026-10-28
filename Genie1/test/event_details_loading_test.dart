@@ -51,6 +51,9 @@ void main() {
   });
 
   for (final scenario in [
+    'completed-image',
+    'completed-document',
+    'completed-details',
     'pending',
     'error',
     'invalid',
@@ -80,6 +83,19 @@ void main() {
               jsonEncode({
                 'message': {
                   'status': 'success',
+                  if (scenario == 'completed-image' ||
+                      scenario == 'completed-document') ...{
+                    'event_id': 'EVENT-1',
+                    'attachments': [
+                      {
+                        'file_name': 'visit',
+                        'file_url':
+                            scenario == 'completed-image'
+                                ? '/private/files/visit.JPG'
+                                : '/private/files/visit.pdf',
+                      },
+                    ],
+                  },
                   if (scenario.startsWith('saved-location-'))
                     'requires_saved_location':
                         scenario == 'saved-location-enabled',
@@ -151,6 +167,11 @@ void main() {
                           'https://maps.google.com/?q=13.05,80.2',
                     },
                     'owner': 'owner@example.test',
+                    if (scenario == 'completed-image' ||
+                        scenario == 'completed-document') ...{
+                      'custom_check_in': '2026-10-26 09:00:00',
+                      'custom_check_out': '2026-10-26 10:00:00',
+                    },
                     if (scenario.startsWith('checkout-photo-'))
                       'custom_check_in': '2026-10-26 09:00:00',
                     'starts_on': DateTime.now().toIso8601String(),
@@ -166,7 +187,12 @@ void main() {
         });
         await http.runWithClient(() async {
           await tester.pumpWidget(
-            const MaterialApp(home: EventDetails(eventid: 'EVENT-1')),
+            MaterialApp(
+              home: EventDetails(
+                eventid: 'EVENT-1',
+                hideVisitActions: scenario.startsWith('completed-'),
+              ),
+            ),
           );
           for (var i = 0; i < 12; i++) {
             await tester.pump(const Duration(milliseconds: 50));
@@ -175,6 +201,13 @@ void main() {
             ElevatedButton,
             scenario.startsWith('checkout-photo-') ? 'Check Out' : 'Check In',
           );
+          if (scenario.startsWith('completed-')) {
+            expect(find.text('Check In'), findsNothing);
+            expect(find.text('Check Out'), findsNothing);
+          } else {
+            expect(find.text('Check In'), findsOneWidget);
+            expect(find.text('Check Out'), findsOneWidget);
+          }
           if (scenario == 'pending') {
             expect(tester.widget<ElevatedButton>(checkIn).onPressed, isNull);
             await tester.pump(const Duration(seconds: 26));
@@ -184,6 +217,9 @@ void main() {
           }
           expect(find.byType(AgPathLoadingIndicator), findsNothing);
           if ([
+            'completed-image',
+            'completed-document',
+            'completed-details',
             'names',
             'Other',
             'Head Office CH',
@@ -198,7 +234,63 @@ void main() {
             'checkout-photo-optional',
           ].contains(scenario)) {
             expect(find.text('Bank task loaded'), findsWidgets);
-            expect(tester.widget<ElevatedButton>(checkIn).onPressed, isNotNull);
+            if (scenario.startsWith('completed-')) {
+              expect(checkIn, findsNothing);
+            } else {
+              expect(
+                tester.widget<ElevatedButton>(checkIn).onPressed,
+                isNotNull,
+              );
+            }
+            if (scenario == 'completed-image' ||
+                scenario == 'completed-document') {
+              expect(
+                find.text(
+                  scenario == 'completed-image'
+                      ? 'Checklist (4/4)'
+                      : 'Checklist (3/4)',
+                ),
+                findsOneWidget,
+              );
+              final photoRow =
+                  find
+                      .ancestor(
+                        of: find.text('Photos captured'),
+                        matching: find.byType(Row),
+                      )
+                      .first;
+              expect(
+                tester
+                    .widget<Checkbox>(
+                      find.descendant(
+                        of: photoRow,
+                        matching: find.byType(Checkbox),
+                      ),
+                    )
+                    .value,
+                scenario == 'completed-image',
+              );
+              await tester.ensureVisible(find.text('View All'));
+              await tester.tap(find.text('View All'));
+              await tester.pumpAndSettle();
+              final photoTile = find.widgetWithText(
+                ListTile,
+                'Photos captured',
+              );
+              expect(
+                find.descendant(
+                  of: photoTile,
+                  matching: find.byIcon(
+                    scenario == 'completed-image'
+                        ? Icons.check_circle
+                        : Icons.radio_button_unchecked,
+                  ),
+                ),
+                findsOneWidget,
+              );
+              Navigator.of(tester.element(photoTile)).pop();
+              await tester.pumpAndSettle();
+            }
             pending.complete(http.Response('{"message":null}', 200));
             if (scenario.startsWith('saved-location-') ||
                 scenario.startsWith('checkin-radius-') ||

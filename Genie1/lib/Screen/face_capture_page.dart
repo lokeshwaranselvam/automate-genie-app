@@ -14,23 +14,18 @@ import 'package:permission_handler/permission_handler.dart';
 import '../utils/face/face_blink_controller.dart';
 import '../utils/face/face_image_quality.dart';
 import '../utils/face/face_performance_trace.dart';
-import '../utils/face/portrait_blur_preview.dart';
-import '../utils/face/portrait_blur_service.dart';
 import '../utils/face/primary_face.dart';
 
 /// Validates a raw JPEG after one continuous blink and a clear eyes-open photo.
-/// [validateCapture] returns null to accept, or guidance to retry. Enrollment
-/// can apply a cosmetic portrait effect only after validation has accepted it.
+/// [validateCapture] returns null to accept, or guidance to retry.
 class FaceCapturePage extends StatefulWidget {
   const FaceCapturePage({
     super.key,
     required this.title,
     this.validateCapture,
     this.validatePhotoInCallback = false,
-    this.portraitBackgroundBlur = false,
-    this.blurCapturedPhoto = false,
-  }) : assert(!validatePhotoInCallback || validateCapture != null),
-       assert(!blurCapturedPhoto || portraitBackgroundBlur);
+    this.usePrimaryFaceSelection = false,
+  }) : assert(!validatePhotoInCallback || validateCapture != null);
 
   final String title;
   final Future<String?> Function(File rawPhoto)? validateCapture;
@@ -39,11 +34,8 @@ class FaceCapturePage extends StatefulWidget {
   /// matching on one upright image. Standalone captures retain local checks.
   final bool validatePhotoInCallback;
 
-  /// Cosmetic preview effect. Face checks always receive original frames.
-  final bool portraitBackgroundBlur;
-
-  /// Enrollment can also blur its accepted photo; attendance keeps the raw file.
-  final bool blurCapturedPhoto;
+  /// Retains the existing main-person selection and ambiguous-face rejection.
+  final bool usePrimaryFaceSelection;
 
   @override
   State<FaceCapturePage> createState() => _FaceCapturePageState();
@@ -61,13 +53,12 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       enableLandmarks: true,
       enableTracking: true,
       performanceMode: FaceDetectorMode.fast,
-      // Find smaller background faces for the cosmetic exclusion mask. Main
-      // face size, blink, pose and final-photo quality thresholds stay intact.
-      minFaceSize: widget.portraitBackgroundBlur ? 0.05 : 0.15,
+      // Preserve detection sensitivity and main-person selection independently
+      // of cosmetic processing. Blink and final-photo checks remain unchanged.
+      minFaceSize: widget.usePrimaryFaceSelection ? 0.05 : 0.15,
     ),
   );
   CameraController? _camera;
-  PortraitBlurService? _portrait;
   Future<void> _cameraOperations = Future<void>.value();
   Future<void>? _frameWork;
   Timer? _timer;
@@ -87,7 +78,6 @@ class _FaceCapturePageState extends State<FaceCapturePage>
   @override
   void initState() {
     super.initState();
-    if (widget.portraitBackgroundBlur) _portrait = PortraitBlurService();
     WidgetsBinding.instance.addObserver(this);
     _queueStart();
   }
@@ -115,7 +105,6 @@ class _FaceCapturePageState extends State<FaceCapturePage>
     _queueStop();
     unawaited(
       _cameraOperations.then((_) async {
-        await _portrait?.close();
         await _detector.close();
       }),
     );
@@ -129,7 +118,6 @@ class _FaceCapturePageState extends State<FaceCapturePage>
         .then((_) async {
           await _releaseCamera();
           if (!_validSession(session)) return;
-          _portrait?.resetPreview();
           await _initializeCamera(session);
         })
         .catchError((Object error) {
@@ -273,11 +261,9 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       final width = (rotated ? frame.height : frame.width).toDouble();
       final height = (rotated ? frame.width : frame.height).toDouble();
       final face =
-          widget.portraitBackgroundBlur
+          widget.usePrimaryFaceSelection
               ? selectPrimaryFace(faces, width, height)
               : (faces.length == 1 ? faces.single : null);
-      _portrait?.updatePreview(input, faces, width, height);
-      if (widget.blurCapturedPhoto) _portrait?.warmUpPhotoSegmentation(input);
       final rect = face?.boundingBox;
       final previousProgress = _blink.progress;
       final progress = _blink.observe(
@@ -384,7 +370,6 @@ class _FaceCapturePageState extends State<FaceCapturePage>
     if (camera == null || _capturing || !_validSession(session)) return;
     setState(() => _capturing = true);
     File? photo;
-    File? portrait;
     bool accepted = false;
     try {
       _timer?.cancel();
@@ -404,7 +389,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
         );
         if (!_validSession(session)) return;
         final face =
-            widget.portraitBackgroundBlur && information != null
+            widget.usePrimaryFaceSelection && information != null
                 ? selectPrimaryFace(
                   faces,
                   information['width']!,
@@ -440,15 +425,10 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       if (error != null) {
         setState(() => _retryMessage = error);
       } else {
-        // Keep the original photo as the input to every existing face check.
-        // Only an accepted enrollment photograph receives the cosmetic effect.
-        if (widget.blurCapturedPhoto) {
-          portrait = await _portrait?.blurAcceptedPhoto(photo, _detector);
-        }
         if (!mounted || !_validSession(session)) return;
         accepted = true;
         _completed = true;
-        Navigator.of(context).pop<File>(portrait ?? photo);
+        Navigator.of(context).pop<File>(photo);
       }
     } catch (_) {
       if (_validSession(session)) {
@@ -458,15 +438,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
         );
       }
     } finally {
-      if (portrait != null && portrait.path != photo?.path && !accepted) {
-        try {
-          if (await portrait.exists()) await portrait.delete();
-        } on FileSystemException {
-          // Remove only this capture's cancelled cosmetic output.
-        }
-      }
-      if (photo != null &&
-          (!accepted || (portrait != null && portrait.path != photo.path))) {
+      if (photo != null && !accepted) {
         try {
           if (await photo.exists()) await photo.delete();
         } on FileSystemException {
@@ -524,15 +496,12 @@ class _FaceCapturePageState extends State<FaceCapturePage>
                         if (previewReady)
                           Center(
                             child:
-                                _portrait == null
-                                    ? CameraPreview(camera)
-                                    : AspectRatio(
+                                widget.usePrimaryFaceSelection
+                                    ? AspectRatio(
                                       aspectRatio: 1 / camera.value.aspectRatio,
-                                      child: PortraitBlurPreview(
-                                        mask: _portrait!.previewMask,
-                                        child: CameraPreview(camera),
-                                      ),
-                                    ),
+                                      child: CameraPreview(camera),
+                                    )
+                                    : CameraPreview(camera),
                           ),
                         if (previewReady)
                           IgnorePointer(

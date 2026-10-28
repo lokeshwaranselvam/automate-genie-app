@@ -7,8 +7,13 @@ import '../api/event.dart';
 
 /// Saved Event files; fetching these never changes checkout or report data.
 class CompletedVisitAttachments extends StatefulWidget {
-  const CompletedVisitAttachments({super.key, required this.eventId});
+  const CompletedVisitAttachments({
+    super.key,
+    required this.eventId,
+    this.onImageCountLoaded,
+  });
   final String eventId;
+  final ValueChanged<int>? onImageCountLoaded;
 
   @override
   State<CompletedVisitAttachments> createState() =>
@@ -70,6 +75,9 @@ class _CompletedVisitAttachmentsState extends State<CompletedVisitAttachments> {
           _files = files;
           _headers = {if (token != null) 'Authorization': token};
         });
+        widget.onImageCountLoaded?.call(
+          files.where((file) => _isImage(file['file_url'] as String)).length,
+        );
       }
     } catch (_) {
       if (mounted) setState(() => _error = 'Could not load visit attachments.');

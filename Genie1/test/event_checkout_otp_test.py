@@ -17,7 +17,8 @@ class EventCheckoutAttachmentTest(unittest.TestCase):
     def run_checkout(self, filename, attachment=True, checked_in=True, checked_out=False, otp=None, photo_required=False):
         doc = Row(custom_check_in='2026-10-16 09:00:00' if checked_in else None,
                   custom_check_out='2026-10-16 10:00:00' if checked_out else None,
-                  custom_otp='historical', custom_whats_app=None, owner='sales@example.test', starts_on='2026-10-16')
+                  custom_otp='historical', custom_whats_app=None, owner='sales@example.test', starts_on='2026-10-16',
+                  event_category='Site Visit' if photo_required else 'Bank')
         doc.save = Mock()
         def exists(doctype, filters):
             if doctype == 'File':
@@ -89,8 +90,8 @@ class EventCheckoutAttachmentTest(unittest.TestCase):
                 doc.save.assert_not_called()
 
 class EventVisitReportWithoutOtpTest(unittest.TestCase):
-    def report(self, params=None, owner='sales@example.test', description='', otp='0123', clear_on_save=False, expected_otp='0123', outcomes=None, allow_edit=False):
-        event = Row(name='EVENT-1', owner=owner, description=description, custom_otp=otp, custom_whats_app=expected_otp, event_category='Site Visit')
+    def report(self, params=None, owner='sales@example.test', description='', otp='0123', clear_on_save=False, expected_otp='0123', outcomes=None, allow_edit=False, category='Site Visit'):
+        event = Row(name='EVENT-1', owner=owner, description=description, custom_otp=otp, custom_whats_app=expected_otp, event_category=category)
         self.last_event = event
         event.save = Mock()
         if clear_on_save:
@@ -148,11 +149,21 @@ class EventVisitReportWithoutOtpTest(unittest.TestCase):
         self.assertTrue(result['can_edit_report'])
         self.assertEqual(event.description, 'observation : Updated\nOutcome: Interested')
 
+    def test_report_flag_matches_each_event_category(self):
+        for category in ['Other', 'Others', 'Bank', 'Head Office CH',
+                         'Timbe / Bioman Office CH', 'Measurement', 'Installation']:
+            with self.subTest(category=category):
+                result, _ = self.report(category=category)
+                self.assertIs(result['requires_checkout_photo'], False)
+                self.assertEqual(result['visit_policy']['uploads']['min_count'], 0)
+        result, _ = self.report(category='Collection')
+        self.assertIs(result['requires_checkout_photo'], True)
+
     def test_get_preserves_report_options_and_historical_data(self):
         result, event = self.report(description='observation : Visited\nOutcome: Interested')
         self.assertIs(result['requires_saved_location'], False)
         self.assertIs(result['visit_geofencing_enabled'], False)
-        self.assertIs(result['requires_checkout_photo'], False)
+        self.assertIs(result['requires_checkout_photo'], True)
         self.assertEqual(result['visit_checkin_radius_meters'], 100)
         self.assertEqual(result['visit_monitoring_radius_meters'], 200)
         self.assertIs(result['visit_monitoring_enabled'], True)
@@ -173,7 +184,7 @@ class EventVisitReportWithoutOtpTest(unittest.TestCase):
             self.assertTrue(result['is_submitted'])
             self.assertIs(result['requires_saved_location'], False)
             self.assertIs(result['visit_geofencing_enabled'], False)
-            self.assertIs(result['requires_checkout_photo'], False)
+            self.assertIs(result['requires_checkout_photo'], True)
             self.assertEqual(result['visit_checkin_radius_meters'], 100)
             self.assertEqual(result['visit_monitoring_radius_meters'], 200)
             self.assertIs(result['visit_monitoring_enabled'], True)

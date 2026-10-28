@@ -436,7 +436,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
           mapLink: link,
           latitude: coordinates.latitude,
           longitude: coordinates.longitude,
-          locationType: _locationType!,
+          locationType: _locationType ?? '',
         );
         rowName = result['location_row']?.toString().trim() ?? '';
         if (rowName.isEmpty) {
@@ -1050,13 +1050,28 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
     DropdownButtonFormField<String>(
       initialValue: _locationType,
       isExpanded: true,
-      decoration: _decoration('Location type *'),
+      decoration: _decoration(
+        _businessPolicy.required(
+              'location_type',
+              _categoryRule.requiredFields.contains('location_type'),
+            )
+            ? 'Location type *'
+            : 'Location type',
+      ),
       items: [
         for (final type in _eventLocationTypes)
           DropdownMenuItem(value: type, child: Text(type)),
       ],
       onChanged: (value) => setState(() => _locationType = value),
-      validator: (value) => value == null ? 'Select a location type.' : null,
+      validator:
+          (value) => _businessPolicy.validate(
+            'location_type',
+            value,
+            legacyRequired: _categoryRule.requiredFields.contains(
+              'location_type',
+            ),
+            requiredMessage: 'Select a location type.',
+          ),
     ),
     const SizedBox(height: 10),
     _locationMapPicker(),

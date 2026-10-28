@@ -1,3 +1,4 @@
+import '../storage_diagnostics.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -28,14 +29,14 @@ class FcmDeviceApi {
   }
 
   static Future<String> _loadRegistrationDeviceId() async {
-    final saved = await _deviceStorage.read(key: _deviceIdKey);
+    final saved = await StorageDiagnostics.read(_deviceStorage, key: _deviceIdKey);
     if (saved != null && saved.isNotEmpty) return saved;
     final random = Random.secure();
     final id = base64UrlEncode(
       List<int>.generate(32, (_) => random.nextInt(256)),
     ).replaceAll('=', '');
     // Separate from the private mobile-login credential: this ID is metadata.
-    await _deviceStorage.write(key: _deviceIdKey, value: id);
+    await StorageDiagnostics.write(_deviceStorage, key: _deviceIdKey, value: id);
     return id;
   }
 

@@ -50,6 +50,7 @@ class MobileBusinessPolicyTest(unittest.TestCase):
         self.override('visit', {'rules': {'event_day_only': False, 'allow_multiple_active_visits': True}})
         self.assertTrue(self.policy(event_id='EVENT-1')['actions']['check_in']['allowed'])
         self.event.custom_check_in = '2026-10-26 10:00:00'
+        self.event.event_category = 'Other'
         self.assertTrue(self.policy(event_id='EVENT-1')['actions']['check_out']['allowed'])
         self.assertFalse(self.policy(event_id='EVENT-1')['actions']['check_in']['allowed'])
 
@@ -116,6 +117,34 @@ class MobileBusinessPolicyTest(unittest.TestCase):
         policy = self.policy(event_id='EVENT-1')
         self.assertTrue(policy['actions']['check_out']['allowed'])
         self.assertEqual(policy['uploads']['current_count'], 1)
+
+    def test_attachment_categories_and_checkout_requirements(self):
+        self.event.custom_check_in = '2026-10-26 10:00:00'
+        exempt = ['Other', 'Others', 'Bank', 'Head Office', 'Head Office CH',
+                  'Timbe Office', 'Timbe / Bioman Office CH', 'Measurement',
+                  'Installation', '  MEASUREMENT  ']
+        for category in exempt + ['Site Visit', 'Collection', 'Complaint Visit', 'Maintenance']:
+            with self.subTest(category=category):
+                self.event.event_category = category
+                self.roles = []
+                policy = self.policy(event_id='EVENT-1')
+                self.assertEqual(policy['uploads']['min_count'], 0 if category in exempt else 1)
+                self.assertEqual(policy['uploads']['max_count'], 0)
+                self.assertEqual(policy['actions']['check_out']['allowed'], category in exempt)
+                if category not in exempt:
+                    self.assertTrue(policy['actions']['check_out']['can_prepare'])
+                    self.roles = ['File exists']
+                    self.assertTrue(self.policy(event_id='EVENT-1')['actions']['check_out']['allowed'])
+
+    def test_attachment_exemptions_do_not_bypass_assignment_or_date(self):
+        self.event.event_category = 'Bank'
+        self.event.custom_check_in = '2026-10-26 10:00:00'
+        self.event.owner = 'other@example.test'
+        self.assertEqual(self.policy(event_id='EVENT-1')['actions']['check_out']['reason'],
+                         'This Event is not assigned to your user.')
+        self.event.owner = 'user@example.test'
+        self.event.starts_on = '2026-10-25'
+        self.assertIn('event day', self.policy(event_id='EVENT-1')['actions']['check_out']['reason'])
 
     def test_guest_and_unknown_feature_fail_without_loading_documents(self):
         with self.assertRaisesRegex(ValueError, 'supported'):
