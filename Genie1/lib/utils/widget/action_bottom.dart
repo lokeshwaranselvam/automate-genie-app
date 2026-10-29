@@ -1,17 +1,16 @@
 import 'package:homegenie/utils/theme/brand_theme.dart';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:adaptive_action_sheet/adaptive_action_sheet.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:homegenie/utils/api/check_in_out.dart';
 import 'package:homegenie/utils/api/event.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as maps;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'warning.dart';
-import '../widget/location_tracker.dart';
 import '../widget/live_location_service.dart';
 import '../widget/battery_optimization_helper.dart';
 import '../api/face_auth_api.dart';
@@ -99,6 +98,28 @@ class Action_Bottom {
       }
       return null;
     }
+  }
+
+  /// ERP returns numbers as num or String depending on the field type.
+  static double? _readDouble(dynamic value) {
+    final parsed =
+        value is num
+            ? value.toDouble()
+            : double.tryParse('${value ?? ''}'.trim());
+    return parsed != null && parsed.isFinite ? parsed : null;
+  }
+
+  /// Frappe may return message as a String, Map or List; never pass a
+  /// non-String to Warning.show.
+  static String _responseMessage(dynamic response) {
+    final message = response is Map ? response['message'] : response;
+    if (message == null) return 'Something went wrong. Please try again.';
+    if (message is String) return message;
+    if (message is Map && message['message'] != null) {
+      return _responseMessage(message);
+    }
+    if (message is List) return message.map((e) => '$e').join('\n');
+    return message.toString();
   }
 
   static Future<String?> _startEmployeeLiveLocationTracking() async {
@@ -228,32 +249,11 @@ class Action_Bottom {
                       onApiStart?.call();
                       final saveClock = Stopwatch()..start();
                       if (currentCheckedIn) {
-                        LocationTrackerService.stopTracking();
-                        double returnDistance =
-                            LocationTrackerService.calculateTotalDistance();
                         onTrackingStopped?.call();
-                        String formattedDistanceWithUnit;
-
-                        if (returnDistance >= 1000) {
-                          double km = returnDistance / 1000;
-                          formattedDistanceWithUnit =
-                              '${km.toStringAsFixed(2)} km';
-                        } else {
-                          formattedDistanceWithUnit =
-                              '${returnDistance.toStringAsFixed(2)} m';
-                        }
-                        List<LatLng> path =
-                            LocationTrackerService.getTrackedPoints();
-                        List<Map<String, dynamic>> locationLogs =
-                            path
-                                .map(
-                                  (latLng) => {
-                                    'latitude': latLng.latitude,
-                                    'longitude': latLng.longitude,
-                                  },
-                                )
-                                .toList();
-
+                        // The server computes the checkout distance itself
+                        // (Google Distance Matrix from last_lat_lng) and
+                        // ignores client distance/location logs, so none are
+                        // sent instead of a misleading "0.00 m".
                         response = await Check.checkout(
                           email,
                           position.latitude,
@@ -262,9 +262,9 @@ class Action_Bottom {
                           lastCheckoutAddress.isNotEmpty
                               ? lastCheckoutAddress
                               : "",
-                          formattedDistanceWithUnit,
+                          null,
                           option,
-                          locationLogs,
+                          const [],
                           faceVerification: faceReceipt.recordId,
                         );
                       } else {
@@ -340,7 +340,7 @@ class Action_Bottom {
                         //   onStatusUpdate?.call(false);
                         // }
                       } else {
-                        Warning.show(context, response['message'], 'Warning');
+                        Warning.show(context, _responseMessage(response), 'Warning');
                       }
                     }
                   },
@@ -409,12 +409,29 @@ class Action_Bottom {
                       final SharedPreferences prefs =
                           await SharedPreferences.getInstance();
 
-                      double geofenceRadius =
-                          officeDetails['allowd_distance_meters'];
+                      final radius = _readDouble(
+                        officeDetails['allowd_distance_meters'],
+                      );
+                      final latitude = _readDouble(officeDetails['latitude']);
+                      final longitude = _readDouble(
+                        officeDetails['longitude'],
+                      );
+                      if (radius == null ||
+                          latitude == null ||
+                          longitude == null) {
+                        Warning.show(
+                          context,
+                          'The location or allowed distance for "$option" is '
+                              'not configured in ERP. Contact your administrator.',
+                          'Head Office',
+                        );
+                        return;
+                      }
+                      final double geofenceRadius = radius;
 
                       maps.LatLng geofenceCenter = maps.LatLng(
-                        double.parse(officeDetails['latitude']),
-                        double.parse(officeDetails['longitude']),
+                        latitude,
+                        longitude,
                       );
 
                       bool hasPermission = await _handleLocationPermission(
@@ -424,14 +441,33 @@ class Action_Bottom {
                       if (!hasPermission) return;
 
                       Position position;
-                      position = requireRealPosition(
-                        await const FacePerformanceTrace().measure(
-                          'Head Office GPS before camera',
-                          () => Geolocator.getCurrentPosition(
-                            desiredAccuracy: LocationAccuracy.high,
+                      onApiStart?.call();
+                      try {
+                        position = requireRealPosition(
+                          await const FacePerformanceTrace().measure(
+                            'Head Office GPS before camera',
+                            () => Geolocator.getCurrentPosition(
+                              desiredAccuracy: LocationAccuracy.high,
+                              timeLimit: const Duration(seconds: 15),
+                            ),
                           ),
-                        ),
-                      );
+                        );
+                      } on TimeoutException {
+                        onApiEnd?.call();
+                        if (context.mounted) {
+                          Warning.show(
+                            context,
+                            'Could not get your GPS location in time. Move to an open area and try again.',
+                            'Location',
+                          );
+                        }
+                        return;
+                      } catch (_) {
+                        onApiEnd?.call();
+                        rethrow;
+                      }
+                      onApiEnd?.call();
+                      if (!context.mounted) return;
                       double distance = Geolocator.distanceBetween(
                         position.latitude,
                         position.longitude,
@@ -478,29 +514,7 @@ class Action_Bottom {
                           // LocationTrackerService.stopTracking();
                           // onTrackingStopped?.call();
 
-                          double returnDistance =
-                              LocationTrackerService.calculateTotalDistance();
-                          String formattedDistanceWithUnit;
-
-                          if (returnDistance >= 1000) {
-                            double km = returnDistance / 1000;
-                            formattedDistanceWithUnit =
-                                '${km.toStringAsFixed(2)} km';
-                          } else {
-                            formattedDistanceWithUnit =
-                                '${returnDistance.toStringAsFixed(2)} m';
-                          }
-                          List<LatLng> path =
-                              LocationTrackerService.getTrackedPoints();
-                          List<Map<String, dynamic>> locationLogs =
-                              path
-                                  .map(
-                                    (latLng) => {
-                                      'latitude': latLng.latitude,
-                                      'longitude': latLng.longitude,
-                                    },
-                                  )
-                                  .toList();
+                          // Distance is computed server-side; see above.
                           response = await Check.checkout(
                             email,
                             position.latitude,
@@ -509,9 +523,9 @@ class Action_Bottom {
                             lastCheckoutAddress.isNotEmpty
                                 ? lastCheckoutAddress
                                 : "",
-                            formattedDistanceWithUnit,
+                            null,
                             option,
-                            locationLogs,
+                            const [],
                             faceVerification: faceReceipt.recordId,
                           );
                         } else {
@@ -584,7 +598,7 @@ class Action_Bottom {
                             '${position.latitude},${position.longitude}',
                           );
                         } else {
-                          Warning.show(context, response['message'], 'Warning');
+                          Warning.show(context, _responseMessage(response), 'Warning');
                         }
 
                         // setState(() => _checkedIn = !_checkedIn);

@@ -10,6 +10,8 @@ class LeadCreationApiTest(unittest.TestCase):
     script = (Path(__file__).resolve().parents[1] /
               'frappe_server_scripts/create_lead_from_mobile.py').read_text(encoding='utf-8')
 
+    recent_leads = ()
+
     def run_api(self, whatsapp=None, method='POST', view='', user='sales@example.test', has_field=True, has_source=True, roles=('Sales User',)):
         self.saved = []
         self.queries = []
@@ -34,6 +36,8 @@ class LeadCreationApiTest(unittest.TestCase):
 
         def get_all(doctype, **kwargs):
             self.queries.append((doctype, kwargs))
+            if doctype == 'Lead' and 'owner' in kwargs.get('filters', {}):
+                return list(self.recent_leads)
             return [{'name': 'LEAD-1', 'whatsapp_no': '+919876543210'}]
 
         def get_value(doctype, filters, fields, **kwargs):
@@ -68,6 +72,10 @@ class LeadCreationApiTest(unittest.TestCase):
                 filters['parenttype'] == 'User' and filters['parentfield'] == 'roles' and
                 any(role in roles for role in filters['role'][1])
             )), new_doc=new_doc,
+            get_doc=lambda doctype, name: SimpleNamespace(name=name, first_name='Customer', lead_owner=user,
+                mobile_no='9876543210', custom_requirement='Doors', source='Website',
+                custom_product_enquired='Doors', custom_address='Chennai'),
+            utils=SimpleNamespace(now_datetime=lambda: 1000, time_diff_in_seconds=lambda end, start: end - start),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
         install_business_policy(frappe)
@@ -80,6 +88,17 @@ class LeadCreationApiTest(unittest.TestCase):
         self.assertEqual(response['whatsapp_no'], '+919876543210')
         self.assertEqual(self.saved[0].custom_product_enquired, 'Doors')
         self.assertEqual(self.saved[0].lead_owner, 'sales@example.test')
+
+    def test_identical_retry_within_two_minutes_returns_existing_lead(self):
+        self.recent_leads = [SimpleNamespace(name='LEAD-OLD', creation=950)]
+        response = self.run_api('9876543210')
+        self.assertEqual(response['name'], 'LEAD-OLD')
+        self.assertEqual(self.saved, [])
+        lookup = [q for q in self.queries if q[0] == 'Lead'][0][1]['filters']
+        self.assertEqual(lookup, {'owner': 'sales@example.test', 'first_name': 'Customer', 'mobile_no': '9876543210'})
+        self.recent_leads = [SimpleNamespace(name='LEAD-OLD', creation=800)]
+        self.assertEqual(self.run_api('9876543210')['name'], 'LEAD-1')
+        self.assertEqual(len(self.saved), 1)
 
     def test_missing_source_field_is_rejected_before_insert(self):
         with self.assertRaisesRegex(ValueError, 'Lead is missing the source field'):
@@ -144,6 +163,26 @@ class LeadCreationApiTest(unittest.TestCase):
         tree = ast.parse(self.script)
         self.assertFalse(any(isinstance(node, (ast.Import, ast.ImportFrom, ast.FunctionDef))
                              for node in ast.walk(tree)))
+
+
+class SkipCallLogLinkingTest(unittest.TestCase):
+    script = (Path(__file__).resolve().parents[1] /
+              'frappe_server_scripts/skip_call_log_linking_for_mobile_leads.py').read_text(encoding='utf-8')
+
+    def run_hook(self, request):
+        doc = SimpleNamespace(flags=SimpleNamespace())
+        exec(self.script, {'frappe': SimpleNamespace(request=request), 'doc': doc})
+        return getattr(doc.flags, 'ignore_auto_link_call_log', False)
+
+    def test_only_mobile_lead_requests_skip_linking(self):
+        self.assertTrue(self.run_hook(SimpleNamespace(path='/api/method/create_lead_from_mobile')))
+        self.assertTrue(self.run_hook({'path': '/api/method/create_lead_from_mobile'}))
+        self.assertFalse(self.run_hook(SimpleNamespace(path='/api/method/other')))
+
+    def test_inserts_without_an_http_request_do_not_fail(self):
+        for request in [None, {}, SimpleNamespace(path=None)]:
+            with self.subTest(request=request):
+                self.assertFalse(self.run_hook(request))
 
 
 if __name__ == '__main__':

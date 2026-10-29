@@ -100,13 +100,23 @@ class Check {
     final String? token = prefs.getString('token');
 
     try {
+      // Encode every value: user emails ('+') and office names ('&', '#')
+      // broke the hand-built query string.
+      final uri = Uri.parse('$methodapiUrl.checkin').replace(
+        queryParameters: {
+          'user': '$id',
+          'lat': '$lat',
+          'lng': '$lng',
+          'address': address,
+          'office_type': type,
+          if (photoUrl != null) 'photo_url': photoUrl,
+          if (faceVerification != null) 'face_verification': faceVerification,
+          if (faceVerification != null && FacePerformanceTrace.enabled)
+            'include_timings': '1',
+        },
+      );
       var response = await _sendAttendance(
-        Uri.parse(
-          '$methodapiUrl.checkin?user=$id&lat=$lat&lng=$lng&address=${Uri.encodeComponent(address)}&office_type=$type'
-          '${photoUrl == null ? '' : '&photo_url=${Uri.encodeComponent(photoUrl)}'}'
-          '${faceVerification == null ? '' : '&face_verification=${Uri.encodeComponent(faceVerification)}'}'
-          '${faceVerification != null && FacePerformanceTrace.enabled ? '&include_timings=1' : ''}',
-        ),
+        uri,
         {"Authorization": token ?? ""},
         'check-in',
       );
@@ -515,7 +525,10 @@ class Check {
           'lng': '$lng',
           'address': address,
           'lastCheckoutAddress': '${lastCheckoutAddress ?? ''}',
-          'distance': '$distance',
+          // The server derives distance from last_lat_lng; only forward a
+          // caller-supplied value.
+          if (distance != null && '$distance'.isNotEmpty)
+            'distance': '$distance',
           'office_type': type,
           'with_event': '$withEvent',
           'last_lat_lng': '$lastLatLng',

@@ -709,5 +709,26 @@ class MobileLoginBackendTest(unittest.TestCase):
                                         {'platform': 'android', 'android_id': 'a1b2c3d4e5f67890'}))
 
 
+class PrepareMobileLoginTest(unittest.TestCase):
+    def test_generated_login_wrapper_forwards_android_identifier(self):
+        path = Path(__file__).resolve().parents[1] / 'backend_patches' / 'prepare_mobile_login.py'
+        spec = importlib.util.spec_from_file_location('prepare_mobile_login_under_test', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        live = 'import frappe\n\n@frappe.whitelist(allow_guest=True)\ndef login(usr, pwd):\n    return "old"\n'
+        function = next(node for node in ast.parse(module.prepare(live)).body
+                        if isinstance(node, ast.FunctionDef) and node.name == 'login')
+        function.decorator_list = []
+        namespace = {}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), 'generated', 'exec'), namespace)
+        target = ModuleType('itgenie.mobile_auth')
+        calls = []
+        target.login = lambda *args, **kwargs: calls.append((args, kwargs)) or 'delegated'
+        with patch.dict(sys.modules, {'itgenie.mobile_auth': target}):
+            self.assertEqual(namespace['login']('u', 'p', 'k', platform='android',
+                                                android_id='a1b2c3d4e5f67890'), 'delegated')
+        self.assertEqual(calls, [(('u', 'p', 'k'), {'platform': 'android', 'android_id': 'a1b2c3d4e5f67890'})])
+
+
 if __name__ == '__main__':
     unittest.main()

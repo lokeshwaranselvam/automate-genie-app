@@ -89,6 +89,72 @@ class EventCheckoutAttachmentTest(unittest.TestCase):
                 frappe.db.exists.assert_not_called()
                 doc.save.assert_not_called()
 
+class EventCheckoutDistanceTest(unittest.TestCase):
+    """Google distance is best effort and never blocks closing a visit."""
+    def run_checkout(self, filename, last_lat_lng=None, previous=(), google=None, timeout=False):
+        doc = Row(custom_check_in='2026-10-16 09:00:00', custom_check_out=None, owner='sales@example.test',
+                  starts_on='2026-10-16', event_category='Bank')
+        doc.save = Mock()
+        visit = Row(latitude='11.0', longitude='76.0', custom_check_in_time=datetime(2026, 10, 16, 9))
+        visit.save = Mock()
+        class Timeout(Exception): pass
+        requests = SimpleNamespace(exceptions=SimpleNamespace(RequestException=Exception, Timeout=Timeout))
+        def request(*args, **kwargs):
+            if timeout: raise Timeout()
+            return SimpleNamespace(text=__import__('json').dumps(google))
+        requests.request = Mock(side_effect=request)
+        frappe = SimpleNamespace(
+            session=Row(user='sales@example.test'), utils=SimpleNamespace(today=lambda: '2026-10-16'),
+            get_doc=Mock(side_effect=lambda doctype, name: visit if doctype == 'Visit' else doc),
+            conf={'google_maps_api_key': 'key'}, local=SimpleNamespace(response={}),
+            db=SimpleNamespace(exists=Mock(return_value='VISIT-1'), get_value=Mock(return_value='EMP-1'),
+                               sql=Mock(return_value=list(previous)), rollback=Mock()),
+            log_error=Mock(), get_traceback=lambda: 'trace', throw=Mock(side_effect=ValueError),
+        )
+        source = (ROOT / 'backend_patches' / filename).read_text(encoding='utf-8')
+        source = source.replace('        from frappe.utils.safe_exec import call_whitelisted_function', '')
+        bridge = install_business_policy(frappe)
+        node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == 'event_checkout')
+        node.decorator_list = []
+        namespace = dict(frappe=frappe, json=__import__('json'), requests=requests,
+                         now_datetime=lambda: datetime(2026, 10, 16, 10), call_whitelisted_function=bridge)
+        exec(compile(ast.Module(body=[node], type_ignores=[]), filename, 'exec'), namespace)
+        result = namespace['event_checkout']('sales@example.test', 'EVENT-1', lat='11.1', lng='76.1',
+            address='Site', last_lat_lng=last_lat_lng)
+        return result, doc, visit, requests
+
+    def test_missing_or_malformed_origin_skips_google_and_still_checks_out(self):
+        for filename in ['api_utils.py', 'api_single_device_updated.py']:
+            for last in [None, '', 'no-comma', '11.0,']:
+                with self.subTest(filename=filename, last_lat_lng=last):
+                    result, doc, visit, requests = self.run_checkout(filename, last_lat_lng=last)
+                    self.assertEqual(result['status'], 'success')
+                    requests.request.assert_not_called()
+                    self.assertEqual(doc.status, 'Completed')
+                    self.assertEqual(visit.custom_check_out_time, '2026-10-16 10:00:00')
+
+    def test_google_failures_are_logged_without_blocking_checkout(self):
+        for filename in ['api_utils.py', 'api_single_device_updated.py']:
+            for google, timeout in [({'status': 'REQUEST_DENIED'}, False),
+                                    ({'status': 'OK', 'rows': [{'elements': [{'status': 'ZERO_RESULTS'}]}]}, False),
+                                    (None, True)]:
+                with self.subTest(filename=filename, google=google, timeout=timeout):
+                    result, doc, visit, requests = self.run_checkout(
+                        filename, last_lat_lng='11.0,76.0', google=google, timeout=timeout)
+                    self.assertEqual(result['status'], 'success')
+                    self.assertIsNone(visit.custom_distance)
+                    self.assertEqual(requests.request.call_args.kwargs['timeout'], (3.05, 10))
+
+    def test_ok_google_response_still_records_distance(self):
+        google = {'status': 'OK', 'rows': [{'elements': [{'status': 'OK', 'distance': {'text': '4 km'}}]}]}
+        for filename in ['api_utils.py', 'api_single_device_updated.py']:
+            result, doc, visit, _ = self.run_checkout(
+                filename, previous=[Row(event_id='Employee Checked In', latitude='11.0', longitude='76.0')], google=google)
+            self.assertEqual(result['status'], 'success')
+            self.assertEqual(visit.custom_distance, '4 km')
+            self.assertEqual(doc.custom_distance, '4 km')
+
+
 class EventVisitReportWithoutOtpTest(unittest.TestCase):
     def report(self, params=None, owner='sales@example.test', description='', otp='0123', clear_on_save=False, expected_otp='0123', outcomes=None, allow_edit=False, category='Site Visit'):
         event = Row(name='EVENT-1', owner=owner, description=description, custom_otp=otp, custom_whats_app=expected_otp, event_category=category)
@@ -172,7 +238,7 @@ class EventVisitReportWithoutOtpTest(unittest.TestCase):
         self.assertTrue(result['is_submitted'])
         self.assertEqual(result['observation'], 'Visited')
         self.assertEqual(result['outcome'], 'Interested')
-        self.assertEqual(result['custom_otp'], '0123')
+        self.assertNotIn('custom_otp', result)
         self.assertEqual(result['event_category'], 'Site Visit')
         self.assertEqual(result['attachments'][0]['file_name'], 'visit.jpg')
         event.save.assert_not_called()
@@ -213,19 +279,25 @@ class EventVisitReportWithoutOtpTest(unittest.TestCase):
         self.last_event.save.assert_not_called()
 
 class EventOtpVerificationTest(unittest.TestCase):
-    def load(self, filename):
-        event = Row(custom_otp='0123')
+    def load(self, filename, owner='sales@example.test'):
+        event = Row(name='EVENT-1', owner=owner, custom_otp='0123')
         event.save = Mock()
+        class DoesNotExistError(Exception): pass
+        class PermissionError(Exception): pass
+        def throw(message, exc=ValueError): raise exc(message)
         frappe = SimpleNamespace(get_doc=Mock(return_value=event),
-                                 db=SimpleNamespace(commit=Mock()),
-                                 msgprint=Mock(), log_error=Mock())
+                                 session=SimpleNamespace(user='sales@example.test'),
+                                 get_roles=Mock(return_value=[]), throw=throw,
+                                 DoesNotExistError=DoesNotExistError, PermissionError=PermissionError,
+                                 db=SimpleNamespace(commit=Mock(), exists=Mock(return_value=None)),
+                                 msgprint=Mock(), log_error=Mock(), get_traceback=lambda: 'trace')
         random = SimpleNamespace(randint=Mock(return_value=1234))
         tree = ast.parse((ROOT / 'backend_patches' / filename).read_text())
         functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
-                     and node.name in ['send_otp', 'verify_otp']]
+                     and node.name in ['send_otp', 'verify_otp', '_ensure_event_access']]
         for function in functions:
             function.decorator_list = []
-        namespace = dict(frappe=frappe, random=random)
+        namespace = dict(frappe=frappe, random=random, OTHER_USER_READ_ROLES=("System Manager", "HR Manager"))
         exec(compile(ast.Module(body=functions, type_ignores=[]), filename, 'exec'), namespace)
         return namespace, frappe, random
 
@@ -238,6 +310,17 @@ class EventOtpVerificationTest(unittest.TestCase):
                 self.assertEqual(api['send_otp']('EVENT-1')['status'], 'success')
                 random.randint.assert_called_once_with(1000, 9999)
                 self.assertEqual(frappe.get_doc.return_value.custom_otp, 1234)
+                frappe.msgprint.assert_not_called()
+                self.assertNotIn('1234', str(api['send_otp']('EVENT-1')))
+
+    def test_unassigned_user_cannot_regenerate_event_otp(self):
+        for filename in ['api_utils.py', 'api_single_device_updated.py']:
+            with self.subTest(filename=filename):
+                api, frappe, random = self.load(filename, owner='other@example.test')
+                self.assertEqual(api['send_otp']('EVENT-1')['status'], 'error')
+                random.randint.assert_not_called()
+                frappe.get_doc.return_value.save.assert_not_called()
+                self.assertEqual(frappe.get_doc.return_value.custom_otp, '0123')
 
     def test_invalid_verification_codes_are_rejected_before_database_lookup(self):
         for filename in ['api_utils.py', 'api_single_device_updated.py']:

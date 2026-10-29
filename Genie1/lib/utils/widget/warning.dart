@@ -169,7 +169,7 @@ class Warning extends StatelessWidget {
                         Navigator.of(request.context).push<void>(
                           MaterialPageRoute<void>(
                             builder:
-                                (_) => const SessionWebView(
+                                (_) => SessionWebView(
                                   url: ShortVisitCheckoutNotice.url,
                                   title: 'SVR',
                                 ),

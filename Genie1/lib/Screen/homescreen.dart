@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:homegenie/utils/widget/live_location_service.dart';
 import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'attendance_page.dart';
 import 'home_dashboard_view.dart';
@@ -1284,6 +1285,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     );
   }
 
+  bool _isLoggingOut = false;
+
   void _showLogoutDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -1301,63 +1304,86 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             TextButton(
               child: Text("Logout", style: TextStyle(color: BrandColors.ink)),
               onPressed: () async {
-                var connectivity = await Connectivity().checkConnectivity();
+                // Set before any await so a double tap cannot run logout twice
+                // or pop the dialog twice.
+                if (_isLoggingOut) return;
+                _isLoggingOut = true;
+                try {
+                  var connectivity = await Connectivity().checkConnectivity();
 
-                bool noInternet = false;
+                  bool noInternet = false;
 
-                if (connectivity == ConnectivityResult.none) {
-                  noInternet = true;
-                }
+                  if (connectivity == ConnectivityResult.none) {
+                    noInternet = true;
+                  }
 
-                if (connectivity.contains(ConnectivityResult.none)) {
-                  noInternet = true;
-                }
+                  if (connectivity.contains(ConnectivityResult.none)) {
+                    noInternet = true;
+                  }
 
-                if (noInternet) {
-                  Warning.show(
-                    context,
-                    'No Internet Connection! Please check your network.',
-                    'Error',
-                  );
-                  return;
-                }
-                var pingResult = await Check.pingpong();
-
-                Navigator.of(alertContext).pop();
-
-                if (pingResult == false) {
-                  Warning.show(
-                    context,
-                    'ERP Site is not in working condition! Please try again later.',
-                    'Error',
-                  );
-                  return;
-                } else {
-                  try {
-                    await SessionAuthApi.logout();
-                  } catch (_) {
+                  if (noInternet) {
                     if (mounted) {
                       Warning.show(
                         this.context,
-                        'Could not sign out on ERP. Check your connection and retry before using another phone.',
-                        'Sign-out failed',
+                        'No Internet Connection! Please check your network.',
+                        'Error',
                       );
                     }
                     return;
                   }
-                  SharedPreferences prefs =
-                      await SharedPreferences.getInstance();
-                  await LiveLocationService.stopForSignOut();
-                  await prefs.clear();
+                  var pingResult = await Check.pingpong();
 
-                  await Future.delayed(Duration(milliseconds: 300));
-
-                  if (mounted) {
-                    Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (_) => const Login()),
-                      (route) => false,
-                    );
+                  if (alertContext.mounted) {
+                    Navigator.of(alertContext).pop();
                   }
+                  if (!mounted) return;
+
+                  if (pingResult == false) {
+                    Warning.show(
+                      this.context,
+                      'ERP Site is not in working condition! Please try again later.',
+                      'Error',
+                    );
+                    return;
+                  } else {
+                    try {
+                      await SessionAuthApi.logout();
+                    } catch (_) {
+                      if (mounted) {
+                        Warning.show(
+                          this.context,
+                          'Could not sign out on ERP. Check your connection and retry before using another phone.',
+                          'Sign-out failed',
+                        );
+                      }
+                      return;
+                    }
+                    SharedPreferences prefs =
+                        await SharedPreferences.getInstance();
+                    await LiveLocationService.stopForSignOut();
+                    await prefs.clear();
+                    // Best-effort: invalidate this device's push token so the
+                    // signed-out user stops receiving notifications here. A
+                    // fresh token is registered on the next login.
+                    try {
+                      await FirebaseMessaging.instance.deleteToken().timeout(
+                        const Duration(seconds: 10),
+                      );
+                    } catch (error) {
+                      debugPrint('Unable to delete FCM token on logout: $error');
+                    }
+
+                    await Future.delayed(Duration(milliseconds: 300));
+
+                    if (mounted) {
+                      Navigator.of(this.context).pushAndRemoveUntil(
+                        MaterialPageRoute(builder: (_) => const Login()),
+                        (route) => false,
+                      );
+                    }
+                  }
+                } finally {
+                  _isLoggingOut = false;
                 }
               },
             ),

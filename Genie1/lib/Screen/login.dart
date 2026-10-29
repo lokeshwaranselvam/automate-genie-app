@@ -71,8 +71,8 @@ class _LoginState extends State<Login> {
         return;
       }
 
+      // Credentials are saved only after the server accepts them in login().
       await StorageDiagnostics.write(_secureStorage, key: _rememberKey, value: 'true');
-      await _saveRememberedLogin();
     } catch (error) {
       debugPrint('Could not update remembered login: $error');
     }
@@ -145,14 +145,19 @@ class _LoginState extends State<Login> {
       return;
     }
 
-    if (_rememberMe) await _saveRememberedLogin();
-
+    // Set loading before any await so a second tap cannot submit again.
     setState(() => _isLoading = true);
     unawaited(_checkPing());
 
     try {
       final user = await LoginApi.login(username, password);
       if (!mounted) return;
+      // Remember credentials only once the server has accepted them; keep
+      // the loading guard up until then so the form cannot be resubmitted.
+      if (_rememberMe && !user.containsKey('error')) {
+        await _saveRememberedLogin();
+        if (!mounted) return;
+      }
       setState(() => _isLoading = false);
       if (user.containsKey('error')) {
         Warning.show(context, user['error'], 'Warning');

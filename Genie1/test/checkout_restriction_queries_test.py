@@ -67,7 +67,8 @@ class RestrictionQueriesTest(unittest.TestCase):
         original, revised = self.queries("mr")
         for user in ["staff", "other", "nobody"]:
             old = self.db.execute(original, (user,)).fetchall()
-            new = self.db.execute(revised, (user,)).fetchall()
+            # The revised query binds the site date instead of DB-timezone CURDATE().
+            new = self.db.execute(revised, ("2026-10-13", user)).fetchall()
             self.assertEqual(Counter(old), Counter(new))
             if user == "staff":
                 self.assertTrue(new)
@@ -95,16 +96,18 @@ class RestrictionQueriesTest(unittest.TestCase):
             if user == "staff":
                 self.assertTrue(new)
 
-    def run_script(self, kind, log_type="OUT", checkin=True, user="staff", leave=False, permission=False, pending=False):
+    def run_script(self, kind, log_type="OUT", checkin=True, user="staff", leave=False, permission=False, pending=False, latest="IN"):
         sql = Mock(side_effect=lambda query, *args, **kwargs:
                    ([{"name": "EXEMPT"}] if leave else []) if "tabLeave Application" in query else
                    ([{"name": "EXEMPT"}] if permission else []) if "tabAttendance Request" in query else
                    [SimpleNamespace(name="MR", project_id="P", quotation="Q")] if pending else [])
         frappe = SimpleNamespace(
             utils=SimpleNamespace(today=lambda: "2026-10-13"),
-            db=SimpleNamespace(exists=Mock(return_value=checkin), get_value=Mock(return_value=user), sql=sql),
+            get_all=Mock(return_value=[SimpleNamespace(log_type=latest)] if checkin else []),
+            db=SimpleNamespace(get_value=Mock(return_value=user), sql=sql),
             throw=Mock(side_effect=ValueError("blocked")), ValidationError=ValueError,
         )
+        self.frappe = frappe
         source = (ROOT / "frappe_server_scripts" / SCRIPTS[kind]).read_text()
         exec(compile(source, SCRIPTS[kind], "exec"),
              {"frappe": frappe, "doc": SimpleNamespace(employee="EMP", log_type=log_type)})
@@ -112,9 +115,28 @@ class RestrictionQueriesTest(unittest.TestCase):
 
     def test_restrictions_skip_in_missing_checkin_and_missing_user(self):
         for kind in SCRIPTS:
-            for params in [{"log_type": "IN"}, {"checkin": False}, {"user": None}]:
+            for params in [{"log_type": "IN"}, {"checkin": False}, {"latest": "OUT"}, {"user": None}]:
                 with self.subTest(kind=kind, params=params):
                     self.run_script(kind, **params).assert_not_called()
+
+    def test_open_in_from_any_day_is_restricted_using_site_date(self):
+        for kind in SCRIPTS:
+            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, "blocked"):
+                self.run_script(kind, pending=True)
+            # No date window: an overnight IN (latest log) is still the open IN.
+            filters = self.frappe.get_all.call_args.kwargs["filters"]
+            self.assertEqual(filters, {"employee": "EMP"})
+            self.assertEqual(self.frappe.get_all.call_args.kwargs["order_by"], "time desc, creation desc")
+            source = (ROOT / "frappe_server_scripts" / SCRIPTS[kind]).read_text()
+            self.assertNotIn("CURDATE", source)
+        sql = Mock(return_value=[])
+        frappe = SimpleNamespace(utils=SimpleNamespace(today=lambda: "2026-10-13"),
+            get_all=Mock(return_value=[SimpleNamespace(log_type="IN")]),
+            db=SimpleNamespace(get_value=Mock(return_value="staff"), sql=sql), throw=Mock())
+        exec(compile((ROOT / "frappe_server_scripts" / SCRIPTS["mr"]).read_text(), "mr", "exec"),
+             {"frappe": frappe, "doc": SimpleNamespace(employee="EMP", log_type="OUT")})
+        self.assertEqual([call.args[1] for call in sql.call_args_list],
+                         [("EMP", "2026-10-13", "2026-10-13"), ("EMP", "2026-10-13"), ("2026-10-13", "staff")])
 
     def test_halfday_and_permission_still_exempt_mr_checkout(self):
         for params in [{"leave": True}, {"permission": True}]:

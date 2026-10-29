@@ -146,7 +146,43 @@ void main() {
     },
   );
 
-  for (final status in [200, 401, 403, 500]) {
+  for (final status in [500, 502]) {
+    test('HTTP $status is unknown and keeps the current tracking state', () async {
+      await http.runWithClient(() async {
+        expect(await LiveTrackingAccess.trackingDecision(), isNull);
+        expect(await LiveTrackingAccess.canTrack(), isFalse);
+        await LiveLocationService().ensureTracking();
+        await LiveLocationService().startTracking();
+        expect(nativeCalls, isEmpty);
+      }, () => client(status: status, decision: true));
+    });
+  }
+
+  test('a timeout or invalid JSON keeps the current tracking state', () async {
+    for (final body in ['<html>502 Bad Gateway</html>', 'timeout']) {
+      session++;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('session_sid', 'role-session-$session');
+      await http.runWithClient(
+        () async {
+          await LiveLocationService().ensureTracking();
+          expect(nativeCalls, isEmpty);
+        },
+        () => MockClient((request) async {
+          if (request.url.path.endsWith('frappe.auth.get_logged_user')) {
+            return http.Response(
+              jsonEncode({'message': 'role-test@example.test'}),
+              200,
+            );
+          }
+          if (body == 'timeout') throw TimeoutException('slow ERP');
+          return http.Response(body, 200);
+        }),
+      );
+    }
+  });
+
+  for (final status in [200, 401, 403]) {
     test(
       'missing roles or HTTP $status stops tracking without blocking attendance',
       () async {

@@ -98,6 +98,7 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
         employee: _selectedEmployee?.value,
       );
       if (!mounted) return;
+      if (options.expenseTypes.isEmpty) throw StateError(_noExpenseTypes);
       setState(() {
         _options = options;
         _selectedEmployee = _findOption(
@@ -132,7 +133,12 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
     return null;
   }
 
+  static const _noExpenseTypes =
+      'No expense types are configured. Contact your administrator.';
+
   void _syncExpenseTypes(ExpenseClaimFormOptions options) {
+    // Callers check for this first; never call .first on an empty list.
+    if (options.expenseTypes.isEmpty) return;
     for (final row in _expenses) {
       options.businessPolicy.applyDefault(
         'description',
@@ -162,6 +168,10 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
 
   void _addExpense() {
     if (_submitting || _loadingApprovers) return;
+    if (_options!.expenseTypes.isEmpty) {
+      _showMessage(_noExpenseTypes);
+      return;
+    }
     if (!_options!.supportsMultipleExpenses) {
       _showMessage(
         'Multiple expenses are not available yet. Contact your administrator to enable them.',
@@ -208,6 +218,13 @@ class _ExpenseClaimPageState extends State<ExpenseClaimPage> {
       if (!mounted ||
           request != _approverRequest ||
           _selectedEmployee?.value != employee.value) {
+        return;
+      }
+      if (options.expenseTypes.isEmpty) {
+        setState(() {
+          _loadingApprovers = false;
+          _error = _noExpenseTypes;
+        });
         return;
       }
       final approver = _findOption(

@@ -37,6 +37,9 @@ class _HistoryOverviewState extends State<HistoryOverview> {
 
   late SharedPreferences prefs;
 
+  /// Created once, so rebuilds do not start a new GPS fix + geocode.
+  Future<String>? _currentLocationFuture;
+
   @override
   void initState() {
     super.initState();
@@ -57,6 +60,7 @@ class _HistoryOverviewState extends State<HistoryOverview> {
         noInternet = true;
       }
 
+      if (!mounted) return;
       if (noInternet) {
         Warning.show(
           context,
@@ -66,6 +70,7 @@ class _HistoryOverviewState extends State<HistoryOverview> {
         return;
       }
       var pingResult = await Check.pingpong();
+      if (!mounted) return;
       if (pingResult == false) {
         Warning.show(
           context,
@@ -78,6 +83,7 @@ class _HistoryOverviewState extends State<HistoryOverview> {
         final email = prefs.getString('email') ?? "";
 
         final sessionValid = await Check.sessionActive(token, email);
+        if (!mounted) return;
 
         if (!sessionValid) {
           Warning.show(
@@ -87,6 +93,7 @@ class _HistoryOverviewState extends State<HistoryOverview> {
           );
           await LiveLocationService.stopForSignOut();
           await prefs.clear();
+          if (!mounted) return;
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
             (route) => false,
@@ -94,7 +101,7 @@ class _HistoryOverviewState extends State<HistoryOverview> {
           return;
         }
 
-        _init();
+        await _init();
       }
     } catch (e) {
       print('Error during ping: $e');
@@ -104,19 +111,25 @@ class _HistoryOverviewState extends State<HistoryOverview> {
   Future<void> _init() async {
     prefs = await SharedPreferences.getInstance();
     await _fetchData();
-    setState(() {});
   }
 
   Future<void> _fetchData() async {
+    if (!mounted) return;
     setState(() {
       _isLoading = true;
     });
 
-    await Future.wait([_fetchHistoryOverview()]);
-
-    setState(() {
-      _isLoading = false;
-    });
+    try {
+      await _fetchHistoryOverview();
+    } catch (e) {
+      print('Error loading history overview: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   String _formatTime(String? dateTime) {
@@ -194,16 +207,28 @@ class _HistoryOverviewState extends State<HistoryOverview> {
     return titles.join(', ');
   }
 
+  /// Address recorded on the visit itself (check-in, then check-out).
+  String get _visitAddress {
+    final event = eventData['event'];
+    if (event is! Map) return '';
+    for (final key in ['custom_location', 'custom_check_out_location']) {
+      final value = event[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) return value;
+    }
+    return '';
+  }
+
   Future<String> _getCurrentLocationAddress() async {
     try {
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 15),
       );
 
       final address = await LocationHelper.getAddressFromCoordinates(
         position.latitude,
         position.longitude,
-      );
+      ).timeout(const Duration(seconds: 10));
 
       if (address.isNotEmpty) {
         return address;
@@ -339,8 +364,17 @@ class _HistoryOverviewState extends State<HistoryOverview> {
                                       // maxLines: 2,
                                       //           overflow: TextOverflow.ellipsis,
                                       //         ),
-                                      FutureBuilder<String>(
-                                        future: _getCurrentLocationAddress(),
+                                      _visitAddress.isNotEmpty
+                                          ? Text(
+                                            _visitAddress,
+                                            style: TextStyle(fontSize: 14),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          )
+                                          : FutureBuilder<String>(
+                                        future:
+                                            _currentLocationFuture ??=
+                                                _getCurrentLocationAddress(),
                                         builder: (context, snapshot) {
                                           if (snapshot.connectionState ==
                                               ConnectionState.waiting) {
@@ -385,10 +419,8 @@ class _HistoryOverviewState extends State<HistoryOverview> {
                         child: TabBarView(
                           children: [
                             PullToRefresh(
-                              onRefresh: () async {
-                                await _checkPing();
-                                _fetchData();
-                              },
+                              // _checkPing fetches after its checks pass.
+                              onRefresh: _checkPing,
                               child: SingleChildScrollView(
                                 physics: const AlwaysScrollableScrollPhysics(
                                   parent: ClampingScrollPhysics(),
@@ -516,10 +548,8 @@ class _HistoryOverviewState extends State<HistoryOverview> {
                               ),
                             ),
                             PullToRefresh(
-                              onRefresh: () async {
-                                await _checkPing();
-                                _fetchData();
-                              },
+                              // _checkPing fetches after its checks pass.
+                              onRefresh: _checkPing,
                               child: SingleChildScrollView(
                                 physics: const AlwaysScrollableScrollPhysics(
                                   parent: ClampingScrollPhysics(),

@@ -5,13 +5,10 @@
 if doc.log_type != "OUT":
     pass
 else:
-    today = frappe.utils.today()
-    checkin_exists_today = frappe.db.exists(
-        "Employee Checkin",
-        {"employee": doc.employee, "log_type": "IN",
-         "time": ["between", [today + " 00:00:00", today + " 23:59:59"]]},
-    )
-    if not checkin_exists_today:
+    # Restrict any open IN (latest log is IN), including an overnight one.
+    latest_log = frappe.get_all("Employee Checkin", filters={"employee": doc.employee},
+        fields=["log_type"], order_by="time desc, creation desc", limit_page_length=1)
+    if not latest_log or latest_log[0].log_type != "IN":
         pass
     else:
         emp_user = frappe.db.get_value("Employee", doc.employee, "user_id")

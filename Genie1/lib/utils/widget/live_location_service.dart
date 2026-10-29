@@ -26,8 +26,15 @@ class LiveLocationService {
   /// the native service has stopped while the Dart session stayed open.
   Future<void> ensureTracking() => _serialize(() async {
     final saved = await SharedPreferences.getInstance();
-    if (saved.getBool('is_employee_checked_in') != true ||
-        !await LiveTrackingAccess.canTrack()) {
+    if (saved.getBool('is_employee_checked_in') != true) {
+      await _stopTracking();
+      return;
+    }
+    final decision = await LiveTrackingAccess.trackingDecision();
+    // Only a definitive deny stops tracking; an unverifiable check (timeout,
+    // 5xx) keeps the current native state until the next reconcile.
+    if (decision == null) return;
+    if (!decision) {
       await _stopTracking();
       return;
     }
@@ -79,14 +86,18 @@ class LiveLocationService {
         'Cannot start live tracking: SITE_URL is not configured.',
       );
     }
-    if (!await LiveTrackingAccess.canTrack()) {
+    final decision = await LiveTrackingAccess.trackingDecision();
+    if (decision == null) return; // Unknown: keep the current state.
+    if (!decision) {
       await _stopTracking();
       return;
     }
 
     try {
       await LocationPermissionHelper.requestBackgroundOnce();
-      if (!await LiveTrackingAccess.canTrack() ||
+      final confirmed = await LiveTrackingAccess.trackingDecision();
+      if (confirmed == null) return; // Unknown: keep the current state.
+      if (!confirmed ||
           prefs.getString('email')?.trim() != userEmail ||
           prefs.getString('session_sid')?.trim() != sid ||
           prefs.getString('token')?.trim() != token ||

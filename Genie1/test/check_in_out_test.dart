@@ -317,6 +317,32 @@ void main() {
     });
   }
 
+  test('checkout omits the client distance when none is supplied', () async {
+    final result = await http.runWithClient(
+      () => Check.checkout(
+        'staff+field@example.test',
+        13.01,
+        80.1,
+        'Office',
+        '',
+        null,
+        'Head Office & Annex',
+        const [],
+        faceVerification: 'receipt-id',
+      ),
+      () => MockClient((request) async {
+        expect(request.url.queryParameters.containsKey('distance'), isFalse);
+        expect(request.url.queryParameters['user'], 'staff+field@example.test');
+        expect(request.url.queryParameters['office_type'], 'Head Office & Annex');
+        return http.Response(
+          jsonEncode({'message': 'Check-Out Created Successfully'}),
+          200,
+        );
+      }),
+    );
+    expect(result['status'], 'Success');
+  });
+
   test(
     'check-in preserves receipt, photo and success with optional diagnostics',
     () async {

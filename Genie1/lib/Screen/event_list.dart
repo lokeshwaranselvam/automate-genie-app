@@ -37,6 +37,9 @@ class _EventsPageState extends State<EventsPage> {
   List<String> weekDays = [];
   bool isLoading = true;
   String? _loadError;
+  // Incremented per fetch so a slower, older response cannot overwrite the
+  // events of the day the user selected last.
+  int _eventRequestId = 0;
 
   @override
   void initState() {
@@ -62,7 +65,9 @@ class _EventsPageState extends State<EventsPage> {
     _checkPing();
   }
 
-  Future<void> _checkPing() async {
+  /// [resetToToday] is false for pull-to-refresh, which keeps the selected
+  /// date and fetches it once after re-verifying connectivity and session.
+  Future<void> _checkPing({bool resetToToday = true}) async {
     try {
       var connectivity = await Connectivity().checkConnectivity();
 
@@ -106,6 +111,13 @@ class _EventsPageState extends State<EventsPage> {
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
             (route) => false,
+          );
+          return;
+        }
+
+        if (!resetToToday) {
+          await getEventDataForDate(
+            DateFormat('yyyy-MM-dd').format(selectedDate),
           );
           return;
         }
@@ -181,22 +193,27 @@ class _EventsPageState extends State<EventsPage> {
   }
 
   Future<void> getEventDataForDate(String date) async {
+    if (!mounted) return;
+    final requestId = ++_eventRequestId;
     setState(() {
       isLoading = true;
     });
     try {
       prefs = await SharedPreferences.getInstance();
+      if (!mounted || requestId != _eventRequestId) return;
       List<Map<String, dynamic>> response = await Event.fetchEventListByDate(
         prefs.getString("email") ?? '',
         date,
         context,
       );
+      // A newer day was selected while this request was in flight.
+      if (requestId != _eventRequestId) return;
       eventList = response;
       filteredEventList = eventList;
     } catch (e) {
       print("❌ Error: $e");
     } finally {
-      if (mounted) {
+      if (mounted && requestId == _eventRequestId) {
         setState(() {
           isLoading = false;
         });
@@ -266,10 +283,7 @@ class _EventsPageState extends State<EventsPage> {
               ? LoadFailedView(message: _loadError!, onRetry: _retryLoad)
               : PullToRefresh(
                 onRefresh: () async {
-                  await _checkPing();
-                  await getEventDataForDate(
-                    DateFormat('yyyy-MM-dd').format(selectedDate),
-                  );
+                  await _checkPing(resetToToday: false);
                 },
                 color: BrandColors.ink,
                 child: SingleChildScrollView(
@@ -288,19 +302,29 @@ class _EventsPageState extends State<EventsPage> {
                                 showMonthPicker(
                                   context: context,
                                   initialDate: DateTime.now(),
-                                ).then((date) {
-                                  if (date != null) {
-                                    setState(() {
-                                      selectedMonth = date;
-                                      selectedDate = DateTime(
-                                        date.year,
-                                        date.month,
-                                        1,
-                                      );
-                                      selectedDateIndex = 0;
-                                      _generateDays();
-                                    });
-                                  }
+                                ).then((date) async {
+                                  if (date == null || !mounted) return;
+                                  setState(() {
+                                    selectedMonth = date;
+                                    selectedDate = DateTime(
+                                      date.year,
+                                      date.month,
+                                      1,
+                                    );
+                                    selectedDateIndex = 0;
+                                    _generateDays();
+                                  });
+                                  await getEventDataForDate(
+                                    DateFormat(
+                                      'yyyy-MM-dd',
+                                    ).format(selectedDate),
+                                  );
+                                  if (!mounted) return;
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    if (mounted) _scrollToSelectedDate();
+                                  });
                                 });
                               },
                               child: Row(
@@ -368,12 +392,10 @@ class _EventsPageState extends State<EventsPage> {
                                     selectedMonth.month,
                                     int.parse(days[index]),
                                   );
-                                  getEventDataForDate(
-                                    DateFormat(
-                                      'yyyy-MM-dd',
-                                    ).format(selectedDate),
-                                  );
                                 });
+                                getEventDataForDate(
+                                  DateFormat('yyyy-MM-dd').format(selectedDate),
+                                );
                               },
                               child: Container(
                                 width: 50,

@@ -21,6 +21,9 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
   bool _hasMore = false;
   int _offset = 0;
   String? _error;
+
+  /// A failed "Load more" keeps the loaded items and retries the next page.
+  String? _moreError;
   final _search = TextEditingController();
   Timer? _searchDebounce;
   int _request = 0;
@@ -110,6 +113,7 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
     setState(() {
       _loading = true;
       _error = null;
+      _moreError = null;
     });
     try {
       final page = await OpportunityApi.getMyOpportunities(
@@ -130,11 +134,16 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
       });
     } catch (error) {
       if (mounted && request == _request) {
+        final message = error.toString().replaceFirst('Bad state: ', '');
         setState(() {
-          _items = [];
-          _offset = 0;
-          _hasMore = false;
-          _error = error.toString().replaceFirst('Bad state: ', '');
+          if (more) {
+            _moreError = message;
+          } else {
+            _items = [];
+            _offset = 0;
+            _hasMore = false;
+            _error = message;
+          }
         });
       }
     } finally {
@@ -217,12 +226,7 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
                           children: [
                             Text(_error!, textAlign: TextAlign.center),
                             TextButton(
-                              onPressed:
-                                  _loading
-                                      ? null
-                                      : () => _load(
-                                        more: _items.isNotEmpty && _hasMore,
-                                      ),
+                              onPressed: _loading ? null : () => _load(),
                               child: const Text('Retry'),
                             ),
                           ],
@@ -247,6 +251,20 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
                               ? 'No opportunities list you as Opportunity Owner.'
                               : 'No opportunities match this phone number.',
                         ),
+                      ),
+                    );
+                  }
+                  if (_moreError != null) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Column(
+                        children: [
+                          Text(_moreError!, textAlign: TextAlign.center),
+                          TextButton(
+                            onPressed: () => _load(more: true),
+                            child: const Text('Retry loading more'),
+                          ),
+                        ],
                       ),
                     );
                   }

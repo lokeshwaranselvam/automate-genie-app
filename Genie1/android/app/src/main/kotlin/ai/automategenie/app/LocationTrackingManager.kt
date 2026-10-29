@@ -33,6 +33,8 @@ object LocationTrackingManager {
     const val KEY_USER_ID = "tracking_user_id"
     const val KEY_AUTH_TOKEN = "tracking_auth_token"
     const val KEY_SITE_URL = "tracking_site_url"
+    // Time of the last *successful* upload to the server (not the last GPS
+    // fix); the fallback worker relies on this to detect missed uploads.
     const val KEY_LAST_UPDATE_TIME = "last_update_time"
 
     const val EXTRA_USER_ID = "userId"
@@ -140,6 +142,7 @@ object LocationTrackingManager {
             .apply()
     }
 
+    /** Records a successful server upload. Call only after sendLocationToServer returns true. */
     fun markLocationUpdate(context: Context) {
         prefs(context).edit()
             .putLong(KEY_LAST_UPDATE_TIME, System.currentTimeMillis())
@@ -227,16 +230,28 @@ object LocationTrackingManager {
             }
             val request = requestBuilder.build()
 
-            okHttpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.w(
-                        TAG,
-                        "Location sync failed: code=${response.code}"
-                    )
+            // null = success, true = credential rejected, false = other failure.
+            val authRejected: Boolean? = okHttpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) return@use null
+                Log.w(
+                    TAG,
+                    "Location sync failed: code=${response.code}"
+                )
+                response.code == 401 || response.code == 403
+            }
+            when (authRejected) {
+                null -> true
+                true -> {
+                    // A revoked/expired credential will never succeed on
+                    // retry; stop tracking exactly like an explicit stop so
+                    // the service does not keep GPS running indefinitely.
+                    // The app restarts tracking after its next authenticated
+                    // attendance/role check with a fresh token.
+                    Log.e(TAG, "Location sync rejected by server (auth); stopping live tracking")
+                    stopTracking(context)
                     false
-                } else {
-                    true
                 }
+                false -> false
             }
         } catch (error: Exception) {
             Log.e(TAG, "Location sync failed", error)

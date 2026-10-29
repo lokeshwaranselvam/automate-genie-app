@@ -9,9 +9,9 @@ def prepare(source):
     lines = source.splitlines(keepends=True)
     replacements = {
         'login': '''@frappe.whitelist(allow_guest=True, methods=["POST"])
-def login(usr, pwd, device_key=None, platform=None):
+def login(usr, pwd, device_key=None, platform=None, android_id=None):
     from itgenie.mobile_auth import login as mobile_login
-    return mobile_login(usr, pwd, device_key, platform=platform)
+    return mobile_login(usr, pwd, device_key, platform=platform, android_id=android_id)
 ''',
         'mobile_logout': '''@frappe.whitelist(allow_guest=True, methods=["POST"])
 def mobile_logout(user, device_key):

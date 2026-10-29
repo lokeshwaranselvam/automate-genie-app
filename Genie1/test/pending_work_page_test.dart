@@ -19,7 +19,7 @@ void main() {
           final webview = tester.widget<SessionWebView>(
             find.byType(SessionWebView),
           );
-          expect(webview.url, 'https://16.itgenie.online/TGC');
+          expect(webview.url, 'https://erp.homegeniegroup.in/TG');
           expect(webview.embedded, isTrue);
           expect(find.text('My Tasks'), findsOneWidget);
           expect(find.byType(TextField), findsNothing);

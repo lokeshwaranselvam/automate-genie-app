@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.location.Location
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
@@ -17,11 +18,14 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
+import com.google.android.gms.tasks.Tasks
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class LocationService : Service() {
@@ -31,9 +35,14 @@ class LocationService : Service() {
     @Volatile private var lastAttemptTime = 0L
     private val postInFlight = AtomicBoolean(false)
 
+    // The continuous stream only paces the upload/retry checks below (one
+    // callback roughly every minute), so it uses balanced (Wi-Fi/cell) power
+    // instead of keeping GPS hot. When an upload is actually due, a single
+    // high-accuracy fix is requested so the posted point stays as accurate
+    // as before.
     private val locationRequest by lazy {
-        LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_INTERVAL_MS)
-            .setMinUpdateIntervalMillis(LOCATION_INTERVAL_MS)
+        LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, LOCATION_INTERVAL_MS)
+            .setMinUpdateIntervalMillis(MIN_LOCATION_INTERVAL_MS)
             .setWaitForAccurateLocation(false)
             .build()
     }
@@ -45,12 +54,11 @@ class LocationService : Service() {
                 return
             }
 
-            LocationTrackingManager.markLocationUpdate(applicationContext)
-
             // Only post to server if 15 minutes have passed since last post.
-            // Updates arrive every 10s while a post can take up to 15s, so
-            // skip while one is in flight, and wait a minute between failed
-            // attempts instead of retrying on every update.
+            // Updates arrive about once a minute while a post (plus the
+            // accurate fix) can take up to ~45s, so skip while one is in
+            // flight, and wait a minute between failed attempts instead of
+            // retrying on every update.
             val currentTime = System.currentTimeMillis()
             if (currentTime - lastPostedTime >= POST_INTERVAL_MS &&
                 currentTime - lastAttemptTime >= RETRY_INTERVAL_MS &&
@@ -59,13 +67,17 @@ class LocationService : Service() {
                 lastAttemptTime = currentTime
                 serviceScope.launch {
                     try {
+                        val fix = requestAccurateFix() ?: location
                         val sent = LocationTrackingManager.sendLocationToServer(
                             applicationContext,
-                            location.latitude,
-                            location.longitude
+                            fix.latitude,
+                            fix.longitude
                         )
                         if (sent) {
                             lastPostedTime = currentTime
+                            // Record only successful uploads so the fallback
+                            // worker can tell when uploads are failing.
+                            LocationTrackingManager.markLocationUpdate(applicationContext)
                             Log.d(TAG, "Location posted to server")
                         } else {
                             Log.w(TAG, "Location update could not be sent")
@@ -90,19 +102,24 @@ class LocationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Older installs have no verified role marker. Wait for the app's
-        // authenticated attendance/role check before resuming that service.
-        if (!LocationTrackingManager.isTrackingActive(this)) {
-            LocationTrackingManager.stopTracking(this)
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        // Always enter the foreground first: the service is launched with
+        // startForegroundService, and stopping it before startForeground()
+        // crashes the app ("did not then call Service.startForeground()"),
+        // e.g. when tracking is stopped right after being started.
         try {
             startForeground(LocationTrackingManager.NOTIFICATION_ID, buildNotification())
         } catch (error: Exception) {
             // Android 12+ throws when a foreground service is started from the
             // background without the needed permission; stop instead of crashing.
             Log.e(TAG, "Unable to start location foreground service", error)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        // Older installs have no verified role marker. Wait for the app's
+        // authenticated attendance/role check before resuming that service.
+        if (!LocationTrackingManager.isTrackingActive(this)) {
+            LocationTrackingManager.stopTracking(this)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -171,6 +188,33 @@ class LocationService : Service() {
         }
     }
 
+    /**
+     * One-shot high-accuracy fix for an upload. Runs on the IO dispatcher
+     * (blocking await). Returns null on timeout/error so the caller can fall
+     * back to the latest streamed location.
+     */
+    private fun requestAccurateFix(): Location? {
+        val cancellation = CancellationTokenSource()
+        return try {
+            Tasks.await(
+                fusedLocationClient.getCurrentLocation(
+                    Priority.PRIORITY_HIGH_ACCURACY,
+                    cancellation.token
+                ),
+                ACCURATE_FIX_TIMEOUT_MS,
+                TimeUnit.MILLISECONDS
+            )
+        } catch (securityException: SecurityException) {
+            Log.w(TAG, "Accurate fix not permitted; using streamed location", securityException)
+            null
+        } catch (error: Exception) {
+            Log.w(TAG, "Accurate fix unavailable; using streamed location", error)
+            null
+        } finally {
+            cancellation.cancel()
+        }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -209,7 +253,11 @@ class LocationService : Service() {
         @Volatile var isRunning = false
             private set
         private const val TAG = "LocationService"
-        private const val LOCATION_INTERVAL_MS = 10_000L
+        // Uploads happen every 15 min with 1-min retries, so a ~1-min stream
+        // is enough to drive them; faster updates only cost battery.
+        private const val LOCATION_INTERVAL_MS = 60_000L
+        private const val MIN_LOCATION_INTERVAL_MS = 30_000L
+        private const val ACCURATE_FIX_TIMEOUT_MS = 30_000L
         private const val POST_INTERVAL_MS = 15 * 60 * 1000L // 15 minutes
         private const val RETRY_INTERVAL_MS = 60 * 1000L // 1 minute after a failed post
     }

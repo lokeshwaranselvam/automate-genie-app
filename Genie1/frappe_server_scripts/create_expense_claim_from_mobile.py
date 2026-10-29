@@ -220,6 +220,26 @@ def skip_expense_claim_after_insert():
     return
 
 
+def find_recent_duplicate_claim(employee_name, approver, expenses):
+    # The mobile client sends no idempotency key. An identical draft claim by
+    # the same user for the same employee within two minutes is a retry.
+    wanted = [(row["expense_type"] or "", str(row["expense_date"]), round(row["amount"], 2),
+        row["description"] or "") for row in expenses]
+    recent = frappe.get_all("Expense Claim", filters={
+        "owner": current_user, "employee": employee_name, "expense_approver": approver, "docstatus": 0,
+        "posting_date": frappe.utils.today(),
+    }, fields=["name", "creation"], order_by="creation desc", limit_page_length=5)
+    for candidate in recent:
+        if frappe.utils.time_diff_in_seconds(frappe.utils.now_datetime(), candidate.creation) > 120:
+            break
+        existing = frappe.get_doc("Expense Claim", candidate.name)
+        rows = [(row.expense_type or "", str(row.expense_date), round(frappe.utils.flt(row.amount), 2),
+            row.description or "") for row in existing.expenses]
+        if rows == wanted:
+            return existing
+    return None
+
+
 if frappe.request.method == "GET":
     selected_employee = (frappe.form_dict.get("employee") or "").strip() or None
     options = get_form_options(selected_employee)
@@ -345,34 +365,45 @@ elif frappe.request.method == "POST":
             "Set the Default Expense Claim Payable Account on the Company linked to this Employee record."
         )
 
-    claim = frappe.new_doc("Expense Claim")
-    claim.naming_series = "HR-EXP-.YYYY.-"
-    claim.employee = employee.name
-    claim.employee_name = employee.employee_name or employee.name
-    claim.department = employee.department
-    claim.company = employee.company
-    claim.expense_approver = expense_approver
-    claim.approval_status = "Draft"
-    claim.posting_date = frappe.utils.today()
-    claim.currency = company.default_currency
-    claim.exchange_rate = 1
-    claim.payable_account = company.default_expense_claim_payable_account
-    if company.cost_center:
-        claim.cost_center = company.cost_center
-
-    # Match ERPNext by copying Amount into Sanctioned Amount for every row.
-    for row in expenses:
-        row["cost_center"] = company.cost_center
-        claim.append("expenses", row)
-
-    # The API verifies the signed-in user's employee scope and validates both
-    # selected links before bypassing document-role permissions to insert.
-    # Skip only HRMS's synchronous approver notification; normal validation
-    # and the remaining Expense Claim hooks still run.
-    claim.after_insert = skip_expense_claim_after_insert
-    claim.insert(ignore_permissions=True)
-
+    # Retried submissions (lost response, double tap) return the earlier claim.
+    claim = find_recent_duplicate_claim(employee.name, expense_approver, expenses)
     bill_files = []
+    if claim:
+        # The earlier request already attached its bills; do not add copies.
+        bills = []
+        for existing_bill in frappe.get_all("File", filters={
+            "attached_to_doctype": "Expense Claim", "attached_to_name": claim.name,
+        }, fields=["name", "file_name", "file_url"], order_by="creation asc", limit_page_length=100):
+            bill_files.append({"name": existing_bill.name, "file_name": existing_bill.file_name,
+                "file_url": existing_bill.file_url})
+    else:
+        claim = frappe.new_doc("Expense Claim")
+        claim.naming_series = "HR-EXP-.YYYY.-"
+        claim.employee = employee.name
+        claim.employee_name = employee.employee_name or employee.name
+        claim.department = employee.department
+        claim.company = employee.company
+        claim.expense_approver = expense_approver
+        claim.approval_status = "Draft"
+        claim.posting_date = frappe.utils.today()
+        claim.currency = company.default_currency
+        claim.exchange_rate = 1
+        claim.payable_account = company.default_expense_claim_payable_account
+        if company.cost_center:
+            claim.cost_center = company.cost_center
+
+        # Match ERPNext by copying Amount into Sanctioned Amount for every row.
+        for row in expenses:
+            row["cost_center"] = company.cost_center
+            claim.append("expenses", row)
+
+        # The API verifies the signed-in user's employee scope and validates both
+        # selected links before bypassing document-role permissions to insert.
+        # Skip only HRMS's synchronous approver notification; normal validation
+        # and the remaining Expense Claim hooks still run.
+        claim.after_insert = skip_expense_claim_after_insert
+        claim.insert(ignore_permissions=True)
+
     for uploaded_bill in bills:
         bill = frappe.new_doc("File")
         bill.file_name = uploaded_bill["file_name"]

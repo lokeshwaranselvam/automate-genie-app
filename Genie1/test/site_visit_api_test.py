@@ -82,6 +82,7 @@ class SiteVisitApiTest(unittest.TestCase):
             for row in rows:
                 row.check_permission = Mock()
         self.event = Document()
+        self.recent_events = []
         self.created = []
         self.frappe = SimpleNamespace(
             session=Row(user=self.user, data=Row(csrf_token="test-token")),
@@ -94,7 +95,8 @@ class SiteVisitApiTest(unittest.TestCase):
                                     or isinstance(filters.get("role"), list)))),
                                get_value=Mock(return_value=Row(name=self.user, full_name="Sales"))),
             utils=SimpleNamespace(get_datetime=datetime.fromisoformat,
-                                  now_datetime=lambda: datetime(2026, 10, 12, 11)),
+                                  now_datetime=lambda: datetime(2026, 10, 12, 11),
+                                  time_diff_in_seconds=lambda end, start: (end - start).total_seconds()),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
         self.params = dict(action="create_event", opportunity="OPP-1", location_row="LOC-1",
@@ -133,6 +135,8 @@ class SiteVisitApiTest(unittest.TestCase):
             return [Row(name=name) for name in [
                 "Installation", "Measurement", "SiteVisit", "Client Visit", "Meeting",
             ]]
+        if doctype == "Event":
+            return self.recent_events
         self.fail("Unexpected product source: " + doctype)
 
     def get_list(self, doctype, **kwargs):
@@ -166,6 +170,18 @@ class SiteVisitApiTest(unittest.TestCase):
         install_business_policy(self.frappe)
         exec(compile(self.script, "mobile_site_visit_api.py", "exec"), {"frappe": self.frappe})
         return self.frappe.response["message"]
+
+    def test_identical_create_retry_within_two_minutes_returns_existing_event(self):
+        self.recent_events = [Row(name="EVENT-OLD", creation=datetime(2026, 10, 12, 10, 59))]
+        result = self.run_api()
+        self.assertEqual(result["event"], "EVENT-OLD")
+        self.assertNotIn("name", self.event)
+        filters = [c.kwargs["filters"] for c in self.frappe.get_all.call_args_list if c.args[0] == "Event"][0]
+        self.assertEqual((filters["owner"], filters["subject"], filters["event_category"]),
+                         (self.user, "Customer visit", "Site Visit"))
+        self.assertFalse([doc for doc in self.created if doc.get("doctype") in ("ToDo", "Comment") and "name" in doc])
+        self.recent_events = [Row(name="EVENT-OLD", creation=datetime(2026, 10, 12, 10, 57))]
+        self.assertEqual(self.run_api()["event"], "EVENT-TEST")
 
     def test_schedule_settings_apply_to_options_and_server_validation(self):
         self.assertEqual(self.run_api(action="get")["schedule_policy"], {
@@ -413,7 +429,8 @@ class SiteVisitApiTest(unittest.TestCase):
                 self.assertNotIn("custom_product_enquired", self.event)
                 self.assertNotIn("company", self.event)
                 self.assertNotIn("custom_brand", self.event)
-        self.frappe.get_all.assert_not_called()
+        # Only the create-retry guard queries recent Events; no option lookups.
+        self.assertEqual({call.args[0] for call in self.frappe.get_all.call_args_list}, {"Event"})
         self.assertFalse(any(call.args[0] == "Opportunity" for call in self.frappe.get_doc.call_args_list))
 
     def test_reference_creation_rejects_wrong_missing_cancelled_or_unreadable_documents(self):

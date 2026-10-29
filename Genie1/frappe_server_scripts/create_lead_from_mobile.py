@@ -237,18 +237,27 @@ elif request_method == "POST":
     if product_category and product_category not in product_category_options:
         frappe.throw("Choose a Product Enquired from the configured options.")
 
-    lead = frappe.new_doc("Lead")
-    lead.first_name = first_name
-    lead.lead_owner = current_user
-    lead.mobile_no = mobile_no
-    if lead_meta.get_field("whatsapp_no"):
-        lead.whatsapp_no = whatsapp_no
-    lead.custom_requirement = requirement
-    lead.source = source
-    lead.custom_product_enquired = product_category
-    lead.custom_address = address
-    lead.flags.ignore_mandatory = True
-    lead.insert(ignore_permissions=True)
+    # Retry guard: the client sends no idempotency key, so the same user
+    # resubmitting the same customer within two minutes gets the earlier Lead.
+    lead = None
+    for recent_lead in frappe.get_all("Lead", filters={
+        "owner": current_user, "first_name": first_name, "mobile_no": mobile_no,
+    }, fields=["name", "creation"], order_by="creation desc", limit_page_length=1):
+        if frappe.utils.time_diff_in_seconds(frappe.utils.now_datetime(), recent_lead.creation) <= 120:
+            lead = frappe.get_doc("Lead", recent_lead.name)
+    if not lead:
+        lead = frappe.new_doc("Lead")
+        lead.first_name = first_name
+        lead.lead_owner = current_user
+        lead.mobile_no = mobile_no
+        if lead_meta.get_field("whatsapp_no"):
+            lead.whatsapp_no = whatsapp_no
+        lead.custom_requirement = requirement
+        lead.source = source
+        lead.custom_product_enquired = product_category
+        lead.custom_address = address
+        lead.flags.ignore_mandatory = True
+        lead.insert(ignore_permissions=True)
 
     frappe.response["message"] = {
         "status": "success",

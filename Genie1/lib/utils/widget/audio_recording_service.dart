@@ -18,25 +18,41 @@ class AudioRecordingService {
   final List<String> _recordingPaths = [];
   final TimerService timerService = TimerService();
 
+  bool _isStarting = false;
+
   Future<void> startRecording() async {
-    await record.create(recorderId);
-    const config = RecordConfig(encoder: AudioEncoder.aacLc);
+    // Already recording (or a start is in flight): starting again would
+    // re-create the recorder and orphan the current recording.
+    if (isRecording || _isStarting) return;
+    _isStarting = true;
+    try {
+      await record.create(recorderId);
+      const config = RecordConfig(encoder: AudioEncoder.aacLc);
 
-    final dir = await getExternalStorageDirectory();
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final path = '${dir!.path}/recording_$timestamp.m4a';
+      // getExternalStorageDirectory() is unsupported on iOS and can return
+      // null on Android; fall back to the app documents directory.
+      Directory? dir;
+      if (Platform.isAndroid) {
+        dir = await getExternalStorageDirectory();
+      }
+      dir ??= await getApplicationDocumentsDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final path = '${dir.path}/recording_$timestamp.m4a';
 
-    await record.start(recorderId, config, path: path);
+      await record.start(recorderId, config, path: path);
 
-    isRecording = true;
-    isPaused = false;
-    lastRecordingPath = path;
-    _recordingPaths.add(path);
+      isRecording = true;
+      isPaused = false;
+      lastRecordingPath = path;
+      _recordingPaths.add(path);
 
-    timerService.startTimer();
-    const platform = MethodChannel('com.example.audioapp/record');
-    if (Platform.isAndroid) {
-      await platform.invokeMethod('startService');
+      timerService.startTimer();
+      const platform = MethodChannel('com.example.audioapp/record');
+      if (Platform.isAndroid) {
+        await platform.invokeMethod('startService');
+      }
+    } finally {
+      _isStarting = false;
     }
   }
 

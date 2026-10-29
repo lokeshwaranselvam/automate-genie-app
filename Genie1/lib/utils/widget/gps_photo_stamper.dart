@@ -19,8 +19,34 @@ class GpsPhotoStamper {
   static const List<int> _jpegQualities = [75, 62, 50, 40];
 
   /// Returns a new stamped JPEG file. Falls back to a compressed copy of the
-  /// original photo if stamping fails, and to [file] itself as a last resort.
+  /// original photo if stamping fails, and to [file] itself as a last resort,
+  /// so the upload can still proceed. [onStampFailed] is called in that case
+  /// so the caller can warn that the photo carries no GPS stamp.
   static Future<File> stamp({
+    required File file,
+    required double lat,
+    required double lng,
+    required String address,
+    String? title,
+    bool includeMapThumbnail = true,
+    void Function(Object error)? onStampFailed,
+  }) async {
+    final result = await stampWithStatus(
+      file: file,
+      lat: lat,
+      lng: lng,
+      address: address,
+      title: title,
+      includeMapThumbnail: includeMapThumbnail,
+    );
+    final error = result.error;
+    if (error != null) onStampFailed?.call(error);
+    return result.file;
+  }
+
+  /// Like [stamp], but also reports whether the GPS stamp was applied.
+  /// `error` is null when the returned file is stamped.
+  static Future<({File file, Object? error})> stampWithStatus({
     required File file,
     required double lat,
     required double lng,
@@ -29,7 +55,7 @@ class GpsPhotoStamper {
     bool includeMapThumbnail = true,
   }) async {
     try {
-      return await _stamp(
+      final stamped = await _stamp(
         file: file,
         lat: lat,
         lng: lng,
@@ -37,13 +63,14 @@ class GpsPhotoStamper {
         title: title,
         includeMapThumbnail: includeMapThumbnail,
       );
+      return (file: stamped, error: null);
     } catch (error) {
       debugPrint('[GpsPhotoStamper] Stamping failed, compressing only: $error');
       try {
-        return await _compressOnly(file);
+        return (file: await _compressOnly(file), error: error);
       } catch (compressError) {
         debugPrint('[GpsPhotoStamper] Compression failed: $compressError');
-        return file;
+        return (file: file, error: error);
       }
     }
   }
@@ -126,130 +153,142 @@ class GpsPhotoStamper {
   }) async {
     final bytes = await file.readAsBytes();
     final ui.Image originalImage = await decodeImageFromList(bytes);
-    final capturedOn = await file.lastModified();
-    final Uint8List? mapBytes =
-        includeMapThumbnail
-            ? await LocationHelper.getStaticMapImageBytes(lat, lng)
-            : null;
     ui.Image? mapImage;
-    if (mapBytes != null) {
-      mapImage = await decodeImageFromList(mapBytes);
-    }
+    ui.Image? stampedImage;
+    // Native image memory is released only by dispose(), including on errors.
+    try {
+      final capturedOn = await file.lastModified();
+      final Uint8List? mapBytes =
+          includeMapThumbnail
+              ? await LocationHelper.getStaticMapImageBytes(lat, lng)
+              : null;
+      if (mapBytes != null) {
+        mapImage = await decodeImageFromList(mapBytes);
+      }
 
-    final longestSide = math.max(originalImage.width, originalImage.height);
-    final scale =
-        longestSide > _maxOutputDimension
-            ? _maxOutputDimension / longestSide
-            : 1.0;
-    final int targetWidth =
-        math.max(1, (originalImage.width * scale).round()).toInt();
-    final int targetHeight =
-        math.max(1, (originalImage.height * scale).round()).toInt();
+      final longestSide = math.max(originalImage.width, originalImage.height);
+      final scale =
+          longestSide > _maxOutputDimension
+              ? _maxOutputDimension / longestSide
+              : 1.0;
+      final int targetWidth =
+          math.max(1, (originalImage.width * scale).round()).toInt();
+      final int targetHeight =
+          math.max(1, (originalImage.height * scale).round()).toInt();
 
-    final stampText = buildStampText(
-      capturedOn: capturedOn,
-      lat: lat,
-      lng: lng,
-      address: address,
-      title: title,
-    );
+      final stampText = buildStampText(
+        capturedOn: capturedOn,
+        lat: lat,
+        lng: lng,
+        address: address,
+        title: title,
+      );
 
-    final footerHeight = math.max(120.0, targetHeight * 0.28);
-    final footerTop = targetHeight.toDouble() - footerHeight;
-    final horizontalPadding = targetWidth * 0.02;
-    final verticalPadding = footerHeight * 0.08;
-    final mapSize =
-        mapImage == null
-            ? 0.0
-            : math.min(
-              footerHeight - (verticalPadding * 2),
-              targetWidth * 0.26,
-            );
-    final textStartX =
-        mapImage == null
-            ? horizontalPadding
-            : horizontalPadding + mapSize + horizontalPadding;
-    final textWidth = math.max(
-      1.0,
-      targetWidth.toDouble() - textStartX - horizontalPadding,
-    );
-    final textHeight = math.max(1.0, footerHeight - (verticalPadding * 2));
-    final textPainter = _buildTextPainter(
-      text: stampText,
-      maxWidth: textWidth,
-      maxHeight: textHeight,
-    );
+      final footerHeight = math.max(120.0, targetHeight * 0.28);
+      final footerTop = targetHeight.toDouble() - footerHeight;
+      final horizontalPadding = targetWidth * 0.02;
+      final verticalPadding = footerHeight * 0.08;
+      final mapSize =
+          mapImage == null
+              ? 0.0
+              : math.min(
+                footerHeight - (verticalPadding * 2),
+                targetWidth * 0.26,
+              );
+      final textStartX =
+          mapImage == null
+              ? horizontalPadding
+              : horizontalPadding + mapSize + horizontalPadding;
+      final textWidth = math.max(
+        1.0,
+        targetWidth.toDouble() - textStartX - horizontalPadding,
+      );
+      final textHeight = math.max(1.0, footerHeight - (verticalPadding * 2));
+      final textPainter = _buildTextPainter(
+        text: stampText,
+        maxWidth: textWidth,
+        maxHeight: textHeight,
+      );
 
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
 
-    canvas.drawImageRect(
-      originalImage,
-      Rect.fromLTWH(
-        0,
-        0,
-        originalImage.width.toDouble(),
-        originalImage.height.toDouble(),
-      ),
-      Rect.fromLTWH(0, 0, targetWidth.toDouble(), targetHeight.toDouble()),
-      Paint()..filterQuality = FilterQuality.medium,
-    );
-    canvas.drawRect(
-      Rect.fromLTWH(0, footerTop, targetWidth.toDouble(), footerHeight),
-      Paint()..color = Colors.black.withValues(alpha: 0.70),
-    );
-
-    if (mapImage != null) {
-      final mapRect = Rect.fromLTWH(
-        horizontalPadding,
-        footerTop + verticalPadding,
-        mapSize,
-        mapSize,
+      canvas.drawImageRect(
+        originalImage,
+        Rect.fromLTWH(
+          0,
+          0,
+          originalImage.width.toDouble(),
+          originalImage.height.toDouble(),
+        ),
+        Rect.fromLTWH(0, 0, targetWidth.toDouble(), targetHeight.toDouble()),
+        Paint()..filterQuality = FilterQuality.medium,
       );
       canvas.drawRect(
-        mapRect.inflate(2),
-        Paint()..color = Colors.white.withValues(alpha: 0.95),
+        Rect.fromLTWH(0, footerTop, targetWidth.toDouble(), footerHeight),
+        Paint()..color = Colors.black.withValues(alpha: 0.70),
       );
-      paintImage(
-        canvas: canvas,
-        rect: mapRect,
-        image: mapImage,
-        fit: BoxFit.cover,
+
+      if (mapImage != null) {
+        final mapRect = Rect.fromLTWH(
+          horizontalPadding,
+          footerTop + verticalPadding,
+          mapSize,
+          mapSize,
+        );
+        canvas.drawRect(
+          mapRect.inflate(2),
+          Paint()..color = Colors.white.withValues(alpha: 0.95),
+        );
+        paintImage(
+          canvas: canvas,
+          rect: mapRect,
+          image: mapImage,
+          fit: BoxFit.cover,
+        );
+      }
+
+      final safeTextTop = math.max(
+        footerTop + verticalPadding,
+        footerTop + ((footerHeight - textPainter.height) / 2),
       );
+
+      canvas.save();
+      canvas.clipRect(
+        Rect.fromLTWH(textStartX, footerTop, textWidth, footerHeight),
+      );
+      textPainter.paint(canvas, Offset(textStartX, safeTextTop));
+      canvas.restore();
+
+      final picture = recorder.endRecording();
+      final ui.Image rendered;
+      try {
+        rendered = await picture.toImage(targetWidth, targetHeight);
+      } finally {
+        picture.dispose();
+      }
+      stampedImage = rendered;
+      final byteData = await rendered.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      );
+      if (byteData == null) {
+        throw StateError('Could not read the stamped image pixels.');
+      }
+
+      final jpegBytes = await compute(
+        _encodeRgbaToJpeg,
+        _RgbaFrame(
+          width: targetWidth,
+          height: targetHeight,
+          rgba: byteData.buffer.asUint8List(),
+        ),
+      );
+      return _writeJpeg(file, jpegBytes, '_gps.jpg');
+    } finally {
+      originalImage.dispose();
+      mapImage?.dispose();
+      stampedImage?.dispose();
     }
-
-    final safeTextTop = math.max(
-      footerTop + verticalPadding,
-      footerTop + ((footerHeight - textPainter.height) / 2),
-    );
-
-    canvas.save();
-    canvas.clipRect(
-      Rect.fromLTWH(textStartX, footerTop, textWidth, footerHeight),
-    );
-    textPainter.paint(canvas, Offset(textStartX, safeTextTop));
-    canvas.restore();
-
-    final stampedImage = await recorder.endRecording().toImage(
-      targetWidth,
-      targetHeight,
-    );
-    final byteData = await stampedImage.toByteData(
-      format: ui.ImageByteFormat.rawRgba,
-    );
-    if (byteData == null) {
-      throw StateError('Could not read the stamped image pixels.');
-    }
-
-    final jpegBytes = await compute(
-      _encodeRgbaToJpeg,
-      _RgbaFrame(
-        width: targetWidth,
-        height: targetHeight,
-        rgba: byteData.buffer.asUint8List(),
-      ),
-    );
-    return _writeJpeg(file, jpegBytes, '_gps.jpg');
   }
 
   static Future<File> _compressOnly(File file) async {

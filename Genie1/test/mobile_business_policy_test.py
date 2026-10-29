@@ -144,7 +144,18 @@ class MobileBusinessPolicyTest(unittest.TestCase):
                          'This Event is not assigned to your user.')
         self.event.owner = 'user@example.test'
         self.event.starts_on = '2026-10-25'
-        self.assertIn('event day', self.policy(event_id='EVENT-1')['actions']['check_out']['reason'])
+        self.assertTrue(self.policy(event_id='EVENT-1')['actions']['check_out']['allowed'])
+
+    def test_event_day_rule_blocks_check_in_but_not_check_out_after_midnight(self):
+        self.event.starts_on = '2026-10-25'
+        actions = self.policy(event_id='EVENT-1')['actions']
+        self.assertIn('event day', actions['check_in']['reason'])
+        self.assertEqual(actions['check_out']['reason'], 'Cannot check out before check-in')
+        self.event.custom_check_in = '2026-10-25 18:00:00'
+        self.event.event_category = 'Other'
+        actions = self.policy(event_id='EVENT-1')['actions']
+        self.assertTrue(actions['check_out']['allowed'])
+        self.assertFalse(actions['check_in']['allowed'])
 
     def test_guest_and_unknown_feature_fail_without_loading_documents(self):
         with self.assertRaisesRegex(ValueError, 'supported'):

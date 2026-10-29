@@ -42,6 +42,9 @@ import 'package:homegenie/utils/widget/live_location_service.dart';
 import '../utils/widget/home_back_button.dart';
 import '../utils/widget/completed_visit_attachments.dart';
 
+// Visit whose geofence is currently being monitored by GeofenceManager.
+String? _geofenceEventId;
+
 class EventDetails extends StatefulWidget {
   final String eventid;
   final bool hideVisitActions;
@@ -84,7 +87,9 @@ class _EventDetailsState extends State<EventDetails> {
   bool _wasRecordingBeforeCall = false;
   bool _shouldStartNewRecordingAfterCall = false;
 
-  bool _isRecording = false;
+  // Seeded from the singleton service, which may still be recording from an
+  // earlier visit to this page.
+  bool _isRecording = AudioRecordingService().isRecording;
   StreamSubscription<PhoneState>? _phoneStateSubscription;
 
   // ── Photo capture ──────────────────────────────────────────────────────────
@@ -181,16 +186,25 @@ class _EventDetailsState extends State<EventDetails> {
   }
 
   Future<void> _startManualRecording() async {
-    await AudioRecordingService().startRecording();
+    final recordingService = AudioRecordingService();
+    // The service is a singleton that keeps recording after this page closes.
+    if (!recordingService.isRecording) {
+      await recordingService.startRecording();
+    }
+    if (!mounted) return;
     setState(() {
-      _isRecording = true;
+      _isRecording = recordingService.isRecording;
     });
   }
 
   Future<void> _stopManualRecording() async {
-    await AudioRecordingService().stopRecording();
+    final recordingService = AudioRecordingService();
+    if (recordingService.isRecording) {
+      await recordingService.stopRecording();
+    }
+    if (!mounted) return;
     setState(() {
-      _isRecording = false;
+      _isRecording = recordingService.isRecording;
     });
   }
 
@@ -260,7 +274,17 @@ class _EventDetailsState extends State<EventDetails> {
   void dispose() {
     _phoneStateSubscription?.cancel();
     _audioPlayer.dispose();
-    GeofenceManager.instance.stopMonitoring();
+    // Keep monitoring while the visit is still checked in; it is stopped on
+    // checkout and restored when the page is reopened.
+    if (identical(
+      GeofenceManager.instance.onStatusChange,
+      _geofenceStatusHandler,
+    )) {
+      GeofenceManager.instance.onStatusChange = null;
+    }
+    if (!_visitCheckedIn || _visitCheckedOut) {
+      unawaited(_stopGeofenceForEvent());
+    }
     super.dispose();
   }
 
@@ -271,8 +295,65 @@ class _EventDetailsState extends State<EventDetails> {
         !eventMonitoringEnabled(_reportLocationPolicy))
       return;
 
-    GeofenceManager.instance.onStatusChange = (id, status) {
-      if (!mounted) return;
+    _attachGeofenceStatusHandler();
+
+    await GeofenceManager.instance.startMonitoring(
+      eventId: widget.eventid,
+      latitude: lat,
+      longitude: lng,
+      radiusMeters: eventMonitoringRadiusMeters(_reportLocationPolicy),
+    );
+    _geofenceEventId = widget.eventid;
+  }
+
+  /// Stops geofence monitoring only when it belongs to this visit (or its
+  /// owner is unknown), so another active visit keeps being monitored.
+  Future<void> _stopGeofenceForEvent() async {
+    if (_geofenceEventId != null && _geofenceEventId != widget.eventid) return;
+    await GeofenceManager.instance.stopMonitoring();
+    _geofenceEventId = null;
+  }
+
+  /// Restores geofence monitoring for a visit that is still checked in when
+  /// the page is reopened after check-in.
+  Future<void> _resumeGeofenceIfVisitActive() async {
+    if (!mounted || !_visitCheckedIn || _visitCheckedOut) return;
+    if (!_requiresEventGeofence ||
+        !eventMonitoringEnabled(_reportLocationPolicy))
+      return;
+
+    // Already monitoring this visit (e.g. started at check-in): only reattach
+    // the in-app handler instead of restarting the geofence.
+    if (GeofenceManager.instance.isRunning &&
+        _geofenceEventId == widget.eventid) {
+      _attachGeofenceStatusHandler();
+      return;
+    }
+
+    final locationTypes = _getAvailableLocationTypes();
+    final target =
+        _getLocationCoordinates(selectedLocationType) ??
+        _getLocationCoordinates(_mapLocationType) ??
+        (locationTypes.isEmpty
+            ? null
+            : _getLocationCoordinates(locationTypes.first));
+    if (target == null) return;
+
+    try {
+      await _startGeofenceForEvent(target.latitude, target.longitude);
+    } catch (error) {
+      debugPrint('Unable to resume event geofence: $error');
+    }
+  }
+
+  void Function(String, GeofenceStatus)? _geofenceStatusHandler;
+
+  void _attachGeofenceStatusHandler() {
+    GeofenceManager.instance.onStatusChange = _geofenceStatusHandler ??= (
+      id,
+      status,
+    ) {
+      if (!mounted || id != widget.eventid) return;
       final msg =
           status == GeofenceStatus.ENTER
               ? '📍 You have entered the event zone.'
@@ -290,13 +371,6 @@ class _EventDetailsState extends State<EventDetails> {
             : 'Info',
       );
     };
-
-    await GeofenceManager.instance.startMonitoring(
-      eventId: widget.eventid,
-      latitude: lat,
-      longitude: lng,
-      radiusMeters: eventMonitoringRadiusMeters(_reportLocationPolicy),
-    );
   }
 
   // ── Photo capture & upload ─────────────────────────────────────────────────
@@ -335,6 +409,14 @@ class _EventDetailsState extends State<EventDetails> {
       lng: lng,
       address: address,
       title: 'Visit Check-out',
+      onStampFailed: (_) {
+        if (!mounted) return;
+        Warning.show(
+          context,
+          'GPS stamp could not be added; the photo will upload without it.',
+          'Warning',
+        );
+      },
     );
   }
 
@@ -556,7 +638,7 @@ class _EventDetailsState extends State<EventDetails> {
           setState(() => _applyVisitBusinessPolicy(policy));
         }
         if (!eventGeofencingEnabled(_reportLocationPolicy)) {
-          await GeofenceManager.instance.stopMonitoring();
+          await _stopGeofenceForEvent();
         }
       }
     } catch (error) {
@@ -1261,6 +1343,11 @@ class _EventDetailsState extends State<EventDetails> {
     // Attendance check-in owns the day's live tracking. Only stop it here when
     // the employee is not checked in for the day, otherwise the rest of the
     // shift would go untracked after a single visit checkout.
+    try {
+      await _stopGeofenceForEvent();
+    } catch (error) {
+      debugPrint('Unable to stop event geofence after checkout: $error');
+    }
     final attendanceCheckedIn =
         prefs.getBool('is_employee_checked_in') ?? false;
     if (!attendanceCheckedIn) {
@@ -1306,6 +1393,9 @@ class _EventDetailsState extends State<EventDetails> {
     try {
       if (AudioRecordingService().isRecording) {
         await AudioRecordingService().stopRecording();
+      }
+      if (mounted) {
+        setState(() => _isRecording = AudioRecordingService().isRecording);
       }
       final paths = AudioRecordingService().getAllRecordingPaths();
       for (final path in paths) {
@@ -1431,6 +1521,9 @@ class _EventDetailsState extends State<EventDetails> {
           _loadOpportunityLocations().timeout(const Duration(seconds: 15)),
         _loadParticipantVisitType().timeout(const Duration(seconds: 15)),
       ]);
+      // Policy and locations are loaded; restore monitoring for a visit that
+      // is still checked in after the page was closed and reopened.
+      if (mounted) unawaited(_resumeGeofenceIfVisitActive());
     } catch (error) {
       if (mounted) setState(() => _detailsError = _detailsErrorMessage(error));
     } finally {

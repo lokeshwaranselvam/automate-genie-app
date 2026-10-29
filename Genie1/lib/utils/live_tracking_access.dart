@@ -14,9 +14,16 @@ class LiveTrackingAccess {
   static String? _verifiedSession;
   static DateTime? _verifiedAt;
   static bool _allowed = false;
-  static final Map<String, Future<bool>> _pending = {};
+  static final Map<String, Future<bool?>> _pending = {};
 
-  static Future<bool> canTrack({bool requireCheckIn = true}) async {
+  static Future<bool> canTrack({bool requireCheckIn = true}) async =>
+      await trackingDecision(requireCheckIn: requireCheckIn) == true;
+
+  /// `true` allows tracking and `false` is a definitive deny (no attendance,
+  /// signed out, another account, or ERP refused). `null` means ERP could not
+  /// be reached or understood (timeout, 5xx, bad JSON): callers must keep the
+  /// current tracking state instead of stopping the native service.
+  static Future<bool?> trackingDecision({bool requireCheckIn = true}) async {
     final prefs = await SharedPreferences.getInstance();
     if (requireCheckIn && prefs.getBool('is_employee_checked_in') != true) {
       return false;
@@ -26,7 +33,7 @@ class LiveTrackingAccess {
     final site = dotenv.env['SITE_URL']?.trim() ?? '';
     if (email.isEmpty || sid.isEmpty || site.isEmpty) return false;
     final session = jsonEncode([site, email, sid]);
-    bool allowed;
+    bool? allowed;
     if (_verifiedSession == session &&
         _verifiedAt != null &&
         DateTime.now().difference(_verifiedAt!) < const Duration(minutes: 1)) {
@@ -43,13 +50,15 @@ class LiveTrackingAccess {
       }
     }
     // Never apply a response to another account or a completed shift.
-    return allowed &&
-        prefs.getString('email')?.trim() == email &&
-        prefs.getString('session_sid')?.trim() == sid &&
-        (!requireCheckIn || prefs.getBool('is_employee_checked_in') == true);
+    if (prefs.getString('email')?.trim() != email ||
+        prefs.getString('session_sid')?.trim() != sid ||
+        (requireCheckIn && prefs.getBool('is_employee_checked_in') != true)) {
+      return false;
+    }
+    return allowed;
   }
 
-  static Future<bool> _verify(
+  static Future<bool?> _verify(
     String site,
     String email,
     String sid,
@@ -71,12 +80,16 @@ class LiveTrackingAccess {
             },
           )
           .timeout(const Duration(seconds: 10));
-      if (response.statusCode != 200) return false;
+      // 401/403 are definitive; other failures (5xx, proxies) are unknown.
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        return false;
+      }
+      if (response.statusCode != 200) return null;
       final decoded = jsonDecode(response.body);
       final message =
           decoded is Map && decoded['exc'] == null ? decoded['message'] : null;
-      if (message is! Map ||
-          message['current_user']?.toString().trim().toLowerCase() !=
+      if (message is! Map) return null;
+      if (message['current_user']?.toString().trim().toLowerCase() !=
               email.toLowerCase() ||
           message['can_track'] is! bool) {
         return false;
@@ -87,8 +100,9 @@ class LiveTrackingAccess {
       _allowed = allowed;
       return allowed;
     } catch (error) {
+      // Timeout, offline or invalid JSON: not a deny.
       debugPrint('Could not verify live tracking eligibility: $error');
-      return false;
+      return null;
     }
   }
 }

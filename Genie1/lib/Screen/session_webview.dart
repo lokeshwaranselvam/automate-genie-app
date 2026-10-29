@@ -169,6 +169,21 @@ class _SessionWebViewState extends State<SessionWebView> {
     if (showPopup) Warning.show(context, message, 'Error');
   }
 
+  /// Phone Back when it is not blocked: step back in web history first, then
+  /// leave the page.
+  Future<void> _handleSystemBack() async {
+    final controller = _controller;
+    try {
+      if (controller != null && await controller.canGoBack()) {
+        await controller.goBack();
+        return;
+      }
+    } catch (_) {
+      // Fall through and close the page if web history is unavailable.
+    }
+    if (mounted) Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     final body =
@@ -193,6 +208,10 @@ class _SessionWebViewState extends State<SessionWebView> {
 
     return PopScope(
       canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || widget.blockSystemBack) return;
+        _handleSystemBack();
+      },
       child: Scaffold(
         appBar: brandAppBar(
           leading: IconButton(

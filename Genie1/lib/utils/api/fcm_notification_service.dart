@@ -113,6 +113,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     return;
   }
   if (!_isPendingWork(message) || message.notification != null) return;
+  if (!await _isForSignedInUser(message)) return;
 
   await _initializeLocalNotifications();
   await showPendingWorkNotification(message);
@@ -217,7 +218,8 @@ class FcmNotificationService {
       await NotificationInbox.capture(message);
       if (LeadCallNotification.fromData(message.data) != null) {
         await showLeadCallNotification(message);
-      } else if (_isPendingWork(message)) {
+      } else if (_isPendingWork(message) &&
+          await _isForSignedInUser(message)) {
         final audioUrl = message.data['alarm_audio_url']?.toString().trim();
         await showPendingWorkNotification(message, playChannelSound: false);
         await PendingWorkAlarmPlayer.play(url: audioUrl);
@@ -461,6 +463,18 @@ Future<void> showPendingWorkNotification(
   );
 
   debugPrint('Displayed pending-work alarm notification: $title');
+}
+
+/// Same session/recipient rule as lead-call and inbox notifications: drop
+/// pushes that arrive after sign-out or are addressed to another user.
+Future<bool> _isForSignedInUser(RemoteMessage message) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.reload();
+  final user = prefs.getString('session_username');
+  if (user == null || prefs.getString('session_sid') == null) return false;
+  final recipient = message.data['for_user'] ?? message.data['recipient'];
+  return recipient == null ||
+      recipient.toString().trim().toLowerCase() == user.trim().toLowerCase();
 }
 
 Future<void> showLeadCallNotification(RemoteMessage message) async {

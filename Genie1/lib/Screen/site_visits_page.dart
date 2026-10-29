@@ -132,8 +132,10 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
       }
     }
     final visit = target;
+    // Attempt the initial open only once, so a missing visit does not show
+    // the "Could not find" message again on every refresh.
+    _initialVisitOpened = true;
     if (visit != null) {
-      _initialVisitOpened = true;
       setState(() {
         _tab =
             _isCompleted(visit)
@@ -808,9 +810,9 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
                         padding: const EdgeInsets.symmetric(horizontal: 10),
                         minimumSize: const Size(0, 34),
                       ),
-                      child: const Text(
-                        'Navigate',
-                        style: TextStyle(fontSize: 11),
+                      child: Text(
+                        completed ? 'View report' : 'Navigate',
+                        style: const TextStyle(fontSize: 11),
                       ),
                     ),
                   const SizedBox(height: 4),

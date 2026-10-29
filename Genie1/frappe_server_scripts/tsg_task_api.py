@@ -163,6 +163,7 @@ elif action == "complete":
             "reference_type": "Task",
             "reference_name": task.name,
             "allocated_to": current_user,
+            "status": ["!=", "Cancelled"],
         },
     )
     assigned_task = frappe.db.sql(
@@ -556,7 +557,7 @@ else:
         "to_date": to_date,
         "assigned_to_only": assigned_to_only,
         "assigned_user": frappe.session.user if assigned_to_only else None,
-        "csrf_token": frappe.sessions.get_csrf_token(),
+        "csrf_token": frappe.session.get("csrf_token") or frappe.session.data.csrf_token,
         "total_tasks": len(task_data),
         "task_data": task_data,
     }

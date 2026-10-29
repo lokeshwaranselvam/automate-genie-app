@@ -1,6 +1,8 @@
 import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../utils/api_business_policy.dart';
 import 'package:geolocator/geolocator.dart';
@@ -45,7 +47,6 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
   LeadFormOptions? _options;
   String? _selectedCategory;
   String? _selectedSource;
-  bool _checkDuplicates = true;
   bool _loadingOptions = true;
   bool _gettingLocation = false;
   bool _submitting = false;
@@ -165,14 +166,30 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
         ),
       );
       final address = await LocationHelper.getAddressFromCoordinates(
         position.latitude,
         position.longitude,
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout:
+            () =>
+                throw StateError(
+                  'Could not find the address in time. Try again or type it.',
+                ),
       );
       if (!mounted) return;
       _locationController.text = address;
+    } on TimeoutException {
+      if (mounted) {
+        Warning.show(
+          context,
+          'Could not get your GPS location in time. Move to an open area and try again.',
+          'Location',
+        );
+      }
     } catch (error) {
       if (mounted) {
         Warning.show(
@@ -565,34 +582,10 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
                             ),
                       ),
                     ),
+                    // "Check for duplicates" was removed: the
+                    // create_lead_from_mobile API has no duplicate-check
+                    // option, so the checkbox never had any effect.
                     const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        SizedBox(
-                          width: 28,
-                          height: 32,
-                          child: Checkbox(
-                            value: _checkDuplicates,
-                            activeColor: _leadBlue,
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                            onChanged:
-                                (value) => setState(
-                                  () => _checkDuplicates = value ?? false,
-                                ),
-                          ),
-                        ),
-                        const SizedBox(width: 5),
-                        const Text(
-                          'Check for duplicates',
-                          style: TextStyle(
-                            color: _leadInk,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
                     if (_error != null && _options != null) ...[
                       const SizedBox(height: 8),
                       Text(

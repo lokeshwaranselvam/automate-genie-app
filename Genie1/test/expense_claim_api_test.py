@@ -47,6 +47,7 @@ class ExpenseClaimApiTest(unittest.TestCase):
                            expense_type="Travel", description="Taxi", expense_date="2026-10-13",
                            amount="125.50")
         self.uploads = [self.upload("bill.png")]
+        self.recent_claims = []
         self.frappe = SimpleNamespace(
             session=Row(user=self.employee.user_id, data=Row(csrf_token="csrf")),
             request=SimpleNamespace(method="POST", files=SimpleNamespace(
@@ -56,7 +57,9 @@ class ExpenseClaimApiTest(unittest.TestCase):
             new_doc=Mock(side_effect=self.new_doc),
             db=SimpleNamespace(get_value=Mock(side_effect=self.get_value),
                                exists=Mock(side_effect=self.exists)),
-            utils=SimpleNamespace(getdate=date.fromisoformat, today=lambda: "2026-10-13"),
+            utils=SimpleNamespace(getdate=date.fromisoformat, today=lambda: "2026-10-13", flt=float,
+                                  now_datetime=lambda: 1000,
+                                  time_diff_in_seconds=lambda end, start: end - start),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
 
@@ -93,6 +96,10 @@ class ExpenseClaimApiTest(unittest.TestCase):
             return [Row(name="Travel", expense_type="Travel"), Row(name="Meals", expense_type="Meals")]
         if doctype in ["Has Role", "Department Approver"]:
             return []
+        if doctype == "Expense Claim":
+            return self.recent_claims
+        if doctype == "File":
+            return [Row(name="FILE-bill.png", file_name="bill.png", file_url="/private/files/bill.png")]
         self.fail("Unexpected options lookup: " + doctype)
 
     def run_api(self, **overrides):
@@ -154,6 +161,31 @@ class ExpenseClaimApiTest(unittest.TestCase):
         self.assertEqual(len(result["bill_files"]), 2)
         self.assertEqual(result["expense_row"], "EXP-1")
         self.assertEqual(result["bill_file_url"], bill1.file_url)
+
+    def test_identical_retry_within_two_minutes_returns_existing_claim(self):
+        existing = Document(doctype="Expense Claim", name="HR-EXP-OLD", employee="EMP-1",
+                            expense_approver="approver@example.test", currency="INR",
+                            total_claimed_amount=125.5, total_sanctioned_amount=125.5,
+                            approval_status="Draft", expenses=[Row(
+                                name="EXP-OLD", expense_type="Travel", description="Taxi",
+                                expense_date=date(2026, 10, 13), amount=125.5, sanctioned_amount=125.5)])
+        self.frappe.get_doc = Mock(return_value=existing)
+        self.recent_claims = [Row(name="HR-EXP-OLD", creation=950)]
+        result = self.run_api()
+        self.assertEqual(result["name"], "HR-EXP-OLD")
+        self.assertEqual(self.created, [])
+        self.assertEqual(result["bill_files"][0]["name"], "FILE-bill.png")
+        filters = [c.kwargs["filters"] for c in self.frappe.get_all.call_args_list if c.args[0] == "Expense Claim"][0]
+        self.assertEqual((filters["owner"], filters["employee"], filters["docstatus"]),
+                         ("staff@example.test", "EMP-1", 0))
+        # A different amount, or the same rows after the window, is a new claim.
+        for amount, creation in [("99", 950), ("125.50", 800)]:
+            with self.subTest(amount=amount, creation=creation):
+                self.created = []
+                self.uploads = [self.upload("bill.png")]
+                self.recent_claims = [Row(name="HR-EXP-OLD", creation=creation)]
+                self.assertEqual(self.run_api(amount=amount)["name"], "HR-EXP-TEST")
+                self.assertEqual([doc.doctype for doc in self.created], ["Expense Claim", "File"])
 
     def test_legacy_single_row_request_and_response_remain_supported(self):
         result = self.run_api()

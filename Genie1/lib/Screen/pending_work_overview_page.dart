@@ -2,11 +2,22 @@ import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../utils/api/pending_work_api.dart';
 import 'pending_section_page.dart';
 import 'session_webview.dart';
 import '../utils/widget/home_back_button.dart';
+
+/// A page on the signed-in ERP site, so SessionWebView injects its session
+/// cookie (it only does so for SITE_URL's host).
+String _siteLink(String path) {
+  var site = dotenv.env['SITE_URL']?.trim() ?? '';
+  while (site.endsWith('/')) {
+    site = site.substring(0, site.length - 1);
+  }
+  return '$site/$path';
+}
 
 const _pendingSections = <_PendingSectionInfo>[
   _PendingSectionInfo(
@@ -213,8 +224,8 @@ class _PendingWorkOverviewPageState extends State<PendingWorkOverviewPage> {
                 await Navigator.of(context).push<void>(
                   MaterialPageRoute<void>(
                     builder:
-                        (_) => const SessionWebView(
-                          url: 'https://16.itgenie.online/SVR',
+                        (_) => SessionWebView(
+                          url: _siteLink('SVR'),
                           title: 'SVR',
                         ),
                   ),

@@ -801,6 +801,21 @@ elif action == "create_event":
             frappe.throw("Event needs custom_validate to save this category location.")
     category_field = category_config["fieldname"]
 
+    # Retry guard: the client sends no idempotency key, so an identical Event
+    # this user created for the same assignee in the last two minutes is
+    # returned instead of creating a duplicate visit.
+    duplicate_event = None
+    for recent_event in frappe.get_all("Event", filters={
+        "owner": current_user, "subject": summary, "starts_on": starts_on, "ends_on": ends_on,
+        category_field: category,
+    }, fields=["name", "creation"], order_by="creation desc", limit_page_length=5):
+        if frappe.utils.time_diff_in_seconds(frappe.utils.now_datetime(), recent_event.creation) > 120:
+            break
+        if frappe.db.exists("ToDo", {"reference_type": "Event", "reference_name": recent_event.name,
+                "allocated_to": assigned_to, "status": ["!=", "Cancelled"]}):
+            duplicate_event = recent_event
+            break
+
     event_doc = frappe.new_doc("Event")
     event_doc.subject = summary
     event_doc.starts_on = starts_on
@@ -853,9 +868,12 @@ elif action == "create_event":
 
     if reference_doctype and not reference_linked:
         frappe.throw("Event needs a participant table with document reference fields.")
-    event_doc.insert()
+    if duplicate_event:
+        event_doc = duplicate_event
+    else:
+        event_doc.insert()
 
-    if saved_location:
+    if saved_location and not duplicate_event:
         # Keep the coordinate comment used by the existing Event location report.
         # Coordinates come from the saved Opportunity row or the direct Event pin.
         coordinate_comment = frappe.get_doc(
@@ -884,7 +902,8 @@ elif action == "create_event":
             "date": starts_on.date(),
         }
     )
-    todo.insert(ignore_permissions=True)
+    if not duplicate_event:
+        todo.insert(ignore_permissions=True)
 
     # Notification rules now handle FCM asynchronously through the shared hook.
     # Keep the legacy response flags for compatibility; this API sends no push.

@@ -57,5 +57,51 @@ class TsgTaskSaveTest(unittest.TestCase):
         self.frappe.has_permission.assert_called_once_with("Task", "write", "TASK-1")
 
 
+class Session(dict):
+    __getattr__ = dict.get
+
+
+class TsgTaskCompleteAndGetTest(unittest.TestCase):
+    def frappe(self, form_dict):
+        return SimpleNamespace(
+            form_dict=form_dict, response={},
+            session=Session(user="sales@example.test", csrf_token="", data=SimpleNamespace(csrf_token="csrf-1")),
+            db=SimpleNamespace(exists=Mock(return_value=None), sql=Mock(return_value=[])),
+            get_doc=Mock(return_value=SimpleNamespace(name="TASK-1", save=Mock())),
+            throw=Mock(side_effect=lambda message, exc=None: (_ for _ in ()).throw(Denied(message))),
+            utils=SimpleNamespace(today=lambda: "2026-10-29", add_days=lambda d, n: d,
+                                  get_first_day=lambda d, as_str=False: d, strip_html_tags=lambda v: v),
+        )
+
+    def test_cancelled_assignment_cannot_complete_task(self):
+        frappe = self.frappe({"action": "complete", "task_id": "TASK-1"})
+        with self.assertRaises(Denied):
+            exec(compile(SCRIPT, "tsg_task_api.py", "exec"), {"frappe": frappe})
+        doctype, filters = frappe.db.exists.call_args.args
+        self.assertEqual(doctype, "ToDo")
+        self.assertEqual(filters["status"], ["!=", "Cancelled"])
+        frappe.get_doc.return_value.save.assert_not_called()
+
+    def test_get_returns_session_csrf_token_without_sessions_module(self):
+        frappe = self.frappe({"action": "get", "all_data": "1"})
+        exec(compile(SCRIPT, "tsg_task_api.py", "exec"), {"frappe": frappe})
+        self.assertEqual(frappe.response["message"]["csrf_token"], "csrf-1")
+
+
+class MyAssignedTasksCompleteTest(unittest.TestCase):
+    def test_cancelled_todo_does_not_count_as_assignment(self):
+        script = (Path(__file__).resolve().parents[1] / "frappe_server_scripts" / "my_assigned_tasks_api.py").read_text(encoding="utf-8")
+        frappe = SimpleNamespace(
+            form_dict={"action": "complete", "task_id": "TASK-1"}, response={},
+            session=SimpleNamespace(user="sales@example.test"),
+            db=SimpleNamespace(sql=Mock(return_value=[])), get_doc=Mock(),
+            throw=Mock(side_effect=lambda message: (_ for _ in ()).throw(Denied(message))),
+        )
+        with self.assertRaisesRegex(Denied, "assigned to your user"):
+            exec(compile(script, "my_assigned_tasks_api.py", "exec"), {"frappe": frappe})
+        self.assertIn("assigned_todo.status != 'Cancelled'", frappe.db.sql.call_args.args[0])
+        frappe.get_doc.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

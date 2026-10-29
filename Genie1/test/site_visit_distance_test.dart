@@ -105,7 +105,7 @@ void main() {
             expect(find.text('Travelled: 500.00 m'), findsOneWidget);
             expect(find.text('1.75 km'), findsOneWidget);
             expect(find.text('Travelled: 99.00 km'), findsNothing);
-            expect(find.text('Navigate'), findsOneWidget);
+            expect(find.text('View report'), findsOneWidget);
             expect(tester.takeException(), isNull);
             await tester.pumpWidget(const SizedBox.shrink());
           },

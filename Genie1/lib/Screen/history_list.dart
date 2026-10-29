@@ -103,11 +103,12 @@ class _HistoryListState extends State<HistoryList> {
           );
           return;
         }
+        // Keep a filter the user picked across pull-to-refresh and retry.
         DateTime now = DateTime.now();
-        fromDate = now.subtract(const Duration(days: 1));
-        toDate = now;
+        fromDate ??= now.subtract(const Duration(days: 1));
+        toDate ??= now;
 
-        fetchHistoryData();
+        await fetchHistoryData();
       }
     } catch (e) {
       print('Error during ping: $e');
@@ -129,6 +130,7 @@ class _HistoryListState extends State<HistoryList> {
         to,
         context,
       );
+      if (!mounted) return;
 
       for (var entry in response) {
         final missing = _getMissingField(entry);
@@ -147,6 +149,7 @@ class _HistoryListState extends State<HistoryList> {
 
           setState(() {
             isLoading = false;
+            errorMessage = null;
           });
           return;
         }
@@ -155,19 +158,22 @@ class _HistoryListState extends State<HistoryList> {
       setState(() {
         historyData =
             response.map<Map<String, dynamic>>((entry) {
+              // ERP may send numbers; keep display fields as strings.
               return {
-                'remarks': entry['subject'],
-                'from_time': DateTime.parse(entry['starts_on']),
-                'to_time': DateTime.parse(entry['ends_on']),
-                'total_hours': entry['custom_duration'] ?? '',
-                'custom_distance': entry['custom_distance'] ?? '',
-                'name': entry['name'],
+                'remarks': entry['subject'].toString(),
+                'from_time': DateTime.parse(entry['starts_on'].toString()),
+                'to_time': DateTime.parse(entry['ends_on'].toString()),
+                'total_hours': (entry['custom_duration'] ?? '').toString(),
+                'custom_distance': (entry['custom_distance'] ?? '').toString(),
+                'name': entry['name'].toString(),
               };
             }).toList();
 
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         errorMessage = e.toString();
         isLoading = false;
@@ -193,7 +199,8 @@ class _HistoryListState extends State<HistoryList> {
     double totalMeters = 0.0;
 
     for (var entry in data) {
-      String raw = (entry['custom_distance'] ?? '').toLowerCase().trim();
+      String raw =
+          (entry['custom_distance'] ?? '').toString().toLowerCase().trim();
 
       if (raw.endsWith('km')) {
         final value = raw.replaceAll('km', '').trim();
@@ -420,10 +427,8 @@ class _HistoryListState extends State<HistoryList> {
 
           Expanded(
             child: PullToRefresh(
-              onRefresh: () async {
-                await _checkPing();
-                await fetchHistoryData();
-              },
+              // _checkPing fetches once after its checks pass.
+              onRefresh: _checkPing,
               child:
                   filteredHistory.isEmpty
                       ? Center(
@@ -479,7 +484,7 @@ class HistoryItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    String remarks = history['remarks'];
+    String remarks = '${history['remarks'] ?? ''}';
     String displayRemarks =
         remarks.length > 20 ? '${remarks.substring(0, 20)}...' : remarks;
 
@@ -496,13 +501,18 @@ class HistoryItem extends StatelessWidget {
           ),
         );
       },
-      leading: CircleAvatar(child: Text(remarks[0].toUpperCase())),
+      leading: CircleAvatar(
+        child: Text(remarks.isEmpty ? '' : remarks[0].toUpperCase()),
+      ),
       title: Text(displayRemarks),
       subtitle: Text(timeRange),
       trailing: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.end,
-        children: [Text(history['total_hours']), const Text('Working Hours')],
+        children: [
+          Text('${history['total_hours'] ?? ''}'),
+          const Text('Working Hours'),
+        ],
       ),
     );
   }

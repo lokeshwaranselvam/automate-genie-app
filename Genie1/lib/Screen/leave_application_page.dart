@@ -61,8 +61,10 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
     '',
   );
 
-  Future<void> _loadOptions() async {
-    if (_submitting) return;
+  /// [force] lets the post-submit refresh run while [_submitting] is still
+  /// set (it stays set so the form cannot be submitted twice meanwhile).
+  Future<void> _loadOptions({bool force = false}) async {
+    if (_submitting && !force) return;
     setState(() {
       _loading = true;
       _loadError = null;
@@ -203,7 +205,7 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
         _toDate = _fromDate;
         _clampPolicyDates();
       });
-      await _loadOptions();
+      await _loadOptions(force: true);
     } catch (error) {
       if (!mounted) return;
       Warning.show(

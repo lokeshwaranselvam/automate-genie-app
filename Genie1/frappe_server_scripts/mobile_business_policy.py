@@ -196,10 +196,13 @@ if feature == "visit" and frappe.form_dict.get("event_id"):
             if row.get("email") == user or row.get("user") == user or row.get("assigned_to") == user:
                 assigned = True
     common_reason = "" if assigned else "This Event is not assigned to your user."
+    # Event-day restriction applies to check-in only; a visit left open past
+    # midnight must still be closable or it blocks attendance checkout.
+    day_reason = ""
     if not common_reason and policy["rules"]["event_day_only"]:
         if not event.get("starts_on") or str(frappe.utils.getdate(event.starts_on)) != str(frappe.utils.today()):
-            common_reason = "You can only check in/out on the event day."
-    in_reason = common_reason or ("" if policy["rules"]["check_in_enabled"] else policy["rules"]["check_in_disabled_reason"])
+            day_reason = "You can only check in on the event day."
+    in_reason = common_reason or day_reason or ("" if policy["rules"]["check_in_enabled"] else policy["rules"]["check_in_disabled_reason"])
     out_reason = common_reason or ("" if policy["rules"]["check_out_enabled"] else policy["rules"]["check_out_disabled_reason"])
     if not in_reason and event.get("custom_check_in"):
         in_reason = "Already Checked In"
