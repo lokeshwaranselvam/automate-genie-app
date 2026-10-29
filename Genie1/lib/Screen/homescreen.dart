@@ -1,6 +1,7 @@
 import 'notifications_page.dart';
 import '../utils/api/document_notification.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
+import '../utils/widget/load_failed_view.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 import 'package:homegenie/utils/widget/live_location_service.dart';
@@ -123,6 +124,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   bool _attendancePageOpen = false;
   bool _leaveApplicationOpen = false;
   bool _prefsInitialized = false;
+  String? _startupError;
   Map<String, dynamic> _attendanceStatusDetails = {};
   int _selectedTab = 0;
   int? _homePendingCount;
@@ -318,7 +320,12 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!_prefsInitialized) return;
+    if (!_prefsInitialized) {
+      if (state == AppLifecycleState.resumed && _startupError != null) {
+        _retryStartup();
+      }
+      return;
+    }
     if (state == AppLifecycleState.resumed) {
       _appIsResumed = true;
       PendingWorkMonitor.start();
@@ -347,6 +354,18 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     super.dispose();
   }
 
+  void _retryStartup() {
+    if (!mounted) return;
+    setState(() => _startupError = null);
+    _checkPing();
+  }
+
+  void _showStartupError(String message) {
+    if (!mounted) return;
+    setState(() => _startupError = message);
+    Warning.show(context, message, 'Error');
+  }
+
   Future<void> _checkPing() async {
     try {
       var connectivity = await Connectivity().checkConnectivity();
@@ -361,20 +380,17 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         noInternet = true;
       }
       if (noInternet) {
-        Warning.show(
-          context,
+        _showStartupError(
           'No Internet Connection! Please check your network.',
-          'Error',
         );
         return;
       }
 
       var pingResult = await Check.pingpong();
+      if (!mounted) return;
       if (pingResult == false) {
-        Warning.show(
-          context,
+        _showStartupError(
           'ERP Site is not in working condition! Please try again later.',
-          'Error',
         );
       } else {
         final prefs = await SharedPreferences.getInstance();
@@ -382,6 +398,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         final email = prefs.getString('email') ?? "";
 
         final sessionValid = await Check.sessionActive(token, email);
+        if (!mounted) return;
 
         if (!sessionValid) {
           Warning.show(
@@ -392,6 +409,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           await LiveLocationService.stopForSignOut();
           await SessionAuthApi.clearSession();
           await prefs.clear();
+          if (!mounted) return;
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
             (route) => false,
@@ -403,6 +421,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       }
     } catch (e) {
       print('Error during ping: $e');
+      _showStartupError('Could not reach ERP. Please try again.');
     }
   }
 
@@ -2013,7 +2032,18 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     if (!_prefsInitialized) {
-      return const Scaffold(body: Center(child: AgPathLoadingIndicator()));
+      final startupError = _startupError;
+      return Scaffold(
+        body:
+            startupError == null
+                ? const Center(child: AgPathLoadingIndicator())
+                : SafeArea(
+                  child: LoadFailedView(
+                    message: startupError,
+                    onRetry: _retryStartup,
+                  ),
+                ),
+      );
     }
 
     return WillPopScope(

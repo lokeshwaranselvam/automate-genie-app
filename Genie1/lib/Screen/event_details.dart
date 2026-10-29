@@ -12,6 +12,7 @@ import 'package:homegenie/Screen/login.dart';
 
 import '../utils/api/event.dart';
 import '../utils/event_location_selection.dart';
+import '../utils/mock_location_guard.dart';
 import '../utils/api/image_upload_api.dart';
 import '../utils/api/session_auth.dart';
 import '../utils/widget/camera_service.dart';
@@ -84,6 +85,7 @@ class _EventDetailsState extends State<EventDetails> {
   bool _shouldStartNewRecordingAfterCall = false;
 
   bool _isRecording = false;
+  StreamSubscription<PhoneState>? _phoneStateSubscription;
 
   // ── Photo capture ──────────────────────────────────────────────────────────
   final List<File> _capturedPhotos = [];
@@ -194,8 +196,10 @@ class _EventDetailsState extends State<EventDetails> {
 
   void _listenToPhoneState() async {
     await Permission.phone.request();
+    if (!mounted) return;
 
-    PhoneState.stream.listen((PhoneState state) async {
+    await _phoneStateSubscription?.cancel();
+    _phoneStateSubscription = PhoneState.stream.listen((PhoneState state) async {
       final status = state.status;
       final recordingService = AudioRecordingService();
 
@@ -254,6 +258,7 @@ class _EventDetailsState extends State<EventDetails> {
 
   @override
   void dispose() {
+    _phoneStateSubscription?.cancel();
     _audioPlayer.dispose();
     GeofenceManager.instance.stopMonitoring();
     super.dispose();
@@ -1658,14 +1663,16 @@ class _EventDetailsState extends State<EventDetails> {
       if (!age.isNegative &&
           age <= const Duration(seconds: 15) &&
           cached.accuracy <= 50) {
-        return cached;
+        return requireRealPosition(cached);
       }
     }
 
-    final position = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        timeLimit: Duration(seconds: 15),
+    final position = requireRealPosition(
+      await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
+        ),
       ),
     );
     if (mounted) setState(() => _employeeMapPosition = position);

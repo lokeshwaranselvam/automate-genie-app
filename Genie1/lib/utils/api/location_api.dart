@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
@@ -23,6 +25,36 @@ class LocationSearchResult {
 
 class LocationHelper {
   static const String _googleApiKey = 'AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI';
+  static const _deviceChannel = MethodChannel(
+    'ai.automategenie.app/mobile_device',
+  );
+  static Future<Map<String, String>>? _keyRestrictionHeaders;
+
+  /// Identifies this Android app to Google so the key can be restricted to it
+  /// (Google Cloud Console: Application restrictions -> Android apps).
+  static Future<Map<String, String>> _googleHeaders([
+    Map<String, String> extra = const {},
+  ]) async {
+    final restriction =
+        await (_keyRestrictionHeaders ??= _loadKeyRestrictionHeaders());
+    return {...restriction, ...extra};
+  }
+
+  static Future<Map<String, String>> _loadKeyRestrictionHeaders() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return const {};
+    }
+    try {
+      final identity = await _deviceChannel
+          .invokeMapMethod<String, String>('signingIdentity');
+      final package = identity?['package'];
+      final sha1 = identity?['sha1'];
+      if (package == null || sha1 == null) return const {};
+      return {'X-Android-Package': package, 'X-Android-Cert': sha1};
+    } catch (_) {
+      return const {};
+    }
+  }
 
   static Future<List<LatLng>> getTwoWheelerRoute({
     required LatLng origin,
@@ -30,11 +62,11 @@ class LocationHelper {
   }) async {
     final response = await http.post(
       Uri.https('routes.googleapis.com', '/directions/v2:computeRoutes'),
-      headers: {
+      headers: await _googleHeaders({
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': _googleApiKey,
         'X-Goog-FieldMask': 'routes.polyline.encodedPolyline',
-      },
+      }),
       body: jsonEncode({
         'origin': {
           'location': {
@@ -121,7 +153,7 @@ class LocationHelper {
     );
 
     try {
-      final response = await http.get(url);
+      final response = await http.get(url, headers: await _googleHeaders());
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['status'] == 'OK' && data['results'].isNotEmpty) {
@@ -204,7 +236,10 @@ class LocationHelper {
       query['address'] = address?.trim() ?? '';
     }
     final response = await http
-        .get(Uri.https('maps.googleapis.com', '/maps/api/geocode/json', query))
+        .get(
+          Uri.https('maps.googleapis.com', '/maps/api/geocode/json', query),
+          headers: await _googleHeaders(),
+        )
         .timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
       throw StateError('Google Maps could not resolve this link.');
@@ -296,12 +331,12 @@ class LocationHelper {
     final response = await http
         .post(
           Uri.https('places.googleapis.com', '/v1/places:autocomplete'),
-          headers: {
+          headers: await _googleHeaders({
             'Content-Type': 'application/json',
             'X-Goog-Api-Key': _googleApiKey,
             'X-Goog-FieldMask':
                 'suggestions.placePrediction.placeId,suggestions.placePrediction.text.text',
-          },
+          }),
           body: jsonEncode({
             'input': query.trim(),
             'sessionToken': sessionToken,
@@ -350,10 +385,10 @@ class LocationHelper {
             pathSegments: ['v1', 'places', suggestion.placeId],
             queryParameters: {'sessionToken': sessionToken},
           ),
-          headers: {
+          headers: await _googleHeaders({
             'X-Goog-Api-Key': _googleApiKey,
             'X-Goog-FieldMask': 'location',
-          },
+          }),
         )
         .timeout(const Duration(seconds: 15));
     final data = _placeResponse(response);
@@ -386,6 +421,7 @@ class LocationHelper {
             'region': 'in',
             'key': _googleApiKey,
           }),
+          headers: await _googleHeaders(),
         )
         .timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
@@ -435,27 +471,31 @@ class LocationHelper {
   }
 
   static LatLng? _coordinatesFromMapUrl(Uri uri) {
-    final candidates = <String>[
+    final queryValues = <String>[
       uri.queryParameters['q'] ?? '',
       uri.queryParameters['query'] ?? '',
       uri.queryParameters['ll'] ?? '',
-      uri.path,
-      uri.toString(),
     ];
-    final patterns = <RegExp>[
+    final candidates = <String>[...queryValues, uri.path, uri.toString()];
+    final markedPatterns = <RegExp>[
       RegExp(r'@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)'),
       RegExp(r'!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)'),
-      RegExp(r'(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)'),
     ];
-    for (final candidate in candidates) {
-      for (final pattern in patterns) {
-        final match = pattern.firstMatch(candidate);
-        if (match == null) continue;
-        final latitude = double.tryParse(match.group(1) ?? '');
-        final longitude = double.tryParse(match.group(2) ?? '');
-        if (_validCoordinates(latitude, longitude)) {
-          return LatLng(latitude!, longitude!);
-        }
+    // A bare "lat,lng" counts only when it is the whole query value, so an
+    // address such as "Plot 12, 4th Main Road" is never read as coordinates.
+    final barePair = RegExp(r'^\s*(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\s*$');
+    final attempts = <(String, RegExp)>[
+      for (final candidate in candidates)
+        for (final pattern in markedPatterns) (candidate, pattern),
+      for (final value in queryValues) (value, barePair),
+    ];
+    for (final (candidate, pattern) in attempts) {
+      final match = pattern.firstMatch(candidate);
+      if (match == null) continue;
+      final latitude = double.tryParse(match.group(1) ?? '');
+      final longitude = double.tryParse(match.group(2) ?? '');
+      if (_validCoordinates(latitude, longitude)) {
+        return LatLng(latitude!, longitude!);
       }
     }
     return null;
@@ -489,7 +529,7 @@ class LocationHelper {
     );
 
     try {
-      final response = await http.get(url);
+      final response = await http.get(url, headers: await _googleHeaders());
       if (response.statusCode == 200) {
         return response.bodyBytes;
       }

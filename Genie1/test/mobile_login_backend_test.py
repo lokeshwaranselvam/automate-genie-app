@@ -661,6 +661,35 @@ class MobileLoginBackendTest(unittest.TestCase):
         self.assertEqual(self.created_sessions, [])
         self.assertEqual(self.bindings, {})
 
+    def bound_request(self, method, sid, authorization=None, prefix='/api/method/'):
+        self.module.frappe.AuthenticationError = PermissionError
+        self.context.request = SimpleNamespace(
+            path=prefix + method,
+            headers={'Authorization': authorization} if authorization else {})
+        self.context.user = self.user
+        self.context.sid = sid
+        self.module.validate_bound_session()
+
+    def test_standard_login_sid_cannot_reach_bound_attendance_methods(self):
+        self.login('a' * 43)
+        bound_sid = self.bindings[self.user].custom_mobile_session_id
+        for method in ('checkin', 'checkout', 'event_checkin', 'event_checkout'):
+            for prefix in ('/api/method/', '/api/v2/method/'):
+                with self.subTest(method=method, prefix=prefix):
+                    with self.assertRaises(PermissionError):
+                        self.bound_request('itgenie.api_utils.' + method, 'browser-sid', prefix=prefix)
+                    self.bound_request('itgenie.api_utils.' + method, bound_sid, prefix=prefix)
+                    self.bound_request('itgenie.api_utils.' + method, 'browser-sid',
+                                       authorization='token key:secret', prefix=prefix)
+
+    def test_bound_session_check_leaves_other_methods_and_unbound_users_alone(self):
+        self.bound_request('itgenie.api_utils.checkin', 'browser-sid')
+        self.login('a' * 43)
+        for method in ('itgenie.api_utils.event_list', 'frappe.auth.get_logged_user',
+                       'itgenie.api_utils.checkin_status'):
+            with self.subTest(method=method):
+                self.bound_request(method, 'browser-sid')
+
     def test_both_public_login_delegates_forward_android_identifier(self):
         target = ModuleType('itgenie.mobile_auth')
         calls = []

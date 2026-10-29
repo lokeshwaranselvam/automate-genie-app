@@ -327,6 +327,47 @@ def reset_device(user):
             _release(user, binding, clear_binding=True)
 
 
+# Attendance and visit writes in the public mobile module. A user with a bound
+# phone must reach these from that phone, not with a SID created through
+# Frappe's standard /api/method/login on another device or script.
+BOUND_SESSION_METHODS = frozenset(
+    "itgenie.api_utils." + name
+    for name in ("checkin", "checkout", "event_checkin", "event_checkout")
+)
+METHOD_PATH_PREFIXES = ("/api/method/", "/api/v1/method/", "/api/v2/method/")
+
+
+def validate_bound_session():
+    """auth_hooks entry; runs after Frappe has authenticated every request.
+
+    Token calls are already bound: the API secret rotates on each new phone
+    claim. SID calls must use the SID recorded by the guarded mobile login.
+    Users without a managed binding keep existing behavior.
+    """
+    request = getattr(frappe.local, "request", None)
+    path = (getattr(request, "path", None) or "").rstrip("/")
+    if not path.startswith(METHOD_PATH_PREFIXES):
+        return
+    if path.rsplit("/", 1)[-1] not in BOUND_SESSION_METHODS:
+        return
+    user = frappe.session.user
+    if not user or user == "Guest":
+        return
+    authorization = (request.headers.get("Authorization") or "").strip().lower()
+    if authorization.startswith("token "):
+        return
+    if not _setup_ready():
+        return
+    binding = _binding(user)
+    if not binding or not binding["device_hash"]:
+        return
+    sid = frappe.session.sid or ""
+    if binding["session_id"] and hmac.compare_digest(binding["session_id"], sid):
+        return
+    frappe.throw("Use the Genie app on your registered phone for this action.",
+                 frappe.AuthenticationError)
+
+
 def on_device_trash(doc, method=None):
     """FCM Device on_trash hook. Custom app Python; never a public API.
 

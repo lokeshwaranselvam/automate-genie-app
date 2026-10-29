@@ -18,6 +18,7 @@ import '../api/face_auth_api.dart';
 import '../face/face_auth_flow.dart';
 import '../face/face_performance_trace.dart';
 import '../live_tracking_access.dart';
+import '../mock_location_guard.dart';
 
 class Action_Bottom {
   static Future<bool> _handleLocationPermission(
@@ -423,10 +424,12 @@ class Action_Bottom {
                       if (!hasPermission) return;
 
                       Position position;
-                      position = await const FacePerformanceTrace().measure(
-                        'Head Office GPS before camera',
-                        () => Geolocator.getCurrentPosition(
-                          desiredAccuracy: LocationAccuracy.high,
+                      position = requireRealPosition(
+                        await const FacePerformanceTrace().measure(
+                          'Head Office GPS before camera',
+                          () => Geolocator.getCurrentPosition(
+                            desiredAccuracy: LocationAccuracy.high,
+                          ),
                         ),
                       );
                       double distance = Geolocator.distanceBetween(

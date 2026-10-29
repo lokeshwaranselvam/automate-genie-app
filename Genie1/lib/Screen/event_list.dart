@@ -14,6 +14,7 @@ import 'package:month_picker_dialog/month_picker_dialog.dart';
 import '../utils/api/event.dart';
 import '../utils/widget/event_list.dart';
 import '../utils/widget/home_back_button.dart';
+import '../utils/widget/load_failed_view.dart';
 
 class EventsPage extends StatefulWidget {
   const EventsPage({super.key});
@@ -35,10 +36,29 @@ class _EventsPageState extends State<EventsPage> {
   List<String> days = [];
   List<String> weekDays = [];
   bool isLoading = true;
+  String? _loadError;
 
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(_onSearchChanged);
+    _checkPing();
+  }
+
+  void _showLoadError(String message) {
+    if (!mounted) return;
+    setState(() {
+      isLoading = false;
+      _loadError = message;
+    });
+    Warning.show(context, message, 'Error');
+  }
+
+  void _retryLoad() {
+    setState(() {
+      isLoading = true;
+      _loadError = null;
+    });
     _checkPing();
   }
 
@@ -57,19 +77,14 @@ class _EventsPageState extends State<EventsPage> {
       }
 
       if (noInternet) {
-        Warning.show(
-          context,
-          'No Internet Connection! Please check your network.',
-          'Error',
-        );
+        _showLoadError('No Internet Connection! Please check your network.');
         return;
       }
       var pingResult = await Check.pingpong();
+      if (!mounted) return;
       if (pingResult == false) {
-        Warning.show(
-          context,
+        _showLoadError(
           'ERP Site is not in working condition! Please try again later.',
-          'Error',
         );
       } else {
         final prefs = await SharedPreferences.getInstance();
@@ -77,6 +92,7 @@ class _EventsPageState extends State<EventsPage> {
         final email = prefs.getString('email') ?? "";
 
         final sessionValid = await Check.sessionActive(token, email);
+        if (!mounted) return;
 
         if (!sessionValid) {
           Warning.show(
@@ -86,13 +102,13 @@ class _EventsPageState extends State<EventsPage> {
           );
           await LiveLocationService.stopForSignOut();
           await prefs.clear();
+          if (!mounted) return;
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
             (route) => false,
           );
           return;
         }
-        _searchController.addListener(_onSearchChanged);
 
         DateTime now = DateTime.now();
         selectedMonth = DateTime(now.year, now.month, 1);
@@ -113,6 +129,7 @@ class _EventsPageState extends State<EventsPage> {
       }
     } catch (e) {
       print('Error during ping: $e');
+      _showLoadError('Could not reach ERP. Please try again.');
     }
   }
 
@@ -179,9 +196,11 @@ class _EventsPageState extends State<EventsPage> {
     } catch (e) {
       print("❌ Error: $e");
     } finally {
-      setState(() {
-        isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
     }
   }
 
@@ -243,6 +262,8 @@ class _EventsPageState extends State<EventsPage> {
       body:
           isLoading
               ? Center(child: AgPathLoadingIndicator())
+              : _loadError != null
+              ? LoadFailedView(message: _loadError!, onRetry: _retryLoad)
               : PullToRefresh(
                 onRefresh: () async {
                   await _checkPing();

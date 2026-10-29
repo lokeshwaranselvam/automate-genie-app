@@ -259,6 +259,18 @@ elif action == "save":
 
     if task_id:
         task = frappe.get_doc("Task", task_id)
+        current_user = frappe.session.user
+        is_task_member = task.owner == current_user or frappe.db.exists(
+            "ToDo",
+            {
+                "reference_type": "Task",
+                "reference_name": task.name,
+                "allocated_to": current_user,
+                "status": ["!=", "Cancelled"],
+            },
+        )
+        if not is_task_member and not frappe.has_permission("Task", "write", task.name):
+            frappe.throw("You can edit only tasks you created or are assigned to.")
     else:
         task = frappe.new_doc("Task")
 

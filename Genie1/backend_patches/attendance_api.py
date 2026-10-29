@@ -9,6 +9,8 @@ from frappe.utils import getdate, nowdate, now_datetime
 
 @frappe.whitelist(allow_guest = False)
 def checkin(user, lat, lng, address=None, office_type=None, photo_url=None, face_verification=None, include_timings=None):
+    if user != frappe.session.user:
+        frappe.throw("You can only check in or out for yourself.", frappe.PermissionError)
     # Genie checkin timings v1
     from time import perf_counter
 
@@ -82,6 +84,8 @@ def checkin(user, lat, lng, address=None, office_type=None, photo_url=None, face
 
 @frappe.whitelist(allow_guest = False)
 def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,distance=None, office_type=None,location_logs=None,with_event=None,last_lat_lng=None, photo_url=None, face_verification=None, include_timings=None):
+    if user != frappe.session.user:
+        frappe.throw("You can only check in or out for yourself.", frappe.PermissionError)
     # Genie checkout performance v1
     from time import perf_counter
 
@@ -224,7 +228,7 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
             origin = f"{lat_str},{lng_str}"
             destination = f"{lat},{lng}"
             
-            api_key = "AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI"
+            api_key = frappe.conf.get("google_maps_api_key") or frappe.throw("Google Maps is not configured on the server. Contact your administrator.")
             visit.custom_from_google_api = 1
             url = (
                     f"https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -290,7 +294,7 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
             origin = f"{visit.latitude},{visit.longitude}"
             destination = f"{lat},{lng}"
             
-            api_key = "AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI"
+            api_key = frappe.conf.get("google_maps_api_key") or frappe.throw("Google Maps is not configured on the server. Contact your administrator.")
             visit.custom_from_google_api = 1
             url = (
                     f"https://maps.googleapis.com/maps/api/distancematrix/json"

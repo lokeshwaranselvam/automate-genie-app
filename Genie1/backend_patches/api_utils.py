@@ -21,8 +21,36 @@ def mobile_logout(user, device_key):
     return release_mobile_login(user, device_key)
 
 
+# Roles that may read another employee's mobile data (for example HR reviewing attendance).
+OTHER_USER_READ_ROLES = ("System Manager", "HR Manager")
+
+
+def _ensure_own_user(user, allow_managers=False):
+    session_user = frappe.session.user
+    if user and user == session_user:
+        return
+    if allow_managers and set(OTHER_USER_READ_ROLES) & set(frappe.get_roles(session_user)):
+        return
+    frappe.throw("You can only access your own records.", frappe.PermissionError)
+
+
+def _ensure_event_access(event):
+    session_user = frappe.session.user
+    if event.get("owner") == session_user:
+        return
+    if set(OTHER_USER_READ_ROLES) & set(frappe.get_roles(session_user)):
+        return
+    if frappe.db.exists("ToDo", {
+        "reference_type": "Event", "reference_name": event.get("name"),
+        "allocated_to": session_user, "status": ["!=", "Cancelled"],
+    }):
+        return
+    frappe.throw("You are not assigned to this visit.", frappe.PermissionError)
+
+
 @frappe.whitelist(allow_guest = False)
 def event_list(user):
+    _ensure_own_user(user, allow_managers=True)
     assigned_todos = frappe.get_all("ToDo",
         filters={"status":"Open","reference_type": "Event", "allocated_to": user},
         fields=["reference_name"]
@@ -43,6 +71,7 @@ def event_list(user):
 def history_list(user, from_date=None, to_date=None):
     if not user:
         frappe.throw("User is required.")
+    _ensure_own_user(user, allow_managers=True)
 
     filters = {
         "status": "Open",
@@ -73,6 +102,7 @@ def history_list(user, from_date=None, to_date=None):
 @frappe.whitelist(allow_guest = False)
 def event_details(id):
     doc = frappe.get_doc("Event",id)
+    _ensure_event_access(doc)
     response = {
     "event": doc.as_dict(),
     "requires_geofence": (doc.get("event_category") or "").strip().lower() not in (
@@ -122,6 +152,7 @@ def send_notification():
 
 @frappe.whitelist(allow_guest = False)
 def officetype(user):
+    _ensure_own_user(user, allow_managers=True)
     employee = frappe.get_doc("Employee",{"user_id":user,"status":"Active"})
     if employee:
         office_type_list = []
@@ -145,6 +176,7 @@ def head_office_details(head_office):
 
 @frappe.whitelist(allow_guest = False)
 def checkin(user, lat, lng, address=None, office_type=None, photo_url=None, face_verification=None, include_timings=None):
+    _ensure_own_user(user)
     # Genie checkin timings v1
     from time import perf_counter
 
@@ -218,6 +250,7 @@ def checkin(user, lat, lng, address=None, office_type=None, photo_url=None, face
 
 @frappe.whitelist(allow_guest = False)
 def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,distance=None, office_type=None,location_logs=None,with_event=None,last_lat_lng=None, photo_url=None, face_verification=None, include_timings=None):
+    _ensure_own_user(user)
     # Genie checkout performance v1
     from time import perf_counter
 
@@ -360,7 +393,7 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
             origin = f"{lat_str},{lng_str}"
             destination = f"{lat},{lng}"
             
-            api_key = "AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI"
+            api_key = frappe.conf.get("google_maps_api_key") or frappe.throw("Google Maps is not configured on the server. Contact your administrator.")
             visit.custom_from_google_api = 1
             url = (
                     f"https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -426,7 +459,7 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
             origin = f"{visit.latitude},{visit.longitude}"
             destination = f"{lat},{lng}"
             
-            api_key = "AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI"
+            api_key = frappe.conf.get("google_maps_api_key") or frappe.throw("Google Maps is not configured on the server. Contact your administrator.")
             visit.custom_from_google_api = 1
             url = (
                     f"https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -469,6 +502,7 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
 
 @frappe.whitelist(allow_guest = False)
 def checkin_status(user):
+    _ensure_own_user(user, allow_managers=True)
     employeeid = frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, "name")
     if not employeeid:
         return False
@@ -484,6 +518,7 @@ def checkin_status(user):
 
 @frappe.whitelist(allow_guest = False)
 def checkout_status(user):
+    _ensure_own_user(user, allow_managers=True)
     employeeid = frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, "name")
     if not employeeid:
         return False
@@ -514,6 +549,7 @@ def checkout_status(user):
 
 @frappe.whitelist(allow_guest = False)
 def event_list_date(user,date):
+    _ensure_own_user(user, allow_managers=True)
     event_list = []
     doc_list = frappe.db.get_all("ToDo",filters={'allocated_to':user,"reference_type":"Event"},pluck="reference_name")
     for doc in doc_list:
@@ -640,10 +676,10 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
                 origin = f"{lat_str},{lng_str}"
                 destination = f"{lat},{lng}"
                 
-                api_key = "AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI"
+                api_key = frappe.conf.get("google_maps_api_key") or frappe.throw("Google Maps is not configured on the server. Contact your administrator.")
                 visit.custom_from_google_api = 1
 
-                # url = f"https://maps.googleapis.com/maps/api/distancematrix/json?origins={origin}&destinations={destination}&key=AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI&mode=driving"
+                # url = f"https://maps.googleapis.com/maps/api/distancematrix/json?origins={origin}&destinations={destination}&key={api_key}&mode=driving"
 
                 url = (
                     f"https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -697,6 +733,7 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
 
 @frappe.whitelist(methods=["POST"])
 def generate_keys(user: str):
+        frappe.only_for("System Manager")
         user_details: User = frappe.get_doc("User", user)
         api_secret = frappe.generate_hash(length=15)
         # if api key is not set generate api key
@@ -711,7 +748,7 @@ def generate_keys(user: str):
 
 # @frappe.whitelist()
 # def test():
-#     url = "https://maps.googleapis.com/maps/api/distancematrix/json?origins=11.0226671,76.9986953&destinations=11.0226688,76.9986842&key=AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI&mode=driving"
+#     url = "https://maps.googleapis.com/maps/api/distancematrix/json?origins=11.0226671,76.9986953&destinations=11.0226688,76.9986842&key={api_key}&mode=driving"
 
 #     payload = {}
 #     headers = {}
@@ -768,6 +805,7 @@ def verify_otp(otp,event_id):
 
 @frappe.whitelist()
 def get_checkin_checkout_status(user):
+    _ensure_own_user(user, allow_managers=True)
     from frappe.utils import getdate, nowdate
 
     employeeid = frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, "name")

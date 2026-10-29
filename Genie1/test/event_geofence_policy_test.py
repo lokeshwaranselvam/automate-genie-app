@@ -14,6 +14,9 @@ class EventGeofencePolicyTest(unittest.TestCase):
             function = next(node for node in tree.body
                             if isinstance(node, ast.FunctionDef) and node.name == "event_details")
             function.decorator_list = []
+            access_nodes = [node for node in tree.body if (
+                isinstance(node, ast.FunctionDef) and node.name == "_ensure_event_access") or (
+                isinstance(node, ast.Assign) and node.targets[0].id == "OTHER_USER_READ_ROLES")]
             for category in ("Installation", " installation ", "INSTALLATION",
                              "Measurement", " measurement ", "MEASUREMENT",
                              "Other", "Others", " Bank ", "Head Office CH",
@@ -32,9 +35,13 @@ class EventGeofencePolicyTest(unittest.TestCase):
                         opportunity_from="Customer", party_name="CUSTOMER-1",
                         custom_product_enquired="Doors", contact_mobile="1234567890")
                     frappe = Mock()
+                    frappe.session.user = "sales@example.test"
+                    frappe.get_roles.return_value = ["Employee"]
+                    frappe.db.exists.return_value = "TODO-1"
                     frappe.get_doc.side_effect = [event, opportunity]
                     namespace = {"frappe": frappe}
-                    exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), namespace)
+                    exec(compile(ast.Module(body=access_nodes + [function], type_ignores=[]),
+                                 str(path), "exec"), namespace)
                     result = namespace["event_details"]("EVENT-1")
                     self.assertEqual(result, {
                         "event": event_data,

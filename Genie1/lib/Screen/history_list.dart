@@ -12,6 +12,7 @@ import 'package:homegenie/utils/api/check_in_out.dart';
 import 'package:homegenie/Screen/history_overview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/widget/home_back_button.dart';
+import '../utils/widget/load_failed_view.dart';
 
 class HistoryList extends StatefulWidget {
   const HistoryList({super.key});
@@ -38,6 +39,23 @@ class _HistoryListState extends State<HistoryList> {
     _checkPing();
   }
 
+  void _showLoadError(String message) {
+    if (!mounted) return;
+    setState(() {
+      isLoading = false;
+      errorMessage = message;
+    });
+    Warning.show(context, message, 'Error');
+  }
+
+  void _retryLoad() {
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
+    _checkPing();
+  }
+
   Future<void> _checkPing() async {
     try {
       var connectivity = await Connectivity().checkConnectivity();
@@ -53,19 +71,14 @@ class _HistoryListState extends State<HistoryList> {
       }
 
       if (noInternet) {
-        Warning.show(
-          context,
-          'No Internet Connection! Please check your network.',
-          'Error',
-        );
+        _showLoadError('No Internet Connection! Please check your network.');
         return;
       }
       var pingResult = await Check.pingpong();
+      if (!mounted) return;
       if (pingResult == false) {
-        Warning.show(
-          context,
+        _showLoadError(
           'ERP Site is not in working condition! Please try again later.',
-          'Error',
         );
       } else {
         final prefs = await SharedPreferences.getInstance();
@@ -73,6 +86,7 @@ class _HistoryListState extends State<HistoryList> {
         final email = prefs.getString('email') ?? "";
 
         final sessionValid = await Check.sessionActive(token, email);
+        if (!mounted) return;
 
         if (!sessionValid) {
           Warning.show(
@@ -82,6 +96,7 @@ class _HistoryListState extends State<HistoryList> {
           );
           await LiveLocationService.stopForSignOut();
           await prefs.clear();
+          if (!mounted) return;
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
             (route) => false,
@@ -96,6 +111,7 @@ class _HistoryListState extends State<HistoryList> {
       }
     } catch (e) {
       print('Error during ping: $e');
+      _showLoadError('Could not reach ERP. Please try again.');
     }
   }
 
@@ -220,7 +236,10 @@ class _HistoryListState extends State<HistoryList> {
           leading: const HomeBackButton(),
           title: const Text("History"),
         ),
-        body: Center(child: Text("Error: $errorMessage")),
+        body: LoadFailedView(
+          message: errorMessage!,
+          onRetry: _retryLoad,
+        ),
       );
     }
 

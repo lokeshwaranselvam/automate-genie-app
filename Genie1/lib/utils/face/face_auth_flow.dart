@@ -9,6 +9,7 @@ import 'package:image/image.dart' as img;
 import '../../Screen/face_capture_page.dart';
 import '../api/face_auth_api.dart';
 import '../api/location_api.dart';
+import '../mock_location_guard.dart';
 import 'face_embedding_service.dart';
 import 'face_template_cache.dart';
 import 'face_performance_trace.dart';
@@ -307,12 +308,14 @@ class FaceAuthFlow {
     bool Function(Position)? isAllowed,
     String restrictionMessage = 'You are outside the allowed location.',
   }) async {
-    final position = await _timing.measure(
-      'fresh GPS fix',
-      () => Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 15),
+    final position = requireRealPosition(
+      await _timing.measure(
+        'fresh GPS fix',
+        () => Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 15),
+          ),
         ),
       ),
     );

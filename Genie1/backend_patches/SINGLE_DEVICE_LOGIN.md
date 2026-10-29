@@ -96,6 +96,20 @@ deletion transaction callbacks require Frappe v15+. Nothing here deploys itself.
    deletion transaction, without calling committing `delete_session()`. Session
    cache invalidation occurs after commit; advisory locks release on commit or
    rollback. A failed deletion does not intentionally commit partial cleanup.
+
+   **Required for the phone binding to cover attendance:** add the session
+   check to `auth_hooks` in the same `hooks.py` (append if the list exists):
+
+   ```python
+   auth_hooks = ["itgenie.mobile_auth.validate_bound_session"]
+   ```
+
+   For a user with a bound phone, `checkin`, `checkout`, `event_checkin` and
+   `event_checkout` in `itgenie.api_utils` then accept only the phone's API
+   token or the SID recorded by the guarded mobile login. A SID from the
+   standard `/api/method/login` (another phone, a script, a browser) is
+   rejected with 401. Other methods and unbound users are unchanged. If the
+   public module is not `itgenie.api_utils`, update `BOUND_SESSION_METHODS`.
 5. Keep the existing restricted FCM Device **Before Save** guard enabled with
    `frappe_server_scripts/fcm_device_validation.py`. No loosening is needed:
    verified login clears the old notification ID before fresh registration.

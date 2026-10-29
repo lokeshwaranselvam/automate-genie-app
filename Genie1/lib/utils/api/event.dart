@@ -62,7 +62,8 @@ class Event {
   static Future<List<dynamic>> eventList(String usr) async {
     final pingResult = await Check.pingpong();
 
-    if (pingResult == null || pingResult['message'] != 'pong') {
+    // pingpong() returns false (not a Map) when ERP is unreachable.
+    if (pingResult is! Map || pingResult['message'] != 'pong') {
       return [
         {
           "message":

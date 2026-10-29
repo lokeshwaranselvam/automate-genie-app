@@ -1,24 +1,48 @@
 package ai.automategenie.app
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.security.MessageDigest
 
 class MainActivity : FlutterActivity() {
     private val RECORDING_CHANNEL = "com.example.audioapp/record"
     private val TRACKING_CHANNEL = "com.example.homegenieapp/tracking"
     private val TAG = "MainActivity"
 
+    private fun signingCertSha1(): String? = try {
+        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+                .signingInfo?.apkContentsSigners
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES).signatures
+        }
+        signatures?.firstOrNull()?.let { signature ->
+            MessageDigest.getInstance("SHA-1").digest(signature.toByteArray())
+                .joinToString("") { "%02X".format(it) }
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "Signing certificate unavailable", e)
+        null
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "ai.automategenie.app/mobile_device")
             .setMethodCallHandler { call, result ->
-                if (call.method != "androidId") {
+                if (call.method == "signingIdentity") {
+                    // Sent as X-Android-Package / X-Android-Cert so the Google
+                    // key can be restricted to this app in Cloud Console.
+                    val sha1 = signingCertSha1()
+                    result.success(if (sha1 == null) null else mapOf("package" to packageName, "sha1" to sha1))
+                } else if (call.method != "androidId") {
                     result.notImplemented()
                 } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
                     // Older Android keeps the existing installation-only binding.

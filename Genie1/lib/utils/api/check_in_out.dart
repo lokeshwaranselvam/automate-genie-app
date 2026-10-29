@@ -37,6 +37,11 @@ class AttendanceAuthenticationException implements Exception {
 }
 
 class Check {
+  /// Upper bound for one attendance request. On timeout the client is closed,
+  /// the spinner clears and the user can retry; checkout retries reconcile
+  /// through the server's "already checked out" reply.
+  static const attendanceRequestTimeout = Duration(seconds: 45);
+
   static Future<http.Response> _sendAttendance(
     Uri uri,
     Map<String, String> headers,
@@ -48,7 +53,7 @@ class Check {
         client,
         http.Request('GET', uri)..headers.addAll(headers),
         stage,
-      );
+      ).timeout(attendanceRequestTimeout);
     } finally {
       client.close();
     }
@@ -58,10 +63,9 @@ class Check {
     try {
       final baseUrl = dotenv.env['SITE_URL'];
       final uri = Uri.parse('$baseUrl/api/method/ping');
-      final response = await http.post(
-        uri,
-        headers: {'Accept': 'application/json'},
-      );
+      final response = await http
+          .post(uri, headers: {'Accept': 'application/json'})
+          .timeout(const Duration(seconds: 10));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
 
@@ -111,13 +115,21 @@ class Check {
       FacePerformanceTrace.logServerTimings(data);
 
       if (response.statusCode == 200) {
-        return {
-          "message": data['message'] ?? "No message",
-          "status":
-              data['message'] == "Check-In Created Successfully"
-                  ? "Success"
-                  : "Error",
-        };
+        final message = data['message'] ?? "No message";
+        if (message == "Check-In Created Successfully") {
+          return {"message": message, "status": "Success"};
+        }
+        // A retry after a lost response finds the IN already saved. Treat it
+        // as success only when today's records really show an open check-in,
+        // not when the employee has already checked out for the day.
+        if (RegExp(
+              r'already\s+checked\s*in',
+              caseSensitive: false,
+            ).hasMatch('$message') &&
+            await _hasOpenCheckInToday('$id')) {
+          return {"message": "You are already checked in.", "status": "Success"};
+        }
+        return {"message": message, "status": "Error"};
       } else {
         return {
           "message": "Server error: ${response.statusCode}",
@@ -130,6 +142,19 @@ class Check {
         "message": "An error occurred while checking in.",
         "status": "Error",
       };
+    }
+  }
+
+  static Future<bool> _hasOpenCheckInToday(String email) async {
+    try {
+      final status = await getStatus(
+        email,
+        recordsFirst: true,
+      ).timeout(const Duration(seconds: 15));
+      return status['attendance_records_verified'] == true &&
+          status['checked_in'] == true;
+    } catch (_) {
+      return false;
     }
   }
 
