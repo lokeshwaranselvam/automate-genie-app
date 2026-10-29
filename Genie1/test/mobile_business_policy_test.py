@@ -122,8 +122,8 @@ class MobileBusinessPolicyTest(unittest.TestCase):
         self.event.custom_check_in = '2026-10-26 10:00:00'
         exempt = ['Other', 'Others', 'Bank', 'Head Office', 'Head Office CH',
                   'Timbe Office', 'Timbe / Bioman Office CH', 'Measurement',
-                  'Installation', '  MEASUREMENT  ']
-        for category in exempt + ['Site Visit', 'Collection', 'Complaint Visit', 'Maintenance']:
+                  'Installation', 'Collection', 'Maintenance', '  MEASUREMENT  ']
+        for category in exempt + ['Site Visit', 'Complaint Visit']:
             with self.subTest(category=category):
                 self.event.event_category = category
                 self.roles = []

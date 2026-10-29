@@ -186,7 +186,7 @@ if feature == "visit" and frappe.form_dict.get("event_id"):
     category = (event.get("event_category") or "").strip().lower()
     optional_attachment_categories = [
         "other", "others", "bank", "head office", "head office ch",
-        "timbe office", "timbe / bioman office ch", "measurement", "installation", "collection",
+        "timbe office", "timbe / bioman office ch", "measurement", "installation", "collection", "maintenance",
     ]
     if category in optional_attachment_categories:
         policy["uploads"]["min_count"] = 0

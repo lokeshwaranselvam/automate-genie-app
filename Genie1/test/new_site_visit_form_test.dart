@@ -310,6 +310,36 @@ void main() {
     );
   });
 
+  testWidgets('Maintenance API rule opens Event Details without Opportunity', (
+    tester,
+  ) async {
+    await withForm(
+      tester,
+      [],
+      () async {
+        await tester.tap(find.widgetWithText(ListTile, 'Maintenance'));
+        await tester.pumpAndSettle();
+        expect(find.text('Event Details'), findsOneWidget);
+        expect(field('Opportunity *'), findsNothing);
+        expect(field('Customer map link *'), findsNothing);
+      },
+      selectInitialCategory: false,
+      categoryRules: {
+        'Maintenance': {
+          'reference_mode': 'none',
+          'reference_doctype': '',
+          'required_fields': [
+            'category',
+            'summary',
+            'starts_on',
+            'ends_on',
+            'assigned_to',
+          ],
+        },
+      },
+    );
+  });
+
   testWidgets('API can route Other to a Measurement document selector', (
     tester,
   ) async {

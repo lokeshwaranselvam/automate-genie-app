@@ -1,4 +1,6 @@
 import 'notification_inbox.dart';
+import 'document_notification.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'lead_call_notification.dart';
 import 'event_assignment_notification.dart';
 import 'package:event_assignment_alarm/event_assignment_alarm.dart';
@@ -23,6 +25,8 @@ const String _pendingWorkChannelMigrationKey =
     'pending_work_alarm_channel_refreshed_v1';
 const String _eventAssignmentVisualChannelId = 'event_assignment_visual_v1';
 const String _eventAssignmentAlarmChannelId = 'event_assignment_alarm_v1';
+const String _documentVisualChannelId = 'document_notification_visual_v1';
+const String _documentAlarmChannelId = 'document_notification_alarm_v1';
 
 const AndroidNotificationChannel _pendingWorkChannel =
     AndroidNotificationChannel(
@@ -92,6 +96,10 @@ bool _isPendingWork(RemoteMessage message) {
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
+  if (message.data['type'] == 'DOCUMENT_NOTIFICATION') {
+    await showDocumentNotification(message);
+    return;
+  }
   if (EventAssignmentNotification.fromData(message.data) != null) {
     await showEventAssignmentNotification(message);
     return;
@@ -118,7 +126,7 @@ Future<void> _initializeLocalNotifications() async {
     onDidReceiveNotificationResponse: (response) {
       final payload = response.payload;
       if (payload == null) return;
-      unawaited(_openLeadCallPayload(payload));
+      unawaited(_openNotificationPayload(payload));
     },
   );
 
@@ -139,6 +147,22 @@ Future<void> _initializeLocalNotifications() async {
   }
   await android?.createNotificationChannel(_pendingWorkChannel);
   await android?.createNotificationChannel(_pendingWorkSilentChannel);
+  for (final sound in [false, true]) {
+    await android?.createNotificationChannel(
+      AndroidNotificationChannel(
+        sound ? _documentAlarmChannelId : _documentVisualChannelId,
+        sound ? 'Document Notification Alarm' : 'Document Notifications',
+        importance: Importance.high,
+        playSound: sound,
+        sound:
+            sound
+                ? const RawResourceAndroidNotificationSound('work_assigned')
+                : null,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
+        enableVibration: true,
+      ),
+    );
+  }
   await android?.createNotificationChannel(
     const AndroidNotificationChannel(
       _eventAssignmentVisualChannelId,
@@ -182,6 +206,10 @@ class FcmNotificationService {
     await _initializeLocalNotifications();
 
     FirebaseMessaging.onMessage.listen((message) async {
+      if (message.data['type'] == 'DOCUMENT_NOTIFICATION') {
+        await showDocumentNotification(message, playAlarm: true);
+        return;
+      }
       if (EventAssignmentNotification.fromData(message.data) != null) {
         await showEventAssignmentNotification(message, playAlarm: true);
         return;
@@ -197,6 +225,10 @@ class FcmNotificationService {
     });
 
     FirebaseMessaging.onMessageOpenedApp.listen((message) async {
+      if (message.data['type'] == 'DOCUMENT_NOTIFICATION') {
+        await DocumentNotificationTaps.open(message.data);
+        return;
+      }
       await NotificationInbox.capture(message);
       await _openRemoteLeadCall(message);
     });
@@ -207,14 +239,18 @@ class FcmNotificationService {
             .getInitialMessage()
             .timeout(const Duration(seconds: 5));
         if (initial != null) {
-          await NotificationInbox.capture(initial);
-          await _openRemoteLeadCall(initial);
+          if (initial.data['type'] == 'DOCUMENT_NOTIFICATION') {
+            await DocumentNotificationTaps.open(initial.data);
+          } else {
+            await NotificationInbox.capture(initial);
+            await _openRemoteLeadCall(initial);
+          }
         }
         final launch =
             await _localNotifications.getNotificationAppLaunchDetails();
         final payload = launch?.notificationResponse?.payload;
         if (launch?.didNotificationLaunchApp == true && payload != null) {
-          await _openLeadCallPayload(payload);
+          await _openNotificationPayload(payload);
         }
       } catch (error) {
         debugPrint('Could not read initial notification: ${error.runtimeType}');
@@ -222,6 +258,86 @@ class FcmNotificationService {
     }());
     _initialized = true;
     debugPrint('FCM pending-work notification listener initialized.');
+  }
+}
+
+String _documentReceipt(RemoteMessage message) {
+  if (message.messageId?.isNotEmpty == true) return message.messageId!;
+  final keys = message.data.keys.toList()..sort();
+  return jsonEncode([
+    message.sentTime?.millisecondsSinceEpoch,
+    {for (final key in keys) key: message.data[key]},
+  ]);
+}
+
+/// A new generic path; legacy Event/call/work handlers retain their contracts.
+Future<bool> showDocumentNotification(
+  RemoteMessage message, {
+  bool playAlarm = false,
+}) async {
+  final notification = DocumentNotification.fromData(message.data);
+  if (notification == null) return false;
+  final nativeAlarm =
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  Future<void> show({required bool sound}) async {
+    await _localNotifications.show(
+      _documentReceipt(message).hashCode & 0x7fffffff,
+      notification.title,
+      notification.body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          sound ? _documentAlarmChannelId : _documentVisualChannelId,
+          sound ? 'Document Notification Alarm' : 'Document Notifications',
+          importance: Importance.high,
+          priority: Priority.high,
+          visibility: NotificationVisibility.private,
+          playSound: sound,
+          sound:
+              sound
+                  ? const RawResourceAndroidNotificationSound('work_assigned')
+                  : null,
+          audioAttributesUsage: AudioAttributesUsage.alarm,
+          onlyAlertOnce: false,
+          icon: 'ic_notification',
+        ),
+      ),
+      payload: jsonEncode({
+        ...message.data,
+        '_genie_site': dotenv.env['SITE_URL'],
+      }),
+    );
+  }
+
+  return DocumentNotificationAlerts.deliver(
+    data: message.data,
+    receipt: _documentReceipt(message),
+    notify: () async {
+      await _initializeLocalNotifications();
+      await show(
+        sound: !nativeAlarm && notification.alarmEnabled && !playAlarm,
+      );
+      await NotificationInbox.capture(message);
+    },
+    playSound: () async {
+      if (nativeAlarm) {
+        if (!await EventAssignmentAlarm.play()) await show(sound: true);
+      } else if (playAlarm) {
+        await PendingWorkAlarmPlayer.play();
+      }
+    },
+  );
+}
+
+Future<void> _openNotificationPayload(String payload) async {
+  try {
+    final decoded = jsonDecode(payload);
+    if (decoded is Map && decoded['type'] == 'DOCUMENT_NOTIFICATION') {
+      await DocumentNotificationTaps.open(Map<String, dynamic>.from(decoded));
+      return;
+    }
+    await _openLeadCallPayload(payload);
+  } catch (error) {
+    debugPrint('Could not open notification: ${error.runtimeType}');
   }
 }
 

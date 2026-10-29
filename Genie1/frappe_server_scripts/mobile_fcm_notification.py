@@ -1,14 +1,10 @@
 # Restricted Server Script. Script Type: API. API Method: mobile_fcm_notification.
 # Allow Guest: disabled. No imports or custom functions.
 # This is a bridge-invoked script, NOT a public send-message endpoint.
-# Required custom-app integration (not implemented by this file): after Frappe
-# evaluates the Notification trigger/condition, queue once after commit and use
-# safe_exec(script.script, _locals={"fcm_trigger": {
-#     "notification_name": rule.name, "doctype": doc.doctype,
-#     "docname": doc.name, "context": get_context(doc),
-# }}, script_filename=script.name).
-# fcm_trigger must originate inside trusted app code, never HTTP form parameters.
-# The generic, background-safe send_fcm_to_user implementation is also required.
+# FCMNotificationMixin receives matching FCM notifications through the app hook.
+# It queues dispatch_document_notification, which supplies fcm_trigger through
+# safe_exec after commit. Send Alert On = Custom/manual broadcasts are excluded.
+# No HTTP form parameter can create this trusted local variable.
 
 try:
     trigger = fcm_trigger
@@ -27,10 +23,16 @@ notification = frappe.get_doc("Notification", trigger["notification_name"].strip
 result = {"status": "skipped", "sent": 0, "failed": 0, "skipped": 0}
 
 # Other Notification channels never call the FCM sender.
-if notification.get("enabled") and notification.get("channel") == "FCM":
+if notification.get("enabled") and notification.get("channel") == "FCM" and notification.get("event") != "Custom":
     if notification.get("document_type") != trigger["doctype"].strip():
         frappe.throw("The Notification rule does not match the triggering DocType.")
 
+    sender = trigger.get("send_fcm_to_user")
+    if not callable(sender):
+        frappe.throw("The trusted Notification bridge must provide its internal FCM sender.")
+    renderer = trigger.get("render_template")
+    if not callable(renderer):
+        frappe.throw("The trusted Notification bridge must provide its template renderer.")
     doc = frappe.get_doc(trigger["doctype"].strip(), trigger["docname"].strip())
     context = trigger.get("context")
     if not isinstance(context, dict):
@@ -40,8 +42,8 @@ if notification.get("enabled") and notification.get("channel") == "FCM":
 
     title_template = notification.get("subject") or ""
     body_template = notification.get("message") or ""
-    title = frappe.utils.strip_html_tags(frappe.render_template(title_template, context)).strip()
-    body = frappe.utils.strip_html_tags(frappe.render_template(body_template, context)).strip()
+    title = frappe.utils.strip_html_tags(renderer(title_template, context)).strip()
+    body = frappe.utils.strip_html_tags(renderer(body_template, context)).strip()
     if not title:
         frappe.throw("Configure a Subject for this FCM rule.")
     if not body:
@@ -81,10 +83,11 @@ if notification.get("enabled") and notification.get("channel") == "FCM":
         # The generic sender must validate this dispatch and calculate
         # alarm_enabled from this recipient's Sales User/Designer roles itself.
         try:
-            delivery = frappe.call("itgenie.fcm.fcm_utils.send_fcm_to_user",
-                user=user, payload=payload)
+            delivery = sender(user=user, payload=payload)
             if isinstance(delivery, dict) and delivery.get("status") == "sent":
                 result["sent"] = result["sent"] + 1
+            elif isinstance(delivery, dict) and delivery.get("status") == "skipped":
+                result["skipped"] = result["skipped"] + 1
             else:
                 result["failed"] = result["failed"] + 1
         except Exception:

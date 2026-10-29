@@ -1,5 +1,7 @@
-"""Local mocks only: python -m unittest discover -s test -p automategenie_fcm_sender_test.py"""
+"""Generic sender transport mocks; no live Frappe/Firebase operations."""
 import importlib.util
+import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -14,18 +16,18 @@ class AutomateGenieFcmSenderTest(unittest.TestCase):
     def setUp(self):
         self.user = "creator@example.test"
         self.recipient = "assignee@example.test"
-        self.event = Row(name="EV-1", owner=self.user, subject="Actual event", docstatus=0, status="Open")
-        self.event.check_permission = Mock()
-        self.assignment = SimpleNamespace(reference_type="Event", reference_name="EV-1",
-                                          allocated_to=self.recipient, status="Open")
+        self.document = Row(doctype="Lead", name="LEAD-1", owner=self.user)
+        self.document.has_permission = Mock(return_value=True)
+        self.rule = Row(name="New Lead", document_type="Lead", channel="FCM", enabled=1, event="New")
         self.frappe = SimpleNamespace(
-            whitelist=lambda **kwargs: lambda method: method,
             session=SimpleNamespace(user=self.user), local=SimpleNamespace(site="live-site"),
             PermissionError=PermissionError,
             throw=Mock(side_effect=lambda message, error=ValueError: (_ for _ in ()).throw(error(message))),
-            get_doc=Mock(return_value=self.event),
+            get_doc=Mock(return_value=self.document),
             db=SimpleNamespace(get_value=Mock(side_effect=self.get_value), exists=Mock(return_value=False)),
             get_all=Mock(return_value=[{"fcm_token": "fake-local-token"}]), log_error=Mock(),
+            cache=Mock(return_value=SimpleNamespace(lock=lambda *a, **k: nullcontext(),
+                get_value=lambda key: None, set_value=Mock())),
         )
         self.app = SimpleNamespace(project_id="automategenie-mobile")
         self.credentials = SimpleNamespace(Certificate=Mock(return_value=SimpleNamespace(project_id="automategenie-mobile")))
@@ -37,88 +39,39 @@ class AutomateGenieFcmSenderTest(unittest.TestCase):
         self.module = importlib.util.module_from_spec(spec)
         with patch.dict("sys.modules", {"frappe": self.frappe, "firebase_admin": self.firebase}):
             spec.loader.exec_module(self.module)
-        self.payload = {"type": "EVENT_ASSIGNED", "doctype": "Event", "docname": "EV-1",
-                        "assignment_id": "TODO-1", "for_user": self.recipient,
-                        "title": "Untrusted title", "body": "Untrusted body"}
+        self.payload = {"type": "DOCUMENT_NOTIFICATION", "notification_name": "New Lead",
+                        "doctype": "Lead", "docname": "LEAD-1", "for_user": self.recipient,
+                        "title": "New lead", "body": "Contact the customer"}
 
     def get_value(self, doctype, *args, **kwargs):
-        return self.assignment if doctype == "ToDo" else 1
+        return 1
 
     def send(self):
-        return self.module.send_fcm_to_user(self.recipient, self.payload)
+        marker = self.module._NOTIFICATION_DISPATCH.set({
+            "rule": self.rule, "document": self.document, "version": "revision-1"})
+        try:
+            return self.module.send_fcm_to_user(self.recipient, self.payload)
+        finally:
+            self.module._NOTIFICATION_DISPATCH.reset(marker)
 
-    def test_verified_assignment_uses_named_project_and_canonical_data_only_payload(self):
+    def test_generic_notification_uses_named_project_and_shared_data_payload(self):
         self.assertEqual(self.send()["status"], "sent")
         self.firebase.get_app.assert_called_once_with("automategenie-mobile:live-site")
-        self.messaging.send.assert_called_once_with(self.messaging.Message.return_value, app=self.app)
         args = self.messaging.Message.call_args.kwargs
         self.assertNotIn("notification", args)
-        self.assertEqual(args["data"]["body"], "Actual event")
-        self.assertEqual(args["data"]["title"], "New event assigned")
-        self.assertEqual(args["data"]["assignment_id"], "TODO-1")
+        self.assertEqual(args["data"]["type"], "DOCUMENT_NOTIFICATION")
+        self.assertEqual(args["data"]["body"], "Contact the customer")
         self.assertEqual(args["data"]["for_user"], self.recipient)
         self.messaging.AndroidConfig.assert_called_once_with(priority="high")
         self.assertEqual(self.frappe.get_all.call_args.kwargs["limit_page_length"], 1)
 
-    def test_initialization_uses_sibling_credential_and_leaves_default_app_untouched(self):
+    def test_initialization_uses_sibling_credential_and_keeps_default_app(self):
         self.firebase.get_app.side_effect = ValueError("Not initialized")
         self.assertEqual(self.send()["status"], "sent")
-        credential_path = Path(self.credentials.Certificate.call_args.args[0])
-        self.assertEqual(credential_path.name, "automategenie-service-account.json")
-        self.assertEqual(credential_path.parent, Path(self.module.__file__).parent)
+        path = Path(self.credentials.Certificate.call_args.args[0])
+        self.assertEqual(path.name, "automategenie-service-account.json")
+        self.assertEqual(path.parent, Path(self.module.__file__).parent)
         self.assertEqual(self.firebase.initialize_app.call_args.kwargs["name"], "automategenie-mobile:live-site")
-
-    def test_only_recipient_sales_user_or_designer_role_enables_alarm(self):
-        for roles, expected in [([], "0"), (["Employee"], "0"),
-                                (["Sales Manager"], "0"), (["Sales User"], "1"),
-                                (["Designer"], "1"), (["Sales User", "Designer"], "1"),
-                                (["Sales Manager", "Sales User"], "1")]:
-            with self.subTest(roles=roles):
-                self.frappe.db.exists.side_effect = lambda doctype, filters: (
-                    doctype == "Has Role" and filters["parent"] == self.recipient
-                    and filters["parenttype"] == "User" and filters["parentfield"] == "roles"
-                    and any(role in roles for role in filters["role"][1])
-                )
-                # Caller-provided flags cannot enable or disable the alarm.
-                self.payload["alarm_enabled"] = "0" if expected == "1" else "1"
-                self.assertEqual(self.send()["status"], "sent")
-                data = self.messaging.Message.call_args.kwargs["data"]
-                self.assertEqual(data["alarm_enabled"], expected)
-                self.assertEqual(data["for_user"], self.recipient)
-
-    def test_guest_cannot_send(self):
-        self.frappe.session.user = "Guest"
-        with self.assertRaises(PermissionError):
-            self.send()
-        self.messaging.send.assert_not_called()
-
-    def test_different_event_owner_requires_document_write_permission(self):
-        self.event["owner"] = "someone-else@example.test"
-        self.event.check_permission.side_effect = PermissionError("Denied")
-        with self.assertRaises(PermissionError):
-            self.send()
-        self.event.check_permission.assert_called_once_with("write")
-        self.messaging.send.assert_not_called()
-
-    def test_assignment_must_match_event_recipient_and_open_status(self):
-        for field, value in [("reference_type", "Opportunity"), ("reference_name", "EV-2"),
-                             ("allocated_to", "other@example.test"), ("status", "Cancelled")]:
-            old = getattr(self.assignment, field)
-            setattr(self.assignment, field, value)
-            with self.subTest(field=field), self.assertRaises(ValueError):
-                self.send()
-            setattr(self.assignment, field, old)
-        self.messaging.send.assert_not_called()
-
-    def test_recipient_and_payload_type_cannot_be_forged(self):
-        for field, value in [("for_user", "other@example.test"), ("type", "LEAD_ASSIGNED"),
-                             ("assignment_id", ""), ("docname", [])]:
-            old = self.payload[field]
-            self.payload[field] = value
-            with self.subTest(field=field), self.assertRaises(ValueError):
-                self.send()
-            self.payload[field] = old
-        self.messaging.send.assert_not_called()
 
     def test_wrong_credential_project_does_not_send(self):
         self.firebase.get_app.side_effect = ValueError("Not initialized")
@@ -135,29 +88,33 @@ class AutomateGenieFcmSenderTest(unittest.TestCase):
     def test_missing_token_does_not_change_device_binding(self):
         self.frappe.get_all.return_value = []
         self.assertEqual(self.send()["status"], "failed")
-        self.assertEqual(self.frappe.log_error.call_args.kwargs["title"], "FCM Token Missing")
         self.messaging.send.assert_not_called()
 
-    def test_sdk_failure_logs_no_token_or_error_text(self):
-        self.messaging.send.side_effect = RuntimeError("sensitive-fake-token")
+    def test_sdk_errors_do_not_log_device_tokens_or_raw_exception_text(self):
+        self.messaging.send.side_effect = RuntimeError("sensitive-device-token")
         self.assertEqual(self.send()["status"], "failed")
-        entry = self.frappe.log_error.call_args.kwargs
-        self.assertEqual(entry["title"], "FCM Push Failed")
-        self.assertIn("RuntimeError", entry["message"])
-        self.assertNotIn("sensitive-fake-token", entry["message"])
+        self.assertIn("RuntimeError", str(self.frappe.log_error.call_args))
+        self.assertNotIn("sensitive-device-token", str(self.frappe.log_error.call_args))
 
-    def test_cancelled_event_does_not_send(self):
-        self.event["docstatus"] = 2
-        self.assertEqual(self.send()["status"], "failed")
+    def test_legacy_event_payload_is_rejected_and_has_no_separate_sender(self):
+        self.payload = {"type": "EVENT_ASSIGNED", "doctype": "Event", "docname": "EV-1"}
+        with self.assertRaisesRegex(ValueError, "Only generic"):
+            self.send()
         self.messaging.send.assert_not_called()
 
-    def test_json_payload_supported_and_invalid_json_rejected(self):
-        import json
+    def test_json_generic_payload_and_invalid_input_validation(self):
         self.payload = json.dumps(self.payload)
         self.assertEqual(self.send()["status"], "sent")
-        self.payload = "not json"
-        with self.assertRaises(ValueError):
-            self.send()
+        for payload in ["bad json", "x" * 8193, None, [], {"type": "OTHER"}]:
+            self.payload = payload
+            with self.subTest(payload_type=type(payload).__name__), self.assertRaises(ValueError):
+                self.send()
+
+    def test_generic_sender_is_internal_not_an_http_whitelisted_method(self):
+        self.assertNotIn("@frappe.whitelist", Path(self.module.__file__).read_text())
+        with self.assertRaises(PermissionError):
+            self.module.send_fcm_to_user(self.recipient, self.payload)
+        self.messaging.send.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import 'notifications_page.dart';
+import '../utils/api/document_notification.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
@@ -280,6 +281,24 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       route: ModalRoute.of(context),
       selectHome: _returnToHome,
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      DocumentNotificationTaps.register(this, (notification) {
+        if (!mounted) return;
+        final uri = notification.documentUri;
+        if (uri == null) return;
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder:
+                (_) => SessionWebView(
+                  url: uri.toString(),
+                  title: notification.title,
+                  blockSystemBack: false,
+                ),
+          ),
+        );
+      });
+    });
   }
 
   void _returnToHome() {
@@ -316,6 +335,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     HomeNavigation.unregister(this);
+    DocumentNotificationTaps.unregister(this);
     WidgetsBinding.instance.removeObserver(this);
     PendingWorkMonitor.stop();
     _homeScheduleRefreshTimer?.cancel();

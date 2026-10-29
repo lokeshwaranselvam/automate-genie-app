@@ -1,0 +1,126 @@
+AUTOMATIC DOCUMENT NOTIFICATIONS -- OVERRIDE ONLY -- FRAPPE V15 AND V16
+
+This is the selected installation approach. No After Insert Server Script is
+required. Prepared source files have not been deployed or pushed. Dart and
+unrelated app/API files are unchanged.
+
+1. Copy these Python files into frappe-bench/apps/itgenie/itgenie/fcm/:
+   fcm_utils.py
+   notification_hooks.py
+   Keep the existing __init__.py and private automategenie-service-account.json.
+   Do not commit or share the service-account credential.
+   The old automategenie_fcm_sender.zip was not regenerated; use these files.
+
+2. ERP Server Script -- generic payload/recipient processor:
+   Name: Generic FCM Notification
+   Script Type: API
+   API Method: mobile_fcm_notification
+   Allow Guest: disabled
+   Disabled: unchecked
+   Paste frappe_server_scripts/mobile_fcm_notification.py.
+   Its trusted trigger context is supplied by the worker, not HTTP parameters.
+
+3. Your senior should add this at the END of apps/itgenie/itgenie/hooks.py:
+
+   from itgenie.fcm.notification_hooks import configure_notification_hooks as _configure_fcm_hooks
+   _configure_fcm_hooks(globals())
+
+   Preserve unrelated hooks and existing Notification overrides/extensions.
+   Replace any earlier FCM registration snippet rather than register it twice.
+   Both v15 and v16 now register ONLY override_doctype_class, pointing to:
+   itgenie.fcm.notification_hooks.FCMNotification
+   There is no version check or FCM extend_doctype_class registration.
+   The helper preserves other overrides and removes only our previous FCM
+   extension/obsolete v15 override entries from this app's hook mapping.
+   The new wrapper retains the latest other Notification override as its base.
+   The override class is inside notification_hooks.py.
+   Compatibility correction for v15.69.3: redeploy the latest fcm_utils.py.
+   This release has neither send_notification_by_channel nor
+   get_comments_for_context. The mixin bridges its send() entry point and
+   reads the existing _comments JSON; newer builds keep their native channel
+   method and comments helper. The same override registration is used.
+   Inheritance validation alone does not establish that a notification was
+   queued or delivered. Test a newly created document after deployment.
+   notification_v15.py and notification_override.py are no longer used.
+   Replace the earlier two-argument hook call with the one-argument call above.
+   No Frappe core files are edited.
+
+4. If the alternative Lead/other DocType After Insert FCM Server Script was
+   already installed, DISABLE only that FCM trigger. Keep unrelated Server
+   Scripts enabled. The After Insert queue entry points were removed from
+   fcm_utils.py when reverting to this hooks approach. Do not run both paths.
+
+5. From frappe-bench:
+
+   After copying updated Python files, exit any existing console first:
+   bench --site YOUR_SITE clear-cache
+   bench restart
+   bench --site YOUR_SITE console
+
+   Run as Administrator/System Manager:
+
+   from itgenie.fcm.fcm_utils import setup_fcm_notification_channel, validate_fcm_notification_installation
+   validate_fcm_notification_installation()
+   setup_fcm_notification_channel()
+   frappe.db.commit()
+   exit()
+
+   Then run in the shell:
+
+   bench --site YOUR_SITE clear-cache
+   bench restart
+
+   The setup helper appends FCM to the existing channel choices and exposes
+   Subject/Message for FCM, preserving existing choices and conditions.
+   Server Scripts must be enabled and a default queue worker must be running.
+   If validation says the FCM controller is not active, review hooks/app order;
+   another app may mask the override on either version. Do not remove other apps' behavior.
+
+6. Example Notification:
+   Enabled: checked
+   Channel: FCM
+   Document Type: Lead
+   Send Alert On: New
+   Subject: New lead: {{ doc.lead_name }}
+   Message: Please contact {{ doc.lead_name }}.
+   Recipients / Receiver By Document Field: lead_owner
+   Condition: optional
+
+   Normal Frappe Notification processing detects the event and evaluates the
+   condition; our FCM channel handler queues delivery after commit. The generic
+   Server Script renders Subject/Message and resolves recipients. fcm_utils
+   checks enabled users, document access, active devices and alarm eligibility.
+   This same channel integration follows Frappe's supported automatic triggers.
+   Manual/custom broadcasts and Send Alert On = Custom remain excluded.
+
+7. Existing behavior and limits:
+   The old inline EVENT_ASSIGNED call was removed from mobile_site_visit.
+   Deploy the updated frappe_server_scripts/mobile_site_visit_api.py to that
+   existing Server Script. Event/participant/coordinate comment/ToDo creation,
+   permissions and response keys remain intact. alarm_sent/alarm_queued remain
+   false compatibility flags; this API no longer reports notification delivery.
+   fcm_utils.py now accepts only generic DOCUMENT_NOTIFICATION payloads inside
+   the trusted worker; the old Event-specific sender and payload were removed.
+   Firebase project and recipient alarm role rules remain unchanged.
+   Email/Slack/SMS/System channels delegate to their existing handlers.
+   Sales User OR Designer recipients get alarm_enabled="1"; other enabled,
+   authorized recipients receive a normal push with alarm_enabled="0".
+   Generic calls outside the trusted worker context are rejected.
+   Successful generic delivery acceptance is deduplicated per rule, document
+   version and recipient for 24 hours, subject to Redis/Firebase failure limits.
+   Firebase acceptance does not prove phone display or exactly-once delivery.
+   Very large recipient groups need chunked dispatch before enabling them.
+   Configure enabled FCM Notification rules for Event and Lead as needed.
+   Event / New / Send To All Assignees resolves the committed ToDo assignments
+   through the generic worker. Keep the hook/Server Script and Flutter generic
+   handler available before relying on this new Event notification path.
+
+8. Test on staging v15 and v16 with a disposable Lead and an enabled recipient
+   who can read the document and has an active FCM Device. Local tests use
+   mocks; they do not establish installed Frappe/Redis/Firebase behavior.
+
+FLUTTER BOUNDARY:
+   Generic pushes use data-only type=DOCUMENT_NOTIFICATION. The Flutter generic
+   handler for visual display, alarms and document navigation remains pending.
+   No Dart files were modified. Generic Event and Lead notifications now both
+   use DOCUMENT_NOTIFICATION; older installed apps may ignore this new type.

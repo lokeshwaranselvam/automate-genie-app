@@ -16,7 +16,7 @@
 #   location_type (optional)
 #   action=create_event, opportunity, location_row, summary, starts_on, ends_on,
 #   assigned_to, category, product_enquired (optional)
-#   Other/Bank/Head Office/Timbe office/Collection omit location fields.
+#   Other/Bank/Head Office/Timbe office/Collection/Maintenance omit location fields.
 #   Measurement/Installation send map_link, latitude, longitude; location_type is optional.
 
 action = (frappe.form_dict.get("action") or "get").strip().lower()
@@ -117,7 +117,7 @@ CATEGORY_REFERENCE_TYPES = {
     "measurement": "Measurement",
     "installation": "Installation Note",
     "other": "", "others": "", "bank": "", "head office ch": "",
-    "timbe / bioman office ch": "", "collection": "",
+    "timbe / bioman office ch": "", "collection": "", "maintenance": "",
 }
 REFERENCE_DOCUMENT_FIELDS = {
     "Measurement": ["contact_number", "company"],
@@ -886,40 +886,8 @@ elif action == "create_event":
     )
     todo.insert(ignore_permissions=True)
 
-    # Call while the API's HTTP request exists. This site's safe_enqueue
-    # routes whitelisted calls through HTTP method validation in a worker,
-    # which fails there with AttributeError: request.
-    alarm_sent = False
-    try:
-        alarm_result = frappe.call(
-            "itgenie.fcm.fcm_utils.send_fcm_to_user",
-            user=assigned_to,
-            payload={
-                "type": "EVENT_ASSIGNED",
-                "doctype": "Event",
-                "docname": event_doc.name,
-                "assignment_id": todo.name,
-                "for_user": assigned_to,
-                "title": "New event assigned",
-                "body": summary,
-            },
-        )
-        if isinstance(alarm_result, dict) and alarm_result.get("status") == "sent":
-            alarm_sent = True
-        else:
-            alarm_failure = "FCM sender did not confirm delivery acceptance."
-            if isinstance(alarm_result, dict) and alarm_result.get("message"):
-                alarm_failure = str(alarm_result.get("message"))
-            frappe.log_error(
-                title="Mobile Event assignment alarm failed",
-                message="Event " + event_doc.name + ": " + alarm_failure,
-            )
-    except Exception as alarm_error:
-        # Keep the existing Event/ToDo save when notification delivery fails.
-        frappe.log_error(
-            title="Mobile Event assignment alarm failed",
-            message="Event " + event_doc.name + ": " + str(alarm_error),
-        )
+    # Notification rules now handle FCM asynchronously through the shared hook.
+    # Keep the legacy response flags for compatibility; this API sends no push.
 
     frappe.response["message"] = {
         "status": "success",
@@ -927,7 +895,7 @@ elif action == "create_event":
         "current_user": current_user,
         "event": event_doc.name,
         "alarm_queued": False,
-        "alarm_sent": alarm_sent,
+        "alarm_sent": False,
         "reference_doctype": reference_doctype or ("Opportunity" if opportunity else ""),
         "reference_name": reference_name if reference_doc else (opportunity.name if opportunity else ""),
         "opportunity": opportunity.name if opportunity else "",

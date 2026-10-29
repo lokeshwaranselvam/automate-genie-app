@@ -271,7 +271,7 @@ class SiteVisitApiTest(unittest.TestCase):
             self.assertIn("reference_name", rules[category]["required_fields"])
             self.assertIn("map_link", rules[category]["required_fields"])
             self.assertNotIn("opportunity", rules[category]["required_fields"])
-        for category in ["Other", "Bank", "Collection", "Head Office CH", "Timbe / Bioman Office CH"]:
+        for category in ["Other", "Bank", "Collection", "Head Office CH", "Timbe / Bioman Office CH", "Maintenance"]:
             self.assertEqual(rules[category]["reference_mode"], "none")
             self.assertEqual(rules[category]["reference_doctype"], "")
             self.assertEqual(rules[category]["required_fields"], ["category", "summary", "starts_on", "ends_on", "assigned_to"])
@@ -459,7 +459,7 @@ class SiteVisitApiTest(unittest.TestCase):
     def test_direct_categories_create_without_location_or_coordinate_comment(self):
         self.metas["Event"].fields[:] = [f for f in self.metas["Event"].fields
             if f.fieldname not in ["location", "custom_location_type", "custom_validate", "custom_location"]]
-        for category in ["Other", "Others", "Bank", "Head Office CH", "Timbe / Bioman Office CH", "Collection"]:
+        for category in ["Other", "Others", "Bank", "Head Office CH", "Timbe / Bioman Office CH", "Collection", "Maintenance"]:
             with self.subTest(category=category):
                 self.metas["Event"].get_field("event_category").options += "\n" + category
                 self.frappe.get_doc.reset_mock()
@@ -485,6 +485,12 @@ class SiteVisitApiTest(unittest.TestCase):
             with self.subTest(category=category), self.assertRaisesRegex(ValueError, "map location"):
                 self.run_api(category=category, opportunity="", location_row="", product_enquired="",
                              reference_doctype=doctype, reference_name=name)
+        self.frappe.new_doc.assert_not_called()
+
+    def test_maintenance_does_not_accept_an_opportunity_link(self):
+        self.configure_category_policy(["SCM Manager"], "Other Company")
+        with self.assertRaisesRegex(ValueError, "does not use an Opportunity"):
+            self.run_api(category="Maintenance")
         self.frappe.new_doc.assert_not_called()
 
     def test_invalid_times_and_product_are_rejected_before_inserting(self):
@@ -530,37 +536,27 @@ class SiteVisitApiTest(unittest.TestCase):
             self.run_api()
         self.frappe.new_doc.assert_not_called()
 
-    def test_mobile_event_sends_assignment_alarm_inside_http_request_without_worker(self):
+    def test_event_creation_keeps_assignment_without_legacy_inline_fcm_send(self):
         result = self.run_api(assigned_to="designer@example.test")
-        self.assertTrue(result["alarm_sent"])
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["event"], self.event.name)
+        self.assertFalse(result["alarm_sent"])
         self.assertFalse(result["alarm_queued"])
         self.frappe.enqueue.assert_not_called()
-        self.frappe.call.assert_called_once_with(
-            "itgenie.fcm.fcm_utils.send_fcm_to_user",
-            user="designer@example.test",
-            payload={"type": "EVENT_ASSIGNED", "doctype": "Event", "docname": self.event.name,
-                     "assignment_id": self.created[-1].name, "for_user": "designer@example.test",
-                     "title": "New event assigned", "body": self.params["summary"]},
-        )
+        self.frappe.call.assert_not_called()
+        self.assertEqual(self.created[-1].doctype, "ToDo")
         self.assertEqual(self.created[-1].allocated_to, "designer@example.test")
+        self.assertEqual(self.created[-1].reference_type, "Event")
+        self.assertEqual(self.created[-1].reference_name, self.event.name)
 
-    def test_mobile_alarm_failure_preserves_created_event_and_assignment(self):
-        self.frappe.call.side_effect = AttributeError("request")
+    def test_removed_inline_sender_cannot_block_event_or_assignment_creation(self):
+        self.frappe.call.side_effect = AttributeError("Old sender is unavailable")
         result = self.run_api()
         self.assertEqual(result["status"], "success")
-        self.assertFalse(result["alarm_sent"])
         self.assertEqual(result["event"], self.event.name)
         self.assertEqual(self.created[-1].doctype, "ToDo")
-        self.frappe.log_error.assert_called_once()
-
-    def test_fcm_token_or_sender_failure_is_reported_without_claiming_alarm_sent(self):
-        for response in [{"status": "failed", "message": "No token"}, {"status": "failed"}, None]:
-            self.frappe.call.return_value = response
-            self.frappe.log_error.reset_mock()
-            result = self.run_api()
-            self.assertEqual(result["status"], "success")
-            self.assertFalse(result["alarm_sent"])
-            self.frappe.log_error.assert_called_once()
+        self.frappe.call.assert_not_called()
+        self.frappe.log_error.assert_not_called()
 
     def test_capability_uses_session_role_and_does_not_load_form_data(self):
         for roles, allowed in [([], False), (["Employee"], False),
@@ -744,10 +740,14 @@ class SiteVisitApiTest(unittest.TestCase):
     def test_scm_and_delivery_can_create_their_categories_using_existing_workflows(self):
         for role in ["SCM Manager", "Delivery Manager"]:
             self.configure_category_policy([role], "Doortisan Creations Private Limited")
-            for category in ["Complaint Visit", "Site Visit", "Maintenance"]:
+            for category in ["Complaint Visit", "Site Visit"]:
                 with self.subTest(role=role, category=category):
                     self.assertEqual(self.run_api(category=category)["event"], "EVENT-TEST")
                     self.assertEqual(self.event.event_category, category)
+            result = self.run_api(category="Maintenance", opportunity="", location_row="", product_enquired="")
+            self.assertEqual(result["event"], "EVENT-TEST")
+            self.assertEqual(result["opportunity"], "")
+            self.assertEqual(self.event.event_category, "Maintenance")
             self.assertEqual(len(self.run_api(action="get_references", category="Installation")["references"]), 1)
             result = self.run_api(category="Installation", opportunity="", location_row="",
                                   product_enquired="", reference_name="INST-1",
@@ -819,7 +819,7 @@ class SiteVisitApiTest(unittest.TestCase):
             for category in categories:
                 with self.subTest(roles=roles, category=category):
                     params = {"category": category}
-                    if category in ["Bank", "Collection", "Other"]:
+                    if category in ["Bank", "Collection", "Other", "Maintenance"]:
                         params.update(opportunity="", location_row="", product_enquired="")
                     elif category in ["Measurement", "Installation"]:
                         doctype, name = (("Measurement", "MEAS-1") if category == "Measurement"
