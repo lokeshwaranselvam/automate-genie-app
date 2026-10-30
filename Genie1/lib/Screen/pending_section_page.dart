@@ -11,6 +11,7 @@ import '../utils/api/session_auth.dart';
 import '../utils/widget/pending_work_alarm_player.dart';
 import '../utils/widget/glass_card.dart';
 import '../utils/widget/home_back_button.dart';
+import 'opportunity_details_page.dart';
 
 const Color _primary = BrandColors.ink;
 const Color _primaryDark = BrandColors.indigo;
@@ -453,6 +454,21 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
   }
 
   void _openDetails(Map<String, dynamic> item) {
+    if (widget.section == 'opportunities') {
+      final opportunityId = item['opportunity_id']?.toString().trim() ?? '';
+      final name = item['name']?.toString().trim() ?? '';
+      final id = opportunityId.isNotEmpty ? opportunityId : name;
+      if (id.isNotEmpty) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => OpportunityDetailsPage(opportunityId: id),
+          ),
+        );
+        return;
+      }
+    }
+
     final summary = _summaryFor(item);
     final displayItem = Map<String, dynamic>.from(item);
     for (final entry in item.entries) {

@@ -32,6 +32,7 @@ Future<void> withForm(
   List<Map<String, String>> opportunities,
   Future<void> Function() check, {
   bool selectInitialCategory = true,
+  bool nestedRoute = false,
   Map<String, Object?>? categoryRules,
   Map<String, Object?>? businessPolicy,
   List<String>? eventLocationTypes,
@@ -137,7 +138,16 @@ Future<void> withForm(
   });
   try {
     await http.runWithClient(() async {
-      await tester.pumpWidget(const MaterialApp(home: NewSiteVisitPage()));
+      await tester.pumpWidget(
+        MaterialApp(
+          initialRoute: nestedRoute ? '/new-visit' : '/',
+          home:
+              nestedRoute
+                  ? const Scaffold(body: Text('Site Visits destination'))
+                  : const NewSiteVisitPage(),
+          routes: {'/new-visit': (_) => const NewSiteVisitPage()},
+        ),
+      );
       await tester.pumpAndSettle();
       if (selectInitialCategory) {
         await tester.tap(find.widgetWithText(ListTile, "Site Visit"));
@@ -207,6 +217,78 @@ Future<void> continueToEvent(
 }
 
 void main() {
+  for (final systemBack in [false, true]) {
+    Future<void> back(WidgetTester tester) async {
+      if (systemBack) {
+        await tester.binding.handlePopRoute();
+      } else {
+        await tester.tap(find.byTooltip('Back'));
+      }
+      await tester.pumpAndSettle();
+    }
+
+    for (final category in ['Site Visit', 'Collection']) {
+      testWidgets(
+        '$category Back returns to categories before exiting, phone=$systemBack',
+        (tester) async {
+          final requests = <http.Request>[];
+          await withForm(
+            tester,
+            [],
+            () async {
+              final tile = find.widgetWithText(ListTile, category);
+              await tester.ensureVisible(tile);
+              await tester.tap(tile);
+              await tester.pumpAndSettle();
+              expect(find.text('Select event category'), findsNothing);
+              await back(tester);
+              expect(find.text('Select event category'), findsOneWidget);
+              expect(find.byType(NewSiteVisitPage), findsOneWidget);
+              expect(
+                requests.where((request) => request.method == 'POST'),
+                isEmpty,
+              );
+              await back(tester);
+              expect(find.text('Site Visits destination'), findsOneWidget);
+              expect(find.byType(NewSiteVisitPage), findsNothing);
+            },
+            selectInitialCategory: false,
+            nestedRoute: true,
+            requests: requests,
+          );
+        },
+      );
+    }
+
+    testWidgets(
+      'Event Details Back restores location before categories, phone=$systemBack',
+      (tester) async {
+        await withForm(
+          tester,
+          [
+            {'name': 'OPP-1', 'title': 'Customer'},
+          ],
+          () async {
+            await continueToEvent(tester);
+            expect(find.text('Event Details'), findsOneWidget);
+            await back(tester);
+            expect(find.text('Save location and continue'), findsOneWidget);
+            expect(
+              tester
+                  .widget<TextField>(field('Customer map link *'))
+                  .controller!
+                  .text,
+              'https://maps.google.com/?q=13,80',
+            );
+            await back(tester);
+            expect(find.text('Select event category'), findsOneWidget);
+          },
+          nestedRoute: true,
+        );
+      },
+    );
+  }
+
   testWidgets('location can be saved without type while map remains required', (
     tester,
   ) async {

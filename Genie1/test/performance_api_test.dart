@@ -42,7 +42,7 @@ Map<String, dynamic> performancePayload({
     (index) => {
       'label': 'W${index + 1}',
       'leads': index + 1,
-      'conversions': index,
+      'conversions': 3,
       'site_visits': 3,
       'completed_visits': 2,
       'checkins': 5,
@@ -53,7 +53,7 @@ Map<String, dynamic> performancePayload({
     {
       'month': '2026-09',
       'leads': 15,
-      'conversions': 4,
+      'conversions': 9,
       'site_visits': 9,
       'completed_visits': 6,
       'checkins': 20,
@@ -62,7 +62,7 @@ Map<String, dynamic> performancePayload({
     {
       'month': month,
       'leads': 18,
-      'conversions': 5,
+      'conversions': 12,
       'site_visits': 12,
       'completed_visits': 9,
       'checkins': 22,
@@ -266,7 +266,10 @@ void main() {
       expect(result.previous['site_visits'], 1);
       expect(result.previous['leads'], 1);
       expect(result.weekly[1]['site_visits'], 1);
-      expect(result.weekly[0]['conversions'], 1);
+      expect(result.weekly[0]['conversions'], 0);
+      expect(result.weekly[1]['conversions'], 1);
+      expect(result.previous['conversions'], 1);
+      expect(result.trend.last['conversions'], 1);
       expect(result.trend.length, 6);
     },
   );
@@ -284,6 +287,8 @@ void main() {
     ).load(DateTime(2026, 10));
     expect(result.sales['site_visits'], 1);
     expect(result.weekly[3]['site_visits'], 1);
+    expect(result.weekly[3]['conversions'], 1);
+    expect(result.trend.last['conversions'], 1);
   });
 
   test('matches Completed tab date fallbacks and closed status', () async {
@@ -310,16 +315,21 @@ void main() {
       ),
     ).load(DateTime(2026, 10));
     expect(result.sales['site_visits'], 3);
+    expect(result.trend.last['conversions'], 3);
   });
 
   test('empty completed list is zero; denied history is unavailable', () async {
     final empty = await api(records()).load(DateTime(2026, 10));
     expect(empty.sales['site_visits'], 0);
+    expect(empty.trend.last['conversions'], 0);
+    expect(empty.weekly.every((week) => week['conversions'] == 0), isTrue);
     final denied = await api(
       records(historyStatus: 403),
     ).load(DateTime(2026, 10));
     expect(denied.sales['site_visits'], isNull);
     expect(denied.sales['leads'], 1);
+    expect(denied.trend.last['conversions'], isNull);
+    expect(denied.weekly.every((week) => week['conversions'] == null), isTrue);
   });
 
   test('invalid completed timestamp never becomes a fabricated zero', () async {
@@ -332,6 +342,7 @@ void main() {
     ).load(DateTime(2026, 10));
     expect(result.sales['site_visits'], isNull);
     expect(result.sales['leads'], 1);
+    expect(result.trend.last['conversions'], isNull);
     expect(PerformanceData.count(null), isNull);
     expect(PerformanceData.count(-1), isNull);
     expect(PerformanceData.count(1.5), isNull);

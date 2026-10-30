@@ -40,6 +40,7 @@ class OpportunityApi {
 
   static Future<dynamic> _read({
     String? name,
+    String? lead,
     int offset = 0,
     String phone = '',
     String status = '',
@@ -76,9 +77,14 @@ class OpportunityApi {
                   'party_name',
                   'status',
                   'creation',
+                  if (lead != null) 'opportunity_from',
                 ]),
                 'filters': jsonEncode([
                   ['opportunity_owner', '=', user],
+                  if (lead != null) ...[
+                    ['opportunity_from', '=', 'Lead'],
+                    ['party_name', '=', lead],
+                  ],
                   if (status.isNotEmpty) ['status', '=', status],
                 ]),
                 if (phone.isNotEmpty)
@@ -134,6 +140,9 @@ class OpportunityApi {
     }
     for (final row in rows) {
       if (row['opportunity_owner'] != user ||
+          (lead != null &&
+              (row['opportunity_from'] != 'Lead' ||
+                  row['party_name'] != lead)) ||
           (name != null && row['name'] != name)) {
         throw StateError(
           'Only opportunities where you are the Opportunity Owner can be displayed here.',
@@ -162,6 +171,16 @@ class OpportunityApi {
   static Future<Map<String, dynamic>> getDetails(String name) async {
     if (name.trim().isEmpty) throw ArgumentError('Opportunity ID is required.');
     return Map<String, dynamic>.from(await _read(name: name));
+  }
+
+  static Future<List<Map<String, dynamic>>> getForLead(
+    String leadId, {
+    int offset = 0,
+  }) async {
+    if (leadId.trim().isEmpty) throw ArgumentError('Lead ID is required.');
+    if (offset < 0) throw ArgumentError('Invalid page offset.');
+    final rows = await _read(lead: leadId.trim(), offset: offset) as List;
+    return rows.map((row) => Map<String, dynamic>.from(row as Map)).toList();
   }
 
   static Future<OpportunityEditOptions> getEditOptions({String? name}) async {

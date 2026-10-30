@@ -6,25 +6,32 @@ from types import SimpleNamespace
 import unittest
 
 
+class Field(SimpleNamespace):
+    def get(self, name, default=None):
+        return getattr(self, name, default)
+
+
 class LeadCreationApiTest(unittest.TestCase):
     script = (Path(__file__).resolve().parents[1] /
               'frappe_server_scripts/create_lead_from_mobile.py').read_text(encoding='utf-8')
 
     recent_leads = ()
 
-    def run_api(self, whatsapp=None, method='POST', view='', user='sales@example.test', has_field=True, has_source=True, roles=('Sales User',)):
+    def run_api(self, whatsapp=None, method='POST', view='', user='sales@example.test', has_field=True, has_source=True, roles=('Sales User',), customer_category='', customer_required=False, customer_type='Select', has_customer=True):
         self.saved = []
         self.queries = []
         values = {
             'first_name': 'Customer', 'mobile_no': '9876543210',
             'custom_requirement': 'Doors', 'source': 'Website',
             'custom_product_enquired': 'Doors', 'custom_address': 'Chennai',
-            'view': view, 'lead': 'LEAD-1',
+            'view': view, 'lead': 'LEAD-1', 'custom_customer_category': customer_category,
         }
         if whatsapp is not None:
             values['whatsapp_no'] = whatsapp
 
         def field(name):
+            if name == 'custom_customer_category':
+                return Field(fieldtype=customer_type, options='B2B\nB2C' if customer_type == 'Select' else 'Customer Category', reqd=customer_required) if has_customer else None
             if name == 'source' and not has_source:
                 return None
             if name == 'whatsapp_no' and not has_field:
@@ -48,7 +55,7 @@ class LeadCreationApiTest(unittest.TestCase):
             return {'name': 'LEAD-1', 'whatsapp_no': '+919876543210'}
 
         def new_doc(doctype):
-            doc = SimpleNamespace(name='LEAD-1', flags=SimpleNamespace())
+            doc = Field(name='LEAD-1', flags=SimpleNamespace())
             if has_source:
                 doc.source = 'Existing standard source default'
             def insert(**kwargs):
@@ -67,14 +74,14 @@ class LeadCreationApiTest(unittest.TestCase):
         frappe = SimpleNamespace(
             session=session, form_dict=values, request=SimpleNamespace(method=method),
             response=response, get_meta=lambda dt: SimpleNamespace(get_field=field),
-            get_all=get_all, db=SimpleNamespace(get_value=get_value, exists=lambda dt, filters: (
+            get_all=get_all, get_list=lambda doctype, **kwargs: [Field(name="B2B"), Field(name="B2C")], db=SimpleNamespace(get_value=get_value, exists=lambda dt, filters: (
                 dt == 'Has Role' and filters['parent'] == user and
                 filters['parenttype'] == 'User' and filters['parentfield'] == 'roles' and
                 any(role in roles for role in filters['role'][1])
             )), new_doc=new_doc,
-            get_doc=lambda doctype, name: SimpleNamespace(name=name, first_name='Customer', lead_owner=user,
+            get_doc=lambda doctype, name: Field(name=name, first_name='Customer', lead_owner=user,
                 mobile_no='9876543210', custom_requirement='Doors', source='Website',
-                custom_product_enquired='Doors', custom_address='Chennai'),
+                custom_product_enquired='Doors', custom_address='Chennai', custom_customer_category='B2B'),
             utils=SimpleNamespace(now_datetime=lambda: 1000, time_diff_in_seconds=lambda end, start: end - start),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
@@ -140,6 +147,26 @@ class LeadCreationApiTest(unittest.TestCase):
         self.assertEqual(response['product_category_options'], ['Doors', 'Windows'])
         self.assertEqual(response['source_options'], ['Website', 'Referral'])
         self.assertEqual(response['csrf_token'], 'csrf-test')
+        self.assertEqual(response['customer_category_options'], ['B2B', 'B2C'])
+        self.assertFalse(response['business_policy']['fields']['custom_customer_category']['required'])
+
+    def test_customer_category_uses_metadata_and_saves_selection(self):
+        for fieldtype in ['Select', 'Link']:
+            response = self.run_api('9876543210', customer_category='B2B', customer_type=fieldtype)
+            self.assertEqual(self.saved[0].custom_customer_category, 'B2B')
+            self.assertEqual(response['custom_customer_category'], 'B2B')
+            options = self.run_api(method='GET', customer_type=fieldtype)
+            self.assertEqual(options['customer_category_options'], ['B2B', 'B2C'])
+
+    def test_customer_category_rejects_unconfigured_or_invalid_values(self):
+        for value in ['unknown', ['B2B']]:
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'Customer Category'):
+                self.run_api('9876543210', customer_category=value)
+            self.assertEqual(self.saved, [])
+        with self.assertRaisesRegex(ValueError, 'Customer Category is required'):
+            self.run_api('9876543210', customer_required=True)
+        with self.assertRaisesRegex(ValueError, 'custom_customer_category'):
+            self.run_api(method='GET', has_customer=False)
 
     def test_guest_is_still_rejected(self):
         with self.assertRaisesRegex(ValueError, 'sign in'):

@@ -144,21 +144,6 @@ class _OpportunityDetailsPageState extends State<OpportunityDetailsPage> {
         'Opportunity Details',
         style: TextStyle(fontWeight: FontWeight.w800),
       ),
-      actions: [
-        PopupMenuButton<String>(
-          icon: const Icon(Icons.more_vert, color: Colors.white),
-          tooltip: 'More options',
-          onSelected: (_) => _load(),
-          itemBuilder:
-              (_) => [
-                PopupMenuItem(
-                  value: 'refresh',
-                  enabled: !_loading && !_editing,
-                  child: const Text('Refresh'),
-                ),
-              ],
-        ),
-      ],
     ),
     body: RefreshIndicator(
       onRefresh: _load,

@@ -12,6 +12,7 @@ class LeadFormOptions {
   final String leadOwnerName;
   final List<String> sourceOptions;
   final List<String> productCategoryOptions;
+  final List<String> customerCategoryOptions;
   final String? csrfToken;
   final ApiBusinessPolicy businessPolicy;
 
@@ -20,6 +21,7 @@ class LeadFormOptions {
     required this.leadOwnerName,
     required this.sourceOptions,
     required this.productCategoryOptions,
+    this.customerCategoryOptions = const [],
     this.csrfToken,
     this.businessPolicy = ApiBusinessPolicy.empty,
   });
@@ -190,9 +192,16 @@ class LeadApi {
     await _assertSession(sid);
     final rawSources = message['source_options'];
     final rawCategories = message['product_category_options'];
+    final rawCustomerCategories = message['customer_category_options'];
     if (rawSources is! List || rawCategories is! List) {
       throw const FormatException(
         'The server did not return Lead Source and Product Enquired options.',
+      );
+    }
+    if (rawCustomerCategories is! List ||
+        rawCustomerCategories.any((value) => value is! String)) {
+      throw const FormatException(
+        'Update create_lead_from_mobile on ERP to return Customer Category options.',
       );
     }
 
@@ -226,7 +235,19 @@ class LeadApi {
       leadOwner: message['lead_owner']?.toString() ?? '',
       leadOwnerName: message['lead_owner_name']?.toString() ?? '',
       sourceOptions: policy.options('source', sourceOptions),
-      productCategoryOptions: policy.options('custom_product_enquired', productCategoryOptions),
+      productCategoryOptions: policy.options(
+        'custom_product_enquired',
+        productCategoryOptions,
+      ),
+      customerCategoryOptions: policy.options(
+        'custom_customer_category',
+        rawCustomerCategories
+            .cast<String>()
+            .map((value) => value.trim())
+            .where((value) => value.isNotEmpty)
+            .toSet()
+            .toList(),
+      ),
       csrfToken: _csrfToken,
     );
   }
@@ -288,6 +309,7 @@ class LeadApi {
     required String address,
     required String csrfToken,
     String whatsappNo = '',
+    String customerCategory = '',
     ApiBusinessPolicy businessPolicy = ApiBusinessPolicy.empty,
   }) async {
     final whatsappError =
@@ -325,6 +347,8 @@ class LeadApi {
               'custom_requirement': requirement.trim(),
               'source': source.trim(),
               'custom_product_enquired': productCategory.trim(),
+              if (customerCategory.trim().isNotEmpty)
+                'custom_customer_category': customerCategory.trim(),
               'custom_address': address.trim(),
               'csrf_token': currentToken,
             },

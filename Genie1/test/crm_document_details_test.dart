@@ -76,6 +76,44 @@ Widget screen(String type, {GlobalKey? previewKey, double scale = 1}) {
 }
 
 void main() {
+  for (final type in ['Lead', 'Opportunity']) {
+    testWidgets('$type status pill appears below its ID at narrow width', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 850);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var tapped = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CrmDocumentDetails(
+              documentType: type,
+              document: const {'name': 'DOC-1', 'status': 'Opportunity'},
+              onOpenOpportunity: type == 'Lead' ? () => tapped = true : null,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final id = find.text('DOC-1');
+      final chip = find.byType(RawChip);
+      expect(
+        tester.getTopLeft(chip).dy,
+        greaterThan(tester.getBottomLeft(id).dy),
+      );
+      expect(find.text('Opportunity'), findsOneWidget);
+      if (type == 'Lead') {
+        await tester.tap(chip);
+        expect(tapped, isTrue);
+      } else {
+        expect(tester.widget<RawChip>(chip).onPressed, isNull);
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   for (final dated in [true, false]) {
     for (final type in ['Opportunity', 'Lead']) {
       testWidgets(
@@ -89,6 +127,8 @@ void main() {
             for (final day in [2, 5, 1, 4, 3])
               {
                 'note': 'Note day $day',
+                'name': 'NOTE-ROW-$day',
+                'owner': 'note-author@example.test',
                 if (dated && day != 4)
                   'added_on':
                       '2026-10-${day.toString().padLeft(2, '0')} 10:00:00',
@@ -114,9 +154,20 @@ void main() {
                   : dated
                   ? [5, 4, 3]
                   : [3, 4, 1];
-          for (var i = 1; i <= visible.length; i++) {
-            await tester.tap(find.text('Row $i'));
-            await tester.pumpAndSettle();
+          if (type == 'Lead') {
+            for (var i = 1; i <= visible.length; i++) {
+              await tester.tap(find.text('Row $i'));
+              await tester.pumpAndSettle();
+            }
+          } else {
+            for (var i = 1; i <= 3; i++) {
+              expect(find.text('Note $i'), findsOneWidget);
+              expect(find.text('Row $i'), findsNothing);
+            }
+            expect(find.text('note-author@example.test'), findsNothing);
+            for (var day = 1; day <= 5; day++) {
+              expect(find.text('NOTE-ROW-$day'), findsNothing);
+            }
           }
           for (var day = 1; day <= 5; day++) {
             expect(

@@ -2036,7 +2036,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final page = Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
       appBar: brandAppBar(
         elevation: 0,
@@ -2080,6 +2080,21 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
                   ),
                 ),
       ),
+    );
+    return PopScope(
+      canPop: _categoryStep,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || _saving) return;
+        FocusScope.of(context).unfocus();
+        setState(() {
+          if (_eventStep && !_directEvent) {
+            _eventStep = false;
+          } else {
+            _categoryStep = true;
+          }
+        });
+      },
+      child: page,
     );
   }
 }

@@ -56,10 +56,10 @@ elif request_method == "GET" and lead_view == "detail":
 
 elif request_method == "GET":
     business_policy = frappe.call("mobile_business_policy", feature="lead", action="get", event_id="")["policy"]
-    # The mobile form reads these two arrays to populate its dropdowns.
+    # Read dropdown choices from the actual Lead field metadata.
     lead_meta = frappe.get_meta("Lead")
     lead_options = {}
-    for fieldname, label in [("source", "Lead Source"), ("custom_product_enquired", "Product Enquired")]:
+    for fieldname, label in [("source", "Lead Source"), ("custom_product_enquired", "Product Enquired"), ("custom_customer_category", "Customer Category")]:
         field = lead_meta.get_field(fieldname)
         if not field:
             frappe.throw("Lead is missing the " + fieldname + " field.")
@@ -71,7 +71,7 @@ elif request_method == "GET":
                 if option.strip()
             ]
         elif field.fieldtype == "Link" and field.options:
-            rows = frappe.get_all(
+            rows = (frappe.get_list if fieldname == "custom_customer_category" else frappe.get_all)(
                 field.options,
                 fields=["name"],
                 order_by="name asc",
@@ -112,6 +112,16 @@ elif request_method == "GET":
         lead_options[fieldname] = options
     source_options = lead_options["source"]
     product_category_options = lead_options["custom_product_enquired"]
+    customer_category_options = lead_options["custom_customer_category"]
+    customer_category_field = lead_meta.get_field("custom_customer_category")
+    if "custom_customer_category" not in business_policy["fields"]:
+        business_policy["fields"]["custom_customer_category"] = {
+            "required": bool(customer_category_field.get("reqd")),
+            "visible": not bool(customer_category_field.get("hidden")),
+            "read_only": bool(customer_category_field.get("read_only")),
+            "default": customer_category_field.get("default") or "",
+            "options": customer_category_options,
+        }
     csrf_token = (
         frappe.session.get("csrf_token")
         or frappe.session.data.csrf_token
@@ -122,6 +132,7 @@ elif request_method == "GET":
         or current_user,
         "source_options": source_options,
         "product_category_options": product_category_options,
+        "customer_category_options": customer_category_options,
         "csrf_token": csrf_token,
         "business_policy": business_policy,
     }
@@ -157,6 +168,17 @@ elif request_method == "POST":
     product_category = (
         frappe.form_dict.get("custom_product_enquired") or ""
     ).strip()
+    customer_category = frappe.form_dict.get("custom_customer_category") or ""
+    if not isinstance(customer_category, str):
+        frappe.throw("Choose a Customer Category from the configured options.")
+    customer_category = customer_category.strip()
+    customer_category_field = lead_meta.get_field("custom_customer_category")
+    if not customer_category_field:
+        frappe.throw("Lead is missing the custom_customer_category field.")
+    if not customer_category and customer_category_field.get("reqd"):
+        frappe.throw("Customer Category is required.")
+    if customer_category_field.get("read_only") and customer_category != (customer_category_field.get("default") or ""):
+        frappe.throw("Customer Category is read-only.")
     address = (frappe.form_dict.get("custom_address") or "").strip()
 
     if not first_name and business_policy["fields"]["first_name"]["required"]:
@@ -175,11 +197,12 @@ elif request_method == "POST":
         "first_name": first_name, "mobile_no": mobile_no, "whatsapp_no": whatsapp_no,
         "custom_requirement": requirement, "source": source,
         "custom_product_enquired": product_category, "custom_address": address,
+        "custom_customer_category": customer_category,
     })
 
     lead_meta = frappe.get_meta("Lead")
     lead_options = {}
-    for fieldname, label in [("source", "Lead Source"), ("custom_product_enquired", "Product Enquired")]:
+    for fieldname, label in [("source", "Lead Source"), ("custom_product_enquired", "Product Enquired"), ("custom_customer_category", "Customer Category")]:
         field = lead_meta.get_field(fieldname)
         if not field:
             frappe.throw("Lead is missing the " + fieldname + " field.")
@@ -191,7 +214,7 @@ elif request_method == "POST":
                 if option.strip()
             ]
         elif field.fieldtype == "Link" and field.options:
-            rows = frappe.get_all(
+            rows = (frappe.get_list if fieldname == "custom_customer_category" else frappe.get_all)(
                 field.options,
                 fields=["name"],
                 order_by="name asc",
@@ -237,6 +260,9 @@ elif request_method == "POST":
     if product_category and product_category not in product_category_options:
         frappe.throw("Choose a Product Enquired from the configured options.")
 
+    if customer_category and customer_category not in lead_options["custom_customer_category"]:
+        frappe.throw("Choose a Customer Category from the configured options.")
+
     # Retry guard: the client sends no idempotency key, so the same user
     # resubmitting the same customer within two minutes gets the earlier Lead.
     lead = None
@@ -256,6 +282,7 @@ elif request_method == "POST":
         lead.source = source
         lead.custom_product_enquired = product_category
         lead.custom_address = address
+        lead.custom_customer_category = customer_category
         lead.flags.ignore_mandatory = True
         lead.insert(ignore_permissions=True)
 
@@ -270,6 +297,7 @@ elif request_method == "POST":
         "source": lead.source,
         "custom_product_enquired": lead.custom_product_enquired,
         "custom_address": lead.custom_address,
+        "custom_customer_category": lead.get("custom_customer_category") or "",
     }
 
 else:

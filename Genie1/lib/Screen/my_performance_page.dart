@@ -170,7 +170,7 @@ class _MyPerformancePageState extends State<MyPerformancePage>
       ('Completed Visits', 'site_visits'),
     ],
     definition:
-        'Leads Created counts records whose Lead Owner is your user, matching My Leads, grouped by creation date. Conversions counts those same leads currently marked Converted, grouped by lead creation date. Completed Visits counts the same events as Visits > Completed, grouped by completion date.',
+        'Leads Created counts records whose Lead Owner is your user, matching My Leads, grouped by creation date. Conversions counts completed site visits, matching Completed Visits and Visits > Completed, grouped by completion date.',
   );
 
   void _showDefinitions() {

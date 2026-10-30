@@ -351,7 +351,7 @@ class PerformanceApi {
         'month': key(DateTime(month.year, month.month - 5 + i)),
         for (var j = 0; j < metrics.length; j++)
           metrics[j]: sources[j] == null ? null : 0,
-        'conversions': sources[0] == null ? null : 0,
+        'conversions': visits == null ? null : 0,
       },
     );
     final weekly = List.generate(
@@ -360,7 +360,7 @@ class PerformanceApi {
         'label': 'W${i + 1}',
         for (var j = 0; j < metrics.length; j++)
           metrics[j]: sources[j] == null ? null : 0,
-        'conversions': sources[0] == null ? null : 0,
+        'conversions': visits == null ? null : 0,
       },
     );
     for (var i = 0; i < metrics.length; i++) {
@@ -381,7 +381,8 @@ class PerformanceApi {
         if (buckets.isEmpty) continue;
         final bucket = buckets.first;
         bucket[metrics[i]] = (bucket[metrics[i]] as int) + 1;
-        final converted = i == 0 && row['status'] == 'Converted';
+        // Conversions are completed site visits, grouped by completion date.
+        final converted = i == 1;
         if (converted) {
           bucket['conversions'] = (bucket['conversions'] as int) + 1;
         }

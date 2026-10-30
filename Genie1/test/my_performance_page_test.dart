@@ -93,6 +93,11 @@ void main() {
     expect(find.text('18'), findsOneWidget);
     expect(find.text('20%'), findsOneWidget);
     expect(find.text('Leads vs Conversions'), findsOneWidget);
+    final weeklyChart = tester.widget<PerformanceBarChart>(
+      find.byType(PerformanceBarChart),
+    );
+    expect(weeklyChart.secondLabel, 'Conversions');
+    expect(weeklyChart.points.map((point) => point.second), [3, 3, 3, 3]);
     expect(find.text('Activity'), findsNothing);
     expect(find.byType(SessionWebView), findsNothing);
     await tester.tap(find.text('Attendance'));
@@ -116,6 +121,7 @@ void main() {
       find.byType(PerformanceBarChart),
     );
     expect(chart.points.map((point) => point.label), ['Sep', 'Oct']);
+    expect(chart.points.map((point) => point.second), [9, 12]);
     expect(tester.takeException(), isNull);
   });
 

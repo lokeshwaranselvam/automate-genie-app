@@ -261,6 +261,7 @@ void main() {
                 'lead_owner_name': 'Sales',
                 'source_options': ['Website'],
                 'product_category_options': ['Doors'],
+                'customer_category_options': ['B2B', 'B2C'],
                 'csrf_token': 'csrf-test',
               },
             }),

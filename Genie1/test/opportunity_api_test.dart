@@ -91,6 +91,61 @@ void main() {
     );
   });
 
+  test(
+    'Lead link lookup uses exact relation and retains owner and pagination',
+    () async {
+      await http.runWithClient(
+        () async => expect(
+          await OpportunityApi.getForLead('LEAD-1', offset: 50),
+          hasLength(1),
+        ),
+        () => client((request) async {
+          expect(jsonDecode(request.url.queryParameters['filters']!), [
+            ['opportunity_owner', '=', opportunityUser],
+            ['opportunity_from', '=', 'Lead'],
+            ['party_name', '=', 'LEAD-1'],
+          ]);
+          expect(request.url.queryParameters['limit_start'], '50');
+          expect(request.url.queryParameters['limit_page_length'], '50');
+          return http.Response(
+            jsonEncode({
+              'data': [
+                {
+                  ...opportunity(),
+                  'opportunity_from': 'Lead',
+                  'party_name': 'LEAD-1',
+                },
+              ],
+            }),
+            200,
+          );
+        }),
+      );
+    },
+  );
+
+  for (final relation in [
+    {'opportunity_from': 'Lead', 'party_name': 'OTHER-LEAD'},
+    {'opportunity_from': 'Customer', 'party_name': 'LEAD-1'},
+  ]) {
+    test('Lead lookup rejects mismatched relation $relation', () async {
+      await http.runWithClient(
+        () async =>
+            expectLater(OpportunityApi.getForLead('LEAD-1'), throwsStateError),
+        () => client(
+          (_) async => http.Response(
+            jsonEncode({
+              'data': [
+                {...opportunity(), ...relation},
+              ],
+            }),
+            200,
+          ),
+        ),
+      );
+    });
+  }
+
   for (final details in [false, true]) {
     for (final assignedUser in ['other@example.test', '', null]) {
       test(

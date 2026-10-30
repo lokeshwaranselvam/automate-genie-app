@@ -15,6 +15,8 @@ class CrmDocumentDetails extends StatelessWidget {
     this.callInProgress = false,
     this.onEditOpportunity,
     this.creatorFullName,
+    this.onOpenOpportunity,
+    this.openingOpportunity = false,
   });
 
   final Map<String, dynamic> document;
@@ -25,6 +27,8 @@ class CrmDocumentDetails extends StatelessWidget {
   final bool callInProgress;
   final VoidCallback? onEditOpportunity;
   final String? creatorFullName;
+  final VoidCallback? onOpenOpportunity;
+  final bool openingOpportunity;
 
   static const background = Color(0xFFF3F7FC);
   static const _ink = Color(0xFF101A36);
@@ -265,6 +269,35 @@ class CrmDocumentDetails extends StatelessWidget {
                   color: _ink,
                 ),
               ),
+              if (status.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                RawChip(
+                  avatar:
+                      openingOpportunity
+                          ? SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: statusColor,
+                            ),
+                          )
+                          : Icon(Icons.circle, size: 8, color: statusColor),
+                  label: Text(
+                    status,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  backgroundColor: statusColor.withValues(alpha: 0.09),
+                  disabledColor: statusColor.withValues(alpha: 0.09),
+                  side: BorderSide.none,
+                  shape: const StadiumBorder(),
+                  onPressed: openingOpportunity ? null : onOpenOpportunity,
+                ),
+              ],
               if (source.isNotEmpty) ...[
                 const SizedBox(height: 7),
                 Container(
@@ -291,72 +324,8 @@ class CrmDocumentDetails extends StatelessWidget {
         ),
       ],
     );
-    final statusWidget = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Text(
-          'STATUS',
-          style: TextStyle(
-            fontSize: 10,
-            color: _muted,
-            letterSpacing: 1.1,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        const SizedBox(height: 7),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: statusColor.withValues(alpha: 0.09),
-            borderRadius: BorderRadius.circular(22),
-          ),
-          child: Text(
-            '●  $status',
-            softWrap: true,
-            style: TextStyle(
-              color: statusColor,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ],
-    );
     return _surface(
-      Padding(
-        padding: const EdgeInsets.all(12),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            if (status.isEmpty) return identity;
-            if (constraints.maxWidth < 280 ||
-                MediaQuery.textScalerOf(context).scale(1) > 1.35) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [identity, const SizedBox(height: 14), statusWidget],
-              );
-            }
-            return Row(
-              children: [
-                Expanded(child: identity),
-                Container(
-                  width: 1,
-                  height: 58,
-                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                  color: const Color(0xFFE1E7F0),
-                ),
-                Flexible(
-                  flex: 0,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 100),
-                    child: statusWidget,
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
+      Padding(padding: const EdgeInsets.all(12), child: identity),
     );
   }
 
@@ -440,47 +409,64 @@ class CrmDocumentDetails extends StatelessWidget {
     return notes.take(3).map((entry) => entry.row).toList();
   }
 
-  Widget _field(String key, dynamic value) => Padding(
-    key: PageStorageKey('crm_field_$key'),
-    padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _iconBadge(_icon(key), _accent(key)),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                _label(key),
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: _muted,
-                  height: 1.3,
+  Widget _field(String key, dynamic value) {
+    if (documentType == 'Opportunity' && key == 'notes' && value is List) {
+      final notes = _visibleValue(key, value) as List;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < notes.length; i++) ...[
+            if (i > 0) const Divider(height: 1, color: Color(0xFFE1E7F0)),
+            _field(
+              'note_${i + 1}',
+              notes[i] is Map ? notes[i]['note'] ?? '' : notes[i],
+            ),
+          ],
+        ],
+      );
+    }
+    return Padding(
+      key: PageStorageKey('crm_field_$key'),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _iconBadge(_icon(key), _accent(key)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  _label(key),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: _muted,
+                    height: 1.3,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 3),
-              _renderValue(_visibleValue(key, value)),
-            ],
+                const SizedBox(height: 3),
+                _renderValue(_visibleValue(key, value)),
+              ],
+            ),
           ),
-        ),
-        if (documentType == 'Opportunity' &&
-            onCallContact != null &&
-            OpportunityContact.isPhoneField(key) &&
-            OpportunityContact.number(value).isNotEmpty)
-          IconButton(
-            tooltip: 'Call ${OpportunityContact.number(value)}',
-            onPressed:
-                callInProgress
-                    ? null
-                    : () => onCallContact!(OpportunityContact.number(value)),
-            color: BrandColors.ink,
-            icon: const Icon(Icons.call_rounded),
-          ),
-      ],
-    ),
-  );
+          if (documentType == 'Opportunity' &&
+              onCallContact != null &&
+              OpportunityContact.isPhoneField(key) &&
+              OpportunityContact.number(value).isNotEmpty)
+            IconButton(
+              tooltip: 'Call ${OpportunityContact.number(value)}',
+              onPressed:
+                  callInProgress
+                      ? null
+                      : () => onCallContact!(OpportunityContact.number(value)),
+              color: BrandColors.ink,
+              icon: const Icon(Icons.call_rounded),
+            ),
+        ],
+      ),
+    );
+  }
 
   Widget _section(String title, IconData icon, List<String> keys) => _surface(
     ExpansionTile(

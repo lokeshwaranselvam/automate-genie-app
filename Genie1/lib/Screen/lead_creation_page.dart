@@ -16,6 +16,114 @@ import '../utils/widget/warning.dart';
 const _leadBlue = BrandColors.ink;
 const _leadInk = Color(0xFF202B3C);
 
+/// Searchable ERP choices; text outside the supplied choices cannot be saved.
+class _LeadOptionField extends StatefulWidget {
+  const _LeadOptionField({
+    super.key,
+    required this.value,
+    required this.options,
+    required this.enabled,
+    required this.decoration,
+    required this.onChanged,
+    required this.validator,
+  });
+  final String? value;
+  final List<String> options;
+  final bool enabled;
+  final InputDecoration decoration;
+  final ValueChanged<String?> onChanged;
+  final FormFieldValidator<String> validator;
+
+  @override
+  State<_LeadOptionField> createState() => _LeadOptionFieldState();
+}
+
+class _LeadOptionFieldState extends State<_LeadOptionField> {
+  late final _controller = TextEditingController(text: widget.value ?? '');
+  final _focus = FocusNode();
+
+  @override
+  void didUpdateWidget(covariant _LeadOptionField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value &&
+        _controller.text != (widget.value ?? '')) {
+      // Keep a query while searching; explicit selections/default changes win.
+      if (widget.value != null || !_focus.hasFocus) {
+        _controller.text = widget.value ?? '';
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder:
+        (context, constraints) => RawAutocomplete<String>(
+          textEditingController: _controller,
+          focusNode: _focus,
+          optionsBuilder:
+              (value) =>
+                  !widget.enabled
+                      ? const Iterable<String>.empty()
+                      : widget.options.where(
+                        (option) => option.toLowerCase().contains(
+                          value.text.trim().toLowerCase(),
+                        ),
+                      ),
+          onSelected: (value) => widget.onChanged(value),
+          fieldViewBuilder:
+              (context, controller, focus, submit) => TextFormField(
+                controller: controller,
+                focusNode: focus,
+                readOnly: !widget.enabled,
+                decoration: widget.decoration,
+                validator: (_) => widget.validator(controller.text.trim()),
+                onChanged:
+                    (text) => widget.onChanged(
+                      widget.options.contains(text.trim()) ? text.trim() : null,
+                    ),
+                onFieldSubmitted: (_) => submit(),
+              ),
+          optionsViewBuilder: (context, select, options) {
+            final choices = options.toList();
+            return Align(
+              alignment: Alignment.topLeft,
+              child: Material(
+                elevation: 4,
+                borderRadius: BorderRadius.circular(9),
+                clipBehavior: Clip.antiAlias,
+                child: SizedBox(
+                  width: constraints.maxWidth,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      padding: EdgeInsets.zero,
+                      itemCount: choices.length,
+                      itemBuilder:
+                          (context, index) => ListTile(
+                            selected:
+                                AutocompleteHighlightedOption.of(context) ==
+                                index,
+                            title: Text(choices[index]),
+                            onTap: () => select(choices[index]),
+                          ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+  );
+}
+
 class LeadCreationPage extends StatefulWidget {
   const LeadCreationPage({super.key});
 
@@ -35,6 +143,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
         'Location': 'custom_address',
         'Lead Source': 'source',
         'Product Enquired': 'custom_product_enquired',
+        'Customer Category': 'custom_customer_category',
       }[label] ??
       label;
   final _formKey = GlobalKey<FormState>();
@@ -47,6 +156,9 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
   LeadFormOptions? _options;
   String? _selectedCategory;
   String? _selectedSource;
+  String? _selectedCustomerCategory;
+  bool _samePhoneAndWhatsApp = false;
+  String _separateWhatsApp = '';
   bool _loadingOptions = true;
   bool _gettingLocation = false;
   bool _submitting = false;
@@ -55,17 +167,25 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
   @override
   void initState() {
     super.initState();
+    _mobileController.addListener(_syncWhatsApp);
     _loadOptions();
   }
 
   @override
   void dispose() {
+    _mobileController.removeListener(_syncWhatsApp);
     _firstNameController.dispose();
     _mobileController.dispose();
     _whatsappController.dispose();
     _locationController.dispose();
     _requirementController.dispose();
     super.dispose();
+  }
+
+  void _syncWhatsApp() {
+    if (_samePhoneAndWhatsApp && !_policy.readOnly('whatsapp_no')) {
+      _whatsappController.value = _mobileController.value;
+    }
   }
 
   Future<void> _loadOptions() async {
@@ -79,6 +199,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
       if (!mounted) return;
       setState(() {
         _options = options;
+        if (_policy.readOnly('whatsapp_no')) _samePhoneAndWhatsApp = false;
         for (final entry
             in {
               'first_name': _firstNameController,
@@ -95,11 +216,32 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
         if (!options.sourceOptions.contains(_selectedSource)) {
           _selectedSource = null;
         }
-        final categoryDefault = _policy.field('custom_product_enquired')['default']?.toString();
+        if (!options.customerCategoryOptions.contains(
+          _selectedCustomerCategory,
+        )) {
+          _selectedCustomerCategory = null;
+        }
+        final customerDefault =
+            _policy.field('custom_customer_category')['default']?.toString();
+        if ((_selectedCustomerCategory == null ||
+                _policy.readOnly('custom_customer_category')) &&
+            options.customerCategoryOptions.contains(customerDefault)) {
+          _selectedCustomerCategory = customerDefault;
+        }
+        final categoryDefault =
+            _policy.field('custom_product_enquired')['default']?.toString();
         final sourceDefault = _policy.field('source')['default']?.toString();
-        if ((_selectedCategory == null || _policy.readOnly('custom_product_enquired')) && options.productCategoryOptions.contains(categoryDefault)) _selectedCategory = categoryDefault;
-        if ((_selectedSource == null || _policy.readOnly('source')) && options.sourceOptions.contains(sourceDefault)) _selectedSource = sourceDefault;
+        if ((_selectedCategory == null ||
+                _policy.readOnly('custom_product_enquired')) &&
+            options.productCategoryOptions.contains(categoryDefault)) {
+          _selectedCategory = categoryDefault;
+        }
+        if ((_selectedSource == null || _policy.readOnly('source')) &&
+            options.sourceOptions.contains(sourceDefault)) {
+          _selectedSource = sourceDefault;
+        }
         _loadingOptions = false;
+        _syncWhatsApp();
       });
     } catch (error) {
       if (!mounted) return;
@@ -113,6 +255,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
   Future<void> _submit() async {
     if (_submitting || _loadingOptions || _options == null) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    FocusScope.of(context).unfocus();
     setState(() {
       _submitting = true;
       _error = null;
@@ -126,6 +269,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
         requirement: _requirementController.text,
         source: _selectedSource ?? '',
         productCategory: _selectedCategory ?? '',
+        customerCategory: _selectedCustomerCategory ?? '',
         address: _locationController.text,
         csrfToken: _options!.csrfToken ?? '',
         businessPolicy: _policy,
@@ -135,6 +279,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
       _firstNameController.clear();
       _mobileController.clear();
       _whatsappController.clear();
+      _separateWhatsApp = '';
       _locationController.clear();
       _requirementController.clear();
       Warning.show(context, 'Lead created successfully!', 'Success');
@@ -270,35 +415,34 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
           : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _fieldLabel(label),
-              DropdownButtonFormField<String>(
-                initialValue: value,
-                isExpanded: true,
-                icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
+              _fieldLabel(label, required: label != 'Customer Category'),
+              _LeadOptionField(
+                key: ValueKey(_fieldName(label)),
+                value: value,
+                options: options,
+                enabled:
+                    enabled &&
+                    !_submitting &&
+                    !_policy.readOnly(_fieldName(label)),
                 decoration: _fieldDecoration(
                   hint: enabled ? 'Select $label' : 'Options unavailable',
+                  suffixIcon: const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 20,
+                  ),
                 ),
-                items:
-                    options
-                        .map(
-                          (option) => DropdownMenuItem(
-                            value: option,
-                            child: Text(
-                              option,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                onChanged:
-                    enabled && !_policy.readOnly(_fieldName(label))
-                        ? onChanged
-                        : null,
+                onChanged: onChanged,
                 validator:
                     (value) =>
-                        _policy.hasField(_fieldName(label))
+                        value != null &&
+                                value.isNotEmpty &&
+                                !options.contains(value)
+                            ? 'Choose $label from the configured options.'
+                            : _policy.hasField(_fieldName(label))
                             ? _policy.validate(_fieldName(label), value)
-                            : validator(value),
+                            : validator(
+                              value == null || value.isEmpty ? null : value,
+                            ),
               ),
             ],
           );
@@ -312,7 +456,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
             AgPathLoadingIndicator(),
             SizedBox(height: 16),
             Text(
-              'Loading Lead Source and Product Enquired…',
+              'Loading Lead form options…',
               textAlign: TextAlign.center,
               style: TextStyle(color: _leadInk, fontSize: 14),
             ),
@@ -422,14 +566,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
                         maxLength: _policy.maxLength('mobile_no'),
                         readOnly: _policy.readOnly('mobile_no'),
                         keyboardType: TextInputType.phone,
-                        decoration: _fieldDecoration(
-                          hint: '+91 98765 43210',
-                          suffixIcon: const Icon(
-                            Icons.search_rounded,
-                            color: _leadBlue,
-                            size: 22,
-                          ),
-                        ),
+                        decoration: _fieldDecoration(hint: '+91 98765 43210'),
                         validator:
                             (value) => _policy.validate(
                               'mobile_no',
@@ -439,6 +576,35 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
                             ),
                       ),
                     ),
+                    if (_policy.visible('mobile_no') &&
+                        _policy.visible('whatsapp_no') &&
+                        !_policy.readOnly('whatsapp_no'))
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: const Text(
+                          'Phone and WhatsApp numbers are the same',
+                          style: TextStyle(fontSize: 13),
+                        ),
+                        value: _samePhoneAndWhatsApp,
+                        onChanged:
+                            _submitting
+                                ? null
+                                : (checked) {
+                                  setState(() {
+                                    if (checked == true) {
+                                      _separateWhatsApp =
+                                          _whatsappController.text;
+                                      _samePhoneAndWhatsApp = true;
+                                      _syncWhatsApp();
+                                    } else {
+                                      _samePhoneAndWhatsApp = false;
+                                      _whatsappController.text =
+                                          _separateWhatsApp;
+                                    }
+                                  });
+                                },
+                      ),
                     const SizedBox(height: 15),
                     _fieldLabel('WhatsApp Number'),
                     BusinessPolicyField(
@@ -447,7 +613,9 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
                       child: TextFormField(
                         controller: _whatsappController,
                         maxLength: _policy.maxLength('whatsapp_no'),
-                        readOnly: _policy.readOnly('whatsapp_no'),
+                        readOnly:
+                            _samePhoneAndWhatsApp ||
+                            _policy.readOnly('whatsapp_no'),
                         keyboardType: TextInputType.phone,
                         autofillHints: const [AutofillHints.telephoneNumber],
                         decoration: _fieldDecoration(hint: '+91 98765 43210'),
@@ -493,6 +661,20 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
                       validator:
                           (value) =>
                               value == null ? 'Select a lead source.' : null,
+                    ),
+                    const SizedBox(height: 15),
+                    _dropdownField(
+                      label: 'Customer Category',
+                      value: _selectedCustomerCategory,
+                      options: _policy.options(
+                        'custom_customer_category',
+                        _options!.customerCategoryOptions,
+                      ),
+                      enabled: !_loadingOptions,
+                      onChanged:
+                          (value) =>
+                              setState(() => _selectedCustomerCategory = value),
+                      validator: (_) => null,
                     ),
                     const SizedBox(height: 15),
                     _fieldLabel('Location'),
