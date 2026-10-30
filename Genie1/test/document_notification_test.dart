@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -26,6 +27,8 @@ void main() {
   final shows = <Map>[];
   var alarms = 0;
   var alarmStarts = true;
+  Completer<bool>? playbackConfirmation;
+  var playbackRequested = Completer<void>();
   final owner = Object();
   setUp(() {
     dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
@@ -38,6 +41,8 @@ void main() {
     shows.clear();
     alarms = 0;
     alarmStarts = true;
+    playbackConfirmation = null;
+    playbackRequested = Completer<void>();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           if (call.method == 'initialize') return true;
@@ -47,6 +52,10 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(alarm, (call) async {
           alarms++;
+          if (!playbackRequested.isCompleted) playbackRequested.complete();
+          if (playbackConfirmation != null) {
+            return await playbackConfirmation!.future;
+          }
           return alarmStarts;
         });
   });
@@ -77,16 +86,87 @@ void main() {
     expect(alarms, 2); // Another rule/update for the same document is allowed.
   });
 
+  test('legacy zero uses normal sound; invalid flags remain silent', () async {
+    for (final flag in ['0', '', 'true']) {
+      await send(id: flag, changes: {'alarm_enabled': flag});
+    }
+    expect(shows, hasLength(3));
+    expect(alarms, 0);
+    expect(
+      shows.first['platformSpecifics']['channelId'],
+      'document_notification_default_v1',
+    );
+    expect(shows.first['platformSpecifics']['playSound'], isTrue);
+    for (final show in shows.skip(1)) {
+      expect(show['platformSpecifics']['playSound'], isFalse);
+    }
+  });
+
   test(
-    'server flag alone controls alarm; missing flags remain silent',
+    'API default uses system sound without custom alarm and deduplicates',
     () async {
-      for (final flag in ['0', '', 'true']) {
-        await send(id: flag, changes: {'alarm_enabled': flag});
-      }
-      expect(shows, hasLength(3));
+      final changes = {'sound_mode': 'default', 'alarm_enabled': '0'};
+      expect(
+        await Future.wait([send(changes: changes), send(changes: changes)]),
+        [true, false],
+      );
+      expect(shows, hasLength(1));
+      final details = shows.single['platformSpecifics'] as Map;
+      expect(details['channelId'], 'document_notification_default_v1');
+      expect(details['playSound'], isTrue);
+      expect(details['sound'], isNull);
+      expect(
+        details['audioAttributesUsage'],
+        AudioAttributesUsage.notification.value,
+      );
       expect(alarms, 0);
     },
   );
+
+  test('API silent overrides the legacy alarm flag', () async {
+    await send(changes: {'sound_mode': 'silent'});
+    expect(shows, hasLength(1));
+    expect(
+      shows.single['platformSpecifics']['channelId'],
+      'document_notification_visual_v1',
+    );
+    expect(shows.single['platformSpecifics']['playSound'], isFalse);
+    expect(alarms, 0);
+  });
+
+  test(
+    'API alarm controls playback and keeps the visual channel silent',
+    () async {
+      await send(changes: {'sound_mode': 'alarm', 'alarm_enabled': '0'});
+      expect(shows, hasLength(1));
+      expect(shows.single['platformSpecifics']['playSound'], isFalse);
+      expect(alarms, 1);
+    },
+  );
+
+  test('missing or invalid sound policy cannot start an alarm', () async {
+    for (final mode in ['', 'unknown', 1]) {
+      await send(id: 'mode-$mode', changes: {'sound_mode': mode});
+    }
+    await send(id: 'missing', changes: {'alarm_enabled': null});
+    expect(shows, hasLength(4));
+    expect(alarms, 0);
+    for (final show in shows) {
+      expect(show['platformSpecifics']['playSound'], isFalse);
+    }
+  });
+
+  test('normal sound never starts a requested custom alarm', () async {
+    await showDocumentNotification(
+      RemoteMessage(
+        messageId: 'background-default',
+        data: {...data, 'sound_mode': 'default', 'alarm_enabled': '0'},
+      ),
+      playAlarm: true,
+    );
+    expect(shows.single['platformSpecifics']['playSound'], isTrue);
+    expect(alarms, 0);
+  });
 
   test(
     'native failure uses alarm channel with the same notification ID',
@@ -101,6 +181,39 @@ void main() {
       );
     },
   );
+
+  test('delayed native failure triggers one alarm-channel fallback', () async {
+    playbackConfirmation = Completer<bool>();
+    final delivery = send(changes: {'sound_mode': 'alarm'});
+    await playbackRequested.future;
+    expect(alarms, 1);
+    expect(shows, hasLength(1));
+    expect(shows.single['platformSpecifics']['playSound'], isFalse);
+
+    playbackConfirmation!.complete(false);
+    expect(await delivery, isTrue);
+    expect(shows, hasLength(2));
+    expect(shows.first['id'], shows.last['id']);
+    final fallback = shows.last['platformSpecifics'] as Map;
+    expect(fallback['channelId'], 'document_notification_alarm_v1');
+    expect(fallback['playSound'], isTrue);
+    expect(fallback['audioAttributesUsage'], AudioAttributesUsage.alarm.value);
+    expect(await send(changes: {'sound_mode': 'alarm'}), isFalse);
+    expect(shows, hasLength(2));
+    expect(alarms, 1);
+  });
+
+  test('confirmed native playback does not add a second audible alert', () async {
+    playbackConfirmation = Completer<bool>();
+    final delivery = send(changes: {'sound_mode': 'alarm'});
+    await playbackRequested.future;
+    expect(alarms, 1);
+    expect(shows, hasLength(1));
+    playbackConfirmation!.complete(true);
+    expect(await delivery, isTrue);
+    expect(shows, hasLength(1));
+    expect(shows.single['platformSpecifics']['playSound'], isFalse);
+  });
 
   test(
     'rejects wrong recipients, malformed payloads and logged-out users',

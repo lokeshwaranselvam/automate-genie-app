@@ -27,6 +27,7 @@ const String _eventAssignmentVisualChannelId = 'event_assignment_visual_v1';
 const String _eventAssignmentAlarmChannelId = 'event_assignment_alarm_v1';
 const String _documentVisualChannelId = 'document_notification_visual_v1';
 const String _documentAlarmChannelId = 'document_notification_alarm_v1';
+const String _documentDefaultChannelId = 'document_notification_default_v1';
 
 const AndroidNotificationChannel _pendingWorkChannel =
     AndroidNotificationChannel(
@@ -282,23 +283,35 @@ Future<bool> showDocumentNotification(
   final nativeAlarm =
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
   Future<void> show({required bool sound}) async {
+    final normalSound = !sound && notification.soundMode == 'default';
     await _localNotifications.show(
       _documentReceipt(message).hashCode & 0x7fffffff,
       notification.title,
       notification.body,
       NotificationDetails(
         android: AndroidNotificationDetails(
-          sound ? _documentAlarmChannelId : _documentVisualChannelId,
-          sound ? 'Document Notification Alarm' : 'Document Notifications',
+          sound
+              ? _documentAlarmChannelId
+              : normalSound
+              ? _documentDefaultChannelId
+              : _documentVisualChannelId,
+          sound
+              ? 'Document Notification Alarm'
+              : normalSound
+              ? 'Document Notifications with Sound'
+              : 'Document Notifications',
           importance: Importance.high,
           priority: Priority.high,
           visibility: NotificationVisibility.private,
-          playSound: sound,
+          playSound: sound || normalSound,
           sound:
               sound
                   ? const RawResourceAndroidNotificationSound('work_assigned')
                   : null,
-          audioAttributesUsage: AudioAttributesUsage.alarm,
+          audioAttributesUsage:
+              sound
+                  ? AudioAttributesUsage.alarm
+                  : AudioAttributesUsage.notification,
           onlyAlertOnce: false,
           icon: 'ic_notification',
         ),

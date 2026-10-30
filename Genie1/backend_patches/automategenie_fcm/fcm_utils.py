@@ -299,6 +299,15 @@ def _send_document_notification(user, payload):
             "parent": user, "parenttype": "User", "parentfield": "roles",
             "role": ["in", ["Sales User", "Designer"]],
         }))
+        # The trusted Server Script may select a supported sound mode. Omit it
+        # for the role-based default; requesting an alarm cannot bypass roles.
+        sound_mode = payload.get("sound_mode")
+        if sound_mode is None:
+            sound_mode = "alarm" if alarm_enabled else "default"
+        elif not isinstance(sound_mode, str) or sound_mode not in ("alarm", "default", "silent"):
+            frappe.throw("Invalid FCM notification sound mode.")
+        if sound_mode == "alarm" and not alarm_enabled:
+            sound_mode = "default"
         data = {
             "type": "DOCUMENT_NOTIFICATION",
             "notification_name": rule.name,
@@ -306,7 +315,8 @@ def _send_document_notification(user, payload):
             "docname": document.name,
             "assignment_id": "",
             "for_user": user,
-            "alarm_enabled": "1" if alarm_enabled else "0",
+            "sound_mode": sound_mode,
+            "alarm_enabled": "1" if sound_mode == "alarm" else "0",
             "title": payload["title"].strip()[:200],
             "body": payload["body"].strip()[:240],
         }

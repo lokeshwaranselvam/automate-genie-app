@@ -23,7 +23,20 @@ class DocumentNotification {
 
   String get title => data['title']?.toString() ?? 'New notification';
   String get body => data['body']?.toString() ?? '';
-  bool get alarmEnabled => data['alarm_enabled'] == '1';
+  String get soundMode {
+    final mode = data['sound_mode'];
+    if (mode != null) {
+      return const {'alarm', 'default', 'silent'}.contains(mode)
+          ? mode as String
+          : 'silent';
+    }
+    // Compatibility with servers that still send only alarm_enabled.
+    if (data['alarm_enabled'] == '1') return 'alarm';
+    if (data['alarm_enabled'] == '0') return 'default';
+    return 'silent';
+  }
+
+  bool get alarmEnabled => soundMode == 'alarm';
 
   Uri? get documentUri {
     final site = Uri.tryParse(dotenv.env['SITE_URL']?.trim() ?? '');

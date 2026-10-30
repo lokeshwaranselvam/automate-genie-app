@@ -17,21 +17,28 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.ResultReceiver;
+import android.os.SystemClock;
 import android.util.Log;
 
 /** Five-second alarm-stream playback, independent of notification/ringer volume. */
 public final class EventAlarmService extends Service {
+    static final String EXTRA_RESULT_RECEIVER = "ai.automategenie.eventalarm.PLAYBACK_RESULT";
+    static final String EXTRA_PLAYBACK_DEADLINE = "ai.automategenie.eventalarm.PLAYBACK_DEADLINE";
+    static final int PLAYBACK_STARTED = 1;
     private static final String CHANNEL = "event_assignment_playback_v1";
     private static final String STOP = "ai.automategenie.eventalarm.STOP";
     private static final int NOTIFICATION_ID = 174039;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Runnable finish = this::stopSelf;
+    private final Runnable finish = this::stopPlayback;
+    private ResultReceiver playbackResult;
+    private long playbackDeadline;
     private MediaPlayer player;
     private AudioManager audio;
     private AudioFocusRequest focus;
     private boolean legacyFocusHeld;
     private final AudioManager.OnAudioFocusChangeListener focusListener = change -> {
-        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) stopSelf();
+        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) stopPlayback();
     };
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -40,7 +47,16 @@ public final class EventAlarmService extends Service {
             return START_NOT_STICKY;
         }
         releasePlayback();
+        playbackResult = Build.VERSION.SDK_INT >= 33
+                ? intent.getParcelableExtra(EXTRA_RESULT_RECEIVER, ResultReceiver.class)
+                : intent.getParcelableExtra(EXTRA_RESULT_RECEIVER);
+        playbackDeadline = intent.getLongExtra(EXTRA_PLAYBACK_DEADLINE,
+                SystemClock.elapsedRealtime() + 10000);
         try {
+            if (SystemClock.elapsedRealtime() >= playbackDeadline) {
+                stopPlayback();
+                return START_NOT_STICKY;
+            }
             NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (Build.VERSION.SDK_INT >= 26) {
                 NotificationChannel channel = new NotificationChannel(CHANNEL, "Event alarm playback", NotificationManager.IMPORTANCE_LOW);
@@ -83,7 +99,7 @@ public final class EventAlarmService extends Service {
             }
             if (granted != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
                 Log.w("EventAssignmentAlarm", "Alarm audio focus was denied");
-                stopSelf();
+                stopPlayback();
                 return START_NOT_STICKY;
             }
             int sound = getResources().getIdentifier("work_assigned", "raw", getPackageName());
@@ -99,28 +115,46 @@ public final class EventAlarmService extends Service {
             }
             next.setOnPreparedListener(prepared -> {
                 if (player != prepared) return;
+                if (SystemClock.elapsedRealtime() >= playbackDeadline) {
+                    stopPlayback();
+                    return;
+                }
                 try {
                     prepared.start();
                     handler.removeCallbacks(finish);
                     handler.postDelayed(finish, 5000);
                     Log.i("EventAssignmentAlarm", "Event alarm started on alarm stream");
+                    reportPlayback(true);
                 } catch (RuntimeException error) {
                     Log.w("EventAssignmentAlarm", "Alarm could not start playback");
-                    stopSelf();
+                    stopPlayback();
                 }
             });
             next.setOnErrorListener((failed, what, extra) -> {
+                if (player != failed) return true;
                 Log.w("EventAssignmentAlarm", "Alarm playback error: " + what);
-                stopSelf();
+                stopPlayback();
                 return true;
             });
-            handler.postDelayed(finish, 10000); // Also bound preparation failures.
+            handler.postDelayed(finish, Math.max(0,
+                    playbackDeadline - SystemClock.elapsedRealtime()));
             next.prepareAsync();
         } catch (Exception error) {
             Log.w("EventAssignmentAlarm", "Alarm failed: " + error.getClass().getSimpleName());
-            stopSelf();
+            stopPlayback();
         }
         return START_NOT_STICKY;
+    }
+
+    private void reportPlayback(boolean started) {
+        ResultReceiver receiver = playbackResult;
+        playbackResult = null;
+        if (receiver != null) receiver.send(started ? PLAYBACK_STARTED : 0, null);
+    }
+
+    private void stopPlayback() {
+        releasePlayback();
+        stopSelf();
     }
 
     private void releasePlayback() {
@@ -137,6 +171,9 @@ public final class EventAlarmService extends Service {
         }
         focus = null;
         legacyFocusHeld = false;
+        // Once start was confirmed, the receiver is already cleared. Otherwise
+        // report failure only after releasing audio so the fallback can play.
+        reportPlayback(false);
     }
 
     @Override public void onDestroy() {

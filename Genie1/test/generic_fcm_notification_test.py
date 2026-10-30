@@ -64,6 +64,7 @@ class GenericFcmNotificationTest(unittest.TestCase):
         self.assertEqual(data["docname"], "LEAD-1")
         self.assertEqual(data["notification_name"], "New Lead")
         self.assertEqual(data["alarm_enabled"], "0")
+        self.assertEqual(data["sound_mode"], "default")
         self.assertEqual(data["assignment_id"], "")
         self.assertNotIn("notification", self.messaging.Message.call_args.kwargs)
 
@@ -74,6 +75,30 @@ class GenericFcmNotificationTest(unittest.TestCase):
         with self.trusted():
             self.assertEqual(self.send()["status"], "sent")
         self.assertEqual(self.messaging.Message.call_args.kwargs["data"]["alarm_enabled"], "1")
+        self.assertEqual(self.messaging.Message.call_args.kwargs["data"]["sound_mode"], "alarm")
+
+    def test_trusted_sound_modes_preserve_role_gate_and_legacy_alarm_flag(self):
+        for eligible in (False, True):
+            for requested in ("alarm", "default", "silent"):
+                with self.subTest(eligible=eligible, requested=requested):
+                    self.cache_values.clear()
+                    self.frappe.db.exists.return_value = eligible
+                    self.payload["sound_mode"] = requested
+                    with self.trusted():
+                        self.assertEqual(self.send()["status"], "sent")
+                    data = self.messaging.Message.call_args.kwargs["data"]
+                    expected = "default" if requested == "alarm" and not eligible else requested
+                    self.assertEqual(data["sound_mode"], expected)
+                    self.assertEqual(data["alarm_enabled"], "1" if expected == "alarm" else "0")
+
+    def test_invalid_sound_mode_does_not_send_or_record_delivery(self):
+        for mode in ("unknown", "", 1, [], {}):
+            self.payload["sound_mode"] = mode
+            with self.subTest(mode=mode), self.trusted():
+                with self.assertRaisesRegex(ValueError, "sound mode"):
+                    self.send()
+            self.assertFalse(self.cache_values)
+        self.messaging.send.assert_not_called()
 
     def test_references_cannot_be_forged(self):
         for key, value in [("doctype", "Task"), ("docname", "LEAD-2"),
