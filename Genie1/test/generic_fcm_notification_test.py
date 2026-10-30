@@ -191,15 +191,67 @@ class GenericFcmNotificationTest(unittest.TestCase):
         }):
             self.module.setup_fcm_notification_channel()
             self.assertEqual(fields["channel"]["options"], "Email\nSlack\nSystem Notification\nSMS\nExisting Custom\nFCM")
-            self.assertIn("doc.channel == 'Email'", fields["subject"]["depends_on"])
+            self.assertEqual(fields["subject"]["depends_on"],
+                "eval:doc.channel == 'FCM' || (doc.channel == 'Email')")
+            self.assertEqual(fields["message"]["depends_on"],
+                "eval:doc.channel == 'FCM' || (!doc.email_template)")
             count = len(setters)
             self.module.setup_fcm_notification_channel()
             self.assertEqual(len(setters), count)
         self.frappe.only_for.assert_called_with("System Manager")
 
+    def test_channel_setup_repairs_saved_conditions_and_preserves_other_channels(self):
+        cases = [
+            ("eval:doc.channel == 'FCM' or (in_list(['Email', 'Slack', 'System Notification'], doc.channel))",
+             "eval:doc.channel == 'FCM' || (in_list(['Email', 'Slack', 'System Notification'], doc.channel))"),
+            ('eval:doc.channel == \'FCM\' or doc.get("email_template")',
+             'eval:doc.channel == \'FCM\' || doc["email_template"]'),
+            ('eval:doc.channel == \'FCM\' || doc.get("email_template")',
+             'eval:doc.channel == \'FCM\' || doc["email_template"]'),
+            ('email_template', 'eval:doc.channel == \'FCM\' || doc["email_template"]'),
+            ("eval:doc.channel == 'FCM' || (doc.channel == 'Email')",
+             "eval:doc.channel == 'FCM' || (doc.channel == 'Email')"),
+            ("eval:doc.channel == 'FCM'", "eval:doc.channel == 'FCM'"),
+        ]
+        for previous, expected in cases:
+            with self.subTest(previous=previous):
+                fields = {
+                    "channel": Row(options="Email\nFCM"),
+                    "subject": Row(depends_on=previous, mandatory_depends_on=previous),
+                    "message": Row(depends_on=previous),
+                }
+                setter = Mock(side_effect=lambda dt, field, prop, value, kind:
+                    fields[field].update({prop: value}))
+                self.frappe.only_for = Mock()
+                self.frappe.get_meta = Mock(return_value=SimpleNamespace(get_field=fields.get))
+                self.frappe.clear_cache = Mock()
+                with patch.dict("sys.modules", {
+                    "frappe.custom.doctype.property_setter.property_setter": SimpleNamespace(make_property_setter=setter),
+                }):
+                    self.module.setup_fcm_notification_channel()
+                    self.assertEqual(fields["subject"]["depends_on"], expected)
+                    self.assertEqual(fields["subject"]["mandatory_depends_on"], expected)
+                    self.assertEqual(fields["message"]["depends_on"], expected)
+                    count = setter.call_count
+                    self.module.setup_fcm_notification_channel()
+                    self.assertEqual(setter.call_count, count)
+
+    def test_channel_setup_keeps_empty_visibility_and_requires_subject_for_fcm(self):
+        fields = {"channel": Row(options="Email\nFCM"), "subject": Row(), "message": Row()}
+        setter = Mock(side_effect=lambda dt, field, prop, value, kind: fields[field].update({prop: value}))
+        self.frappe.only_for = Mock()
+        self.frappe.get_meta = Mock(return_value=SimpleNamespace(get_field=fields.get))
+        self.frappe.clear_cache = Mock()
+        with patch.dict("sys.modules", {
+            "frappe.custom.doctype.property_setter.property_setter": SimpleNamespace(make_property_setter=setter),
+        }):
+            self.module.setup_fcm_notification_channel()
+        setter.assert_called_once_with("Notification", "subject", "mandatory_depends_on",
+            "eval:doc.channel == 'FCM'", "Code")
+
     def test_worker_and_real_script_resolve_recipients_without_http_request(self):
         self.frappe.flags = Flags()
-        self.frappe.utils = SimpleNamespace(strip_html_tags=lambda text: text)
+        self.frappe.utils = SimpleNamespace(strip_html=lambda text: text)
         self.frappe.render_template = Mock(side_effect=lambda text, context, **kwargs: text)
         self.frappe.call = Mock(side_effect=AssertionError("HTTP dispatch must not be used in workers"))
         script_doc = Row(name="Generic FCM", script=SCRIPT)

@@ -247,7 +247,7 @@ class NotificationVersionCompatibilityTest(unittest.TestCase):
 
     def test_v15_69_worker_runs_real_recipient_script_without_missing_helpers(self):
         self.frappe.flags = generic.Flags()
-        self.frappe.utils = SimpleNamespace(strip_html_tags=lambda text: text)
+        self.frappe.utils = SimpleNamespace(strip_html=lambda text: text)
         self.frappe.render_template = lambda text, context: text
         self.frappe.get_doc.side_effect = lambda dt, name: {
             "Notification": self.rule, "Lead": self.document,

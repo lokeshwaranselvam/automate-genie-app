@@ -42,15 +42,18 @@ if notification.get("enabled") and notification.get("channel") == "FCM" and noti
 
     title_template = notification.get("subject") or ""
     body_template = notification.get("message") or ""
-    title = frappe.utils.strip_html_tags(renderer(title_template, context)).strip()
-    body = frappe.utils.strip_html_tags(renderer(body_template, context)).strip()
+    title = frappe.utils.strip_html(renderer(title_template, context)).strip()
+    body = frappe.utils.strip_html(renderer(body_template, context)).strip()
     if not title:
         frappe.throw("Configure a Subject for this FCM rule.")
     if not body:
         frappe.throw("Configure a Message for this FCM rule.")
 
     # Reuse Frappe's recipient field/role/condition/assignee resolution.
-    recipients, cc, bcc = notification.get_list_of_recipients(doc, context)
+    recipient_lists = notification.get_list_of_recipients(doc, context)
+    recipients = recipient_lists[0]
+    cc = recipient_lists[1]
+    bcc = recipient_lists[2]
     candidates = []
     for value in recipients + cc + bcc:
         user = str(value or "").strip()

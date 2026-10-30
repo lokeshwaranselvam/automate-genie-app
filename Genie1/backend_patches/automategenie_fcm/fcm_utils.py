@@ -9,6 +9,8 @@ cannot be invoked over HTTP. No DocType-specific payload builders are used.
 import json
 import hashlib
 import inspect
+import traceback
+from functools import wraps
 from importlib import import_module
 from contextvars import ContextVar
 from pathlib import Path
@@ -24,6 +26,21 @@ _APP_LOCK = Lock()
 _NOTIFICATION_DISPATCH = ContextVar("genie_fcm_notification_dispatch", default=None)
 
 
+def _log_fcm_errors(stage):
+    """Record otherwise unhandled failures without changing exception behavior."""
+    def decorate(function):
+        @wraps(function)
+        def logged(*args, **kwargs):
+            try:
+                return function(*args, **kwargs)
+            except Exception as error:
+                _log_notification_failure(None, error, stage=stage)
+                raise
+        return logged
+    return decorate
+
+
+@_log_fcm_errors("firebase_initialization")
 def get_firebase_app():
     """Use a site-specific named app without changing the default Firebase app."""
     app_name = PROJECT_ID + ":" + str(frappe.local.site)
@@ -47,6 +64,7 @@ def get_firebase_app():
         return app
 
 
+@_log_fcm_errors("recipient_validation_or_delivery")
 def send_fcm_to_user(user, payload):
     """Internal sender for generic Notification payloads, never a public API."""
     if isinstance(payload, str):
@@ -103,7 +121,7 @@ class FCMNotificationMixin:
             try:
                 self.create_system_notification(doc, context)
             except Exception as error:
-                _log_notification_failure(self.name, type(error).__name__)
+                _log_notification_failure(self.name, error, stage="erp_bell_notification", document=doc)
 
     def _enqueue_fcm_notification(self, doc):
         try:
@@ -115,7 +133,7 @@ class FCMNotificationMixin:
                 document_version=str(doc.get("modified") or doc.get("creation") or ""),
             )
         except Exception as error:
-            _log_notification_failure(self.name, type(error).__name__)
+            _log_notification_failure(self.name, error, stage="enqueue_after_commit", document=doc)
 
 
 def _notification_context(rule, document):
@@ -138,24 +156,38 @@ def _notification_context(rule, document):
 
 def dispatch_document_notification(notification_name, doctype, docname, document_version=""):
     """Internal queue target. Intentionally NOT whitelisted/public."""
-    from frappe.utils.safe_exec import safe_exec
+    stage = "load_safe_exec"
+    try:
+        from frappe.utils.safe_exec import safe_exec
 
-    rule = frappe.get_doc("Notification", notification_name)
-    if not rule.get("enabled") or rule.get("channel") != "FCM" or rule.get("event") == "Custom":
-        return {"status": "skipped"}
-    if rule.get("document_type") != doctype:
-        frappe.throw("Notification DocType mismatch.")
-    document = frappe.get_doc(doctype, docname)
-    script_name = frappe.db.get_value("Server Script", {
-        "api_method": "mobile_fcm_notification", "script_type": "API", "disabled": 0,
-    }, "name")
-    if not script_name:
-        _log_notification_failure(rule.name, "Generic Server Script missing or disabled")
-        return {"status": "failed", "message": "Generic Server Script missing or disabled"}
-    script = frappe.get_doc("Server Script", script_name)
+        stage = "load_notification_rule"
+        rule = frappe.get_doc("Notification", notification_name)
+        if not rule.get("enabled") or rule.get("channel") != "FCM" or rule.get("event") == "Custom":
+            return {"status": "skipped"}
+        stage = "validate_document_type"
+        if rule.get("document_type") != doctype:
+            frappe.throw("Notification DocType mismatch.")
+        stage = "load_document"
+        document = frappe.get_doc(doctype, docname)
+        stage = "find_server_script"
+        script_name = frappe.db.get_value("Server Script", {
+            "api_method": "mobile_fcm_notification", "script_type": "API", "disabled": 0,
+        }, "name")
+        if not script_name:
+            _log_notification_failure(rule.name, "Generic Server Script missing or disabled",
+                stage=stage, document=document)
+            return {"status": "failed", "message": "Generic Server Script missing or disabled"}
+        stage = "load_server_script"
+        script = frappe.get_doc("Server Script", script_name)
+    except Exception as error:
+        _log_notification_failure(notification_name, error, stage=stage,
+            document={"doctype": doctype, "name": docname})
+        # These failures previously propagated to the queue worker.
+        raise
     dispatch = {"rule": rule, "document": document, "version": document_version}
     marker = _NOTIFICATION_DISPATCH.set(dispatch)
     try:
+        stage = "build_template_context"
         context = _notification_context(rule, document)
         # Pass the Python callable directly. Restricted frappe.call/safe_enqueue
         # may invoke HTTP-method checks in a worker where no request exists.
@@ -166,15 +198,23 @@ def dispatch_document_notification(notification_name, doctype, docname, document
         }}}
         if "script_filename" in inspect.signature(safe_exec).parameters:
             execution["script_filename"] = script.name
+        stage = "execute_mobile_fcm_notification"
         scope, unused_locals = safe_exec(script.script, **execution)
-        return scope["frappe"].flags.get("fcm_notification_result") or {"status": "processed"}
+        stage = "read_server_script_result"
+        result = scope["frappe"].flags.get("fcm_notification_result") or {"status": "processed"}
+        if (isinstance(result, dict) and result.get("status") == "processed"
+                and all(result.get(key) == 0 for key in ("sent", "failed", "skipped"))):
+            _log_notification_failure(rule.name, "Server Script processed without any recipient deliveries",
+                stage="recipient_resolution", document=document)
+        return result
     except Exception as error:
-        _log_notification_failure(rule.name, type(error).__name__)
+        _log_notification_failure(rule.name, error, stage=stage, document=document)
         return {"status": "failed", "message": "FCM Notification dispatch failed"}
     finally:
         _NOTIFICATION_DISPATCH.reset(marker)
 
 
+@_log_fcm_errors("render_notification_template")
 def render_notification_template(template, context):
     """Use restricted globals where supported, including v15 backports.
 
@@ -187,10 +227,37 @@ def render_notification_template(template, context):
     return frappe.render_template(template, context)
 
 
-def _log_notification_failure(notification_name, error_name):
-    # Do not log SDK messages, device tokens, rendered customer data or locals.
-    frappe.log_error(title="FCM Notification dispatch failed",
-        message="Notification " + str(notification_name) + "; " + str(error_name))
+def _log_notification_failure(notification_name, error, *, stage="dispatch", document=None, user=None):
+    """Safe diagnostics: frame locations only, never exception text or locals.
+
+    Open ERP Error Log and search for FCM Notification. A logger failure must
+    not turn an accepted Firebase delivery into a failure or mask its cause.
+    """
+    try:
+        dispatch = _NOTIFICATION_DISPATCH.get() or {}
+        rule = dispatch.get("rule")
+        if notification_name is None and rule is not None:
+            notification_name = rule.get("name")
+        if document is None:
+            document = dispatch.get("document")
+        details = {"stage": stage, "notification": str(notification_name or ""),
+            "error": type(error).__name__ if isinstance(error, BaseException) else str(error)}
+        if document is not None:
+            details.update({"doctype": document.get("doctype"), "docname": document.get("name")})
+        if rule is not None:
+            details["event"] = rule.get("event")
+        if user:
+            details["recipient_hash"] = hashlib.sha256(user.encode()).hexdigest()[:16]
+        if isinstance(error, BaseException):
+            details["frames"] = [
+                {"file": Path(frame.filename).name, "function": frame.name, "line": frame.lineno}
+                for frame in traceback.extract_tb(error.__traceback__)[-15:]
+            ]
+        frappe.log_error(title="FCM Notification: " + stage,
+            message=json.dumps(details, ensure_ascii=True, default=str))
+    except Exception:
+        # Diagnostics must not affect existing send/return/exception behavior.
+        pass
 
 
 def _send_document_notification(user, payload):
@@ -208,6 +275,8 @@ def _send_document_notification(user, payload):
             or rule.get("document_type") != document.doctype or rule.get("event") == "Custom"):
         return {"status": "skipped"}
     if not frappe.db.get_value("User", user, "enabled") or not document.has_permission("read", user=user):
+        _log_notification_failure(rule.name, "Recipient is disabled or has no document access",
+            stage="recipient_access", document=document, user=user)
         return {"status": "skipped", "message": "Recipient is disabled or has no document access"}
     if any(not isinstance(payload.get(key), str) or not payload[key].strip() for key in ["title", "body"]):
         frappe.throw("FCM title and body are required.")
@@ -223,7 +292,8 @@ def _send_document_notification(user, payload):
             fields=["fcm_token"], order_by="modified desc, name desc", limit_page_length=1)
         token = devices[0].get("fcm_token") if devices else None
         if not isinstance(token, str) or not token.strip():
-            _log_notification_failure(rule.name, "No active device token")
+            _log_notification_failure(rule.name, "No active device token",
+                stage="device_lookup", document=document, user=user)
             return {"status": "failed", "message": "No active device token"}
         alarm_enabled = bool(frappe.db.exists("Has Role", {
             "parent": user, "parenttype": "User", "parentfield": "roles",
@@ -244,7 +314,7 @@ def _send_document_notification(user, payload):
             response = messaging.send(messaging.Message(token=token.strip(), data=data,
                 android=messaging.AndroidConfig(priority="high")), app=get_firebase_app())
         except Exception as error:
-            _log_notification_failure(rule.name, type(error).__name__)
+            _log_notification_failure(rule.name, error, stage="firebase_send", document=document, user=user)
             return {"status": "failed", "message": "FCM sending failed"}
         # Firebase acceptance is recorded; it is not proof of phone delivery.
         cache.set_value(delivery_key, str(response), expires_in_sec=86400)
@@ -252,7 +322,7 @@ def _send_document_notification(user, payload):
 
 
 def setup_fcm_notification_channel():
-    """Run once from bench console as Administrator/System Manager, not HTTP."""
+    """Install/repair FCM field conditions from the bench console, not HTTP."""
     frappe.only_for("System Manager")
     from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
@@ -263,20 +333,32 @@ def setup_fcm_notification_channel():
         make_property_setter("Notification", "channel", "options", "\n".join(channels), "Text")
     for fieldname, property_name in [("subject", "depends_on"), ("subject", "mandatory_depends_on"), ("message", "depends_on")]:
         previous = meta.get_field(fieldname).get(property_name) or ""
+        expression = previous
+        fcm_prefix = "eval:doc.channel == 'FCM'"
+        # Repair only expressions generated by earlier versions of this helper.
+        # Property Setter conditions execute as JavaScript in the browser.
+        legacy_prefix = fcm_prefix + " or "
+        if expression.startswith(legacy_prefix):
+            expression = fcm_prefix + " || " + expression[len(legacy_prefix):]
+        legacy_field_prefix = fcm_prefix + " || doc.get("
+        if expression.startswith(legacy_field_prefix) and expression.endswith(")"):
+            expression = fcm_prefix + " || doc[" + expression[len(legacy_field_prefix):-1] + "]"
         if "doc.channel == 'FCM'" in previous:
-            continue
-        if previous.startswith("eval:"):
-            expression = "eval:doc.channel == 'FCM' or (" + previous[5:] + ")"
+            if expression == previous:
+                continue
+        elif previous.startswith("eval:"):
+            expression = fcm_prefix + " || (" + previous[5:] + ")"
         elif previous:
-            expression = "eval:doc.channel == 'FCM' or doc.get(" + json.dumps(previous) + ")"
+            expression = fcm_prefix + " || doc[" + json.dumps(previous) + "]"
         elif property_name == "mandatory_depends_on":
-            expression = "eval:doc.channel == 'FCM'"
+            expression = fcm_prefix
         else:
             continue
         make_property_setter("Notification", fieldname, property_name, expression, "Code")
     frappe.clear_cache(doctype="Notification")
 
 
+@_log_fcm_errors("validate_controller_registration")
 def validate_fcm_notification_installation():
     """Console check after registration; detects another app masking the hook."""
     from frappe.model.base_document import get_controller
