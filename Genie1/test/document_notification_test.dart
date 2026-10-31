@@ -86,6 +86,42 @@ void main() {
     expect(alarms, 2); // Another rule/update for the same document is allowed.
   });
 
+  test(
+    'Client Script pushes from the unchanged server remain compatible',
+    () async {
+      for (final foreground in [false, true]) {
+        for (final alarmFlag in ['0', '1']) {
+          final previousShows = shows.length;
+          final previousAlarms = alarms;
+          final payload = <String, dynamic>{
+            ...data,
+            'doctype': 'Client Script',
+            'docname': 'Employee form notification',
+            'title': 'Client Script saved',
+            'body': 'The employee form script was updated.',
+            'alarm_enabled': alarmFlag,
+            // The previous server does not include sound_mode.
+          };
+          expect(
+            await showDocumentNotification(
+              RemoteMessage(
+                messageId: 'client-script-$foreground-$alarmFlag',
+                data: payload,
+              ),
+              playAlarm: foreground,
+            ),
+            isTrue,
+          );
+          expect(shows, hasLength(previousShows + 1));
+          expect(shows.last['title'], payload['title']);
+          expect(shows.last['body'], payload['body']);
+          expect(jsonDecode(shows.last['payload'])['doctype'], 'Client Script');
+          expect(alarms, previousAlarms + (alarmFlag == '1' ? 1 : 0));
+        }
+      }
+    },
+  );
+
   test('legacy zero uses normal sound; invalid flags remain silent', () async {
     for (final flag in ['0', '', 'true']) {
       await send(id: flag, changes: {'alarm_enabled': flag});
@@ -203,17 +239,20 @@ void main() {
     expect(alarms, 1);
   });
 
-  test('confirmed native playback does not add a second audible alert', () async {
-    playbackConfirmation = Completer<bool>();
-    final delivery = send(changes: {'sound_mode': 'alarm'});
-    await playbackRequested.future;
-    expect(alarms, 1);
-    expect(shows, hasLength(1));
-    playbackConfirmation!.complete(true);
-    expect(await delivery, isTrue);
-    expect(shows, hasLength(1));
-    expect(shows.single['platformSpecifics']['playSound'], isFalse);
-  });
+  test(
+    'confirmed native playback does not add a second audible alert',
+    () async {
+      playbackConfirmation = Completer<bool>();
+      final delivery = send(changes: {'sound_mode': 'alarm'});
+      await playbackRequested.future;
+      expect(alarms, 1);
+      expect(shows, hasLength(1));
+      playbackConfirmation!.complete(true);
+      expect(await delivery, isTrue);
+      expect(shows, hasLength(1));
+      expect(shows.single['platformSpecifics']['playSound'], isFalse);
+    },
+  );
 
   test(
     'rejects wrong recipients, malformed payloads and logged-out users',
