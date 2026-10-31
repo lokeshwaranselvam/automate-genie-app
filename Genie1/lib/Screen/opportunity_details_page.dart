@@ -9,6 +9,7 @@ import '../utils/widget/ag_path_loading_indicator.dart';
 import '../utils/widget/home_back_button.dart';
 import '../utils/widget/crm_document_details.dart';
 import '../utils/widget/opportunity_edit_dialog.dart';
+import '../utils/widget/opportunity_owner_dialog.dart';
 
 class OpportunityDetailsPage extends StatefulWidget {
   const OpportunityDetailsPage({super.key, required this.opportunityId});
@@ -31,7 +32,9 @@ class _OpportunityDetailsPageState extends State<OpportunityDetailsPage> {
     setState(() => _editing = true);
     try {
       final original = _document!;
-      final options = await OpportunityApi.getEditOptions(name: original['name']?.toString());
+      final options = await OpportunityApi.getEditOptions(
+        name: original['name']?.toString(),
+      );
       if (!mounted) return;
       final changes = await showDialog<Map<String, dynamic>>(
         context: context,
@@ -59,6 +62,26 @@ class _OpportunityDetailsPageState extends State<OpportunityDetailsPage> {
           error.toString().replaceFirst('Bad state: ', ''),
           'Error',
         );
+      }
+    } finally {
+      if (mounted) setState(() => _editing = false);
+    }
+  }
+
+  Future<void> _editOwner() async {
+    if (_editing || _loading || _document == null) return;
+    setState(() => _editing = true);
+    try {
+      final changed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => OpportunityOwnerDialog(document: _document!),
+      );
+      if (changed == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Opportunity Owner updated.')),
+        );
+        Navigator.of(context).pop();
       }
     } finally {
       if (mounted) setState(() => _editing = false);
@@ -155,6 +178,7 @@ class _OpportunityDetailsPageState extends State<OpportunityDetailsPage> {
                 creatorFullName: _creatorFullName,
                 refreshing: _loading || _editing,
                 onEditOpportunity: _edit,
+                onEditOpportunityOwner: _editOwner,
                 onCallContact: _callContact,
                 callInProgress: _calling || _loading,
               )

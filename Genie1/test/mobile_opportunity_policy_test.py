@@ -22,22 +22,24 @@ class MobileOpportunityPolicyTest(unittest.TestCase):
         self.doc.save = Mock()
         self.doc.apply_fieldlevel_read_permissions = Mock()
         self.doc.as_dict = lambda: {key: value for key, value in self.doc.items() if not callable(value)}
-        fields = [Row(fieldname='status', fieldtype='Select', label='Status', options='Open\nFollow-up\nDemo\nLost'),
+        fields = [Row(fieldname='opportunity_owner', fieldtype='Link', label='Opportunity Owner', options='User'),
+                  Row(fieldname='status', fieldtype='Select', label='Status', options='Open\nFollow-up\nDemo\nLost'),
                   Row(fieldname='custom_next_followup_date', fieldtype='Date', label='Next Followup Date'),
                   Row(fieldname='notes', fieldtype='Table', label='Notes', options='CRM Note')]
         meta = SimpleNamespace(fields=fields, get_field=lambda key: next((field for field in fields if field.fieldname == key), None))
         event_meta = SimpleNamespace(get_field=lambda key: Row(fieldtype='Table', options='Event Participants') if key == 'event_participants' else None)
         child_meta = SimpleNamespace(get_field=lambda key: Row(fieldname=key))
+        note_meta = SimpleNamespace(get_field=lambda key: Row(fieldname=key) if key in ['note', 'added_by', 'added_on'] else None)
         self.frappe = SimpleNamespace(
             session=Row(user='sales@example.test', csrf_token='csrf'), form_dict={}, response={}, request=SimpleNamespace(method='POST'),
-            get_list=Mock(return_value=[]), get_meta=Mock(side_effect=lambda name: event_meta if name == 'Event' else child_meta if name == 'Event Participants' else meta), get_doc=Mock(return_value=self.doc),
+            get_list=Mock(return_value=[]), get_meta=Mock(side_effect=lambda name: event_meta if name == 'Event' else child_meta if name == 'Event Participants' else note_meta if name == 'CRM Note' else meta), get_doc=Mock(return_value=self.doc),
             db=SimpleNamespace(exists=Mock(return_value=True)),
-            utils=SimpleNamespace(nowdate=lambda: '2026-10-26', getdate=date.fromisoformat),
+            utils=SimpleNamespace(nowdate=lambda: '2026-10-26', now_datetime=lambda: '2026-10-26 12:34:56', getdate=date.fromisoformat),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
 
     def run_api(self, action='get', script=SCRIPT, **params):
-        if action == 'save':
+        if action in ['save', 'change_owner']:
             params.setdefault('csrf_token', 'csrf')
         self.frappe.form_dict = dict(action=action, **params)
         self.frappe.response = {}
@@ -104,6 +106,73 @@ class MobileOpportunityPolicyTest(unittest.TestCase):
         self.doc.check_permission.assert_any_call('read')
         self.doc.check_permission.assert_any_call('write')
         self.doc.save.assert_called_once_with()
+
+    def test_new_note_uses_session_author_and_server_time_not_client_values(self):
+        result = self.save({'notes': self.doc.notes + [{'note': 'Called customer',
+            'added_by': 'spoofed@example.test', 'added_on': '2000-01-01 00:00:00'}]})
+        note = result['data']['notes'][-1]
+        self.assertEqual(note['added_by'], 'sales@example.test')
+        self.assertEqual(note['added_on'], '2026-10-26 12:34:56')
+
+    def test_unchanged_note_keeps_its_original_author_and_time(self):
+        original = {'name': 'NOTE-1', 'note': 'History', 'added_by': 'original@example.test',
+                    'added_on': '2026-10-20 09:00:00'}
+        self.doc.notes = [dict(original)]
+        tampered = dict(original, added_by='spoofed@example.test', added_on='2099-01-01 00:00:00')
+        result = self.save({'notes': [tampered, {'note': 'New note'}]})
+        self.assertEqual(result['data']['notes'][0], original)
+
+    def test_note_audit_does_not_invent_authorship_for_legacy_rows(self):
+        result = self.save({'notes': [dict(self.doc.notes[0], added_by='fake', added_on='fake'), {'note': 'New'}]})
+        self.assertEqual(result['data']['notes'][0], {'name': 'NOTE-1', 'note': 'History'})
+
+    def test_invalid_note_rows_are_rejected(self):
+        for notes in ['text', [None], [{'note': 'Valid'}, 'invalid']]:
+            with self.subTest(notes=notes), self.assertRaisesRegex(ValueError, 'list of note rows'):
+                self.save({'notes': notes})
+        self.doc.save.assert_not_called()
+
+    def test_owner_search_uses_erp_user_link_permissions(self):
+        self.frappe.call = Mock(return_value=[{'value': 'next@example.test'}])
+        result = self.run_api(action='owner_options', name='OPP-1', txt='next')
+        self.assertEqual(result['message']['options'], [{'value': 'next@example.test'}])
+        self.doc.check_permission.assert_any_call('write')
+        self.frappe.call.original.assert_called_once_with('frappe.desk.search.search_link',
+            doctype='User', txt='next', page_length=20, reference_doctype='Opportunity',
+            ignore_user_permissions=False, filters={'enabled': 1})
+        self.doc.save.assert_not_called()
+
+    def test_owner_change_updates_only_owner_and_returns_receipt(self):
+        self.frappe.call = Mock(return_value=[{'value': 'next@example.test'}])
+        result = self.run_api(action='change_owner', name='OPP-1', modified=self.doc.modified,
+            new_owner='next@example.test', changes={'status': 'Demo'})
+        self.assertEqual(self.doc.opportunity_owner, 'next@example.test')
+        self.assertEqual(self.doc.status, 'Open')
+        self.assertEqual(self.doc.sales_stage, 'Original stage')
+        self.assertEqual(self.doc.notes, [{'name': 'NOTE-1', 'note': 'History'}])
+        self.assertEqual(result['message']['opportunity_owner'], 'next@example.test')
+        self.assertNotIn('data', result)
+        self.doc.save.assert_called_once_with()
+
+    def test_owner_change_rejects_stale_request_csrf_and_unpermitted_user(self):
+        self.frappe.call = Mock(return_value=[])
+        for extra, message in [({'csrf_token': 'wrong'}, 'session expired'),
+                               ({'modified': 'old'}, 'changed'), ({}, 'permitted ERP user')]:
+            params = dict(name='OPP-1', modified=self.doc.modified, new_owner='next@example.test')
+            params.update(extra)
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, message):
+                self.run_api(action='change_owner', **params)
+        self.doc.save.assert_not_called()
+
+    def test_owner_change_requires_existing_owner_and_write_permission(self):
+        self.doc.opportunity_owner = 'someone-else@example.test'
+        with self.assertRaisesRegex(ValueError, 'Opportunity Owner'):
+            self.run_api(action='change_owner', name='OPP-1', modified=self.doc.modified, new_owner='next@example.test')
+        self.doc.opportunity_owner = 'sales@example.test'
+        self.doc.check_permission.side_effect = lambda permission: (_ for _ in ()).throw(PermissionError('Denied')) if permission == 'write' else None
+        with self.assertRaises(PermissionError):
+            self.run_api(action='owner_options', name='OPP-1')
+        self.doc.save.assert_not_called()
 
     def test_unchanged_status_does_not_change_sales_stage(self):
         self.save({'status': 'Open'})

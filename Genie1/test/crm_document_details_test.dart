@@ -367,6 +367,92 @@ void main() {
       isNull,
     );
   });
+  for (final width in [320.0, 393.0]) {
+    testWidgets(
+      'Opportunity note author and time appear on the right at width $width',
+      (tester) async {
+        tester.view.physicalSize = Size(width, 850);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final capture = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: capture,
+            child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              theme: ThemeData(
+                useMaterial3: true,
+                fontFamily: 'DetailsPreview',
+              ),
+              builder:
+                  (context, child) => MediaQuery(
+                    data: MediaQuery.of(context).copyWith(
+                      textScaler: TextScaler.linear(width == 320 ? 1.5 : 1),
+                    ),
+                    child: child!,
+                  ),
+              home: Scaffold(
+                backgroundColor: CrmDocumentDetails.background,
+                appBar: brandAppBar(title: const Text('Opportunity Details')),
+                body: const CrmDocumentDetails(
+                  documentType: 'Opportunity',
+                  document: {
+                    'name': 'ROC-OPP-2026-00477',
+                    'status': 'Follow-up',
+                    'customer_name': 'Customer One',
+                    'notes': [
+                      {
+                        'note': '<p>Customer requested a follow-up call.</p>',
+                        'added_by': 'sales@example.test',
+                        'added_on': '2026-10-31 12:37:00',
+                      },
+                      {'note': '<p>Older note without audit details.</p>'},
+                    ],
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.text('sales@example.test'),
+          100,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(find.text('31 Oct 2026, 12:37 PM'), findsOneWidget);
+        expect(
+          tester.getTopLeft(find.text('sales@example.test')).dx,
+          greaterThan(
+            tester
+                .getTopLeft(find.text('Customer requested a follow-up call.'))
+                .dx,
+          ),
+        );
+        expect(find.text('Author unavailable'), findsOneWidget);
+        expect(find.text('Time unavailable'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        if (width == 393) {
+          await tester.runAsync(() async {
+            final boundary =
+                capture.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
+            final picture = await boundary.toImage(pixelRatio: 2);
+            final bytes = await picture.toByteData(
+              format: ui.ImageByteFormat.png,
+            );
+            await Directory('build/details_preview').create(recursive: true);
+            await File(
+              'build/details_preview/opportunity_note_audit.png',
+            ).writeAsBytes(bytes!.buffer.asUint8List());
+            picture.dispose();
+          });
+        }
+      },
+    );
+  }
+
   setUpAll(() async {
     for (final entry
         in {

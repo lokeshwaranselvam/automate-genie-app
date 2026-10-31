@@ -11,7 +11,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'attendance_page.dart';
 import 'home_dashboard_view.dart';
-import 'leave_application_page.dart';
+import 'leave_application_webview_page.dart';
 import 'site_visits_page.dart';
 import 'new_site_visit_page.dart';
 import '../utils/api/site_visit_creation_api.dart';
@@ -28,8 +28,7 @@ import 'package:homegenie/Screen/session_webview.dart';
 import 'pending_work_page.dart';
 import 'pending_work_overview_page.dart';
 import 'lead_creation_page.dart';
-import 'my_leads_page.dart';
-import 'my_opportunities_page.dart';
+import 'opportunities_webview_page.dart';
 import 'my_performance_page.dart';
 import 'expense_claim_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -43,7 +42,7 @@ import '../utils/api/session_web_links_api.dart';
 import '../utils/api/pending_work_monitor.dart';
 import '../utils/api/pending_work_api.dart';
 import '../utils/api/event.dart';
-import '../utils/api/lead_api.dart';
+import '../utils/api/opportunity_api.dart';
 import '../utils/api/location_api.dart';
 import '../utils/face/face_auth_flow.dart';
 import '../utils/face/face_performance_trace.dart';
@@ -86,7 +85,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   List eventData = [];
   List<String> officeTypes = [];
   List<Map<String, String>> _sessionWebLinks = [];
-  bool _showOpportunities = false;
   bool _showHomeAddLead = false;
   bool _showHomeNewVisit = false;
   // Visits navigation is available to every signed-in user.
@@ -97,7 +95,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   bool _showHomePending = false;
   bool _showPendingDrawer = false;
   int _homeActionAccessRequest = 0;
-  int _opportunityAccessRequest = 0;
   bool _webLinksLoading = false;
   String? _webLinksError;
   int _webLinksRequestId = 0;
@@ -123,13 +120,16 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   bool _isActionLoading = false;
   bool _attendanceChooserOpen = false;
   bool _attendancePageOpen = false;
+  final _leaveApplicationWebViewKey =
+      GlobalKey<LeaveApplicationWebViewPageState>();
   bool _leaveApplicationOpen = false;
   bool _prefsInitialized = false;
   String? _startupError;
   Map<String, dynamic> _attendanceStatusDetails = {};
   int _selectedTab = 0;
+  final _opportunitiesWebViewKey = GlobalKey<OpportunitiesWebViewPageState>();
   int? _homePendingCount;
-  int? _homeLeadCount;
+  int? _homeOpportunityCount;
   int? _homeTaskTodayCount;
   ({int pending, int inProgress, int completed})? _homeTaskSummary;
   final GlobalKey<PendingWorkPageState> _pendingWorkPageKey =
@@ -265,7 +265,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     );
     unawaited(_loadHomePendingCount());
     unawaited(_loadHomeTaskTodayCount());
-    unawaited(_loadHomeLeadCount());
+    unawaited(_loadHomeOpportunityCount());
     unawaited(_loadHomeQuickActionAccess());
     _homeScheduleRefreshTimer = Timer.periodic(const Duration(seconds: 30), (
       _,
@@ -315,7 +315,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       _selectedTab = 0;
     });
     unawaited(_loadHomeTaskTodayCount());
-    unawaited(_loadHomeLeadCount());
+    unawaited(_loadHomeOpportunityCount());
     if (shouldRefresh) unawaited(_refreshHomeSchedule());
   }
 
@@ -333,7 +333,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       if (!_isActionLoading) unawaited(_getStatusFromServer(force: true));
       if (_selectedTab == 0) unawaited(_refreshHomeSchedule());
       if (_selectedTab == 0) unawaited(_loadHomeQuickActionAccess());
-      if (_selectedTab == 4) unawaited(_loadOpportunityVisibility());
     } else {
       _appIsResumed = false;
       PendingWorkMonitor.stop();
@@ -608,12 +607,12 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _loadHomeLeadCount() async {
+  Future<void> _loadHomeOpportunityCount() async {
     try {
-      final leads = await LeadApi.getMyLeads();
-      if (mounted) setState(() => _homeLeadCount = leads.length);
+      final count = await OpportunityApi.getMyOpportunityCount();
+      if (mounted) setState(() => _homeOpportunityCount = count);
     } catch (error) {
-      debugPrint('Home lead count refresh failed: $error');
+      debugPrint('Home opportunity count refresh failed: $error');
     }
   }
 
@@ -623,12 +622,16 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     ));
   }
 
-  Future<void> _openMyLeads() async {
+  Future<void> _openMyOpportunities() async {
     if (!_showLeads) return;
-    await Navigator.of(
-      context,
-    ).push<void>(MaterialPageRoute<void>(builder: (_) => const MyLeadsPage()));
-    if (mounted) unawaited(_loadHomeLeadCount());
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => OpportunitiesWebViewPage(
+          canCreateLead: _featureVisible('add_lead', _showHomeAddLead),
+        ),
+      ),
+    );
+    if (mounted) unawaited(_loadHomeOpportunityCount());
   }
 
   Future<bool> _safeCheckPing() async {
@@ -1084,9 +1087,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     if (index == 2 && !_showBottomVisits) return;
     if (index == 3 && !_showLeads) return;
     if (index == 0) unawaited(_loadHomeQuickActionAccess());
-    if (index == 4) unawaited(_loadOpportunityVisibility());
     if (index == 0) unawaited(_loadHomeTaskTodayCount());
-    if (index == 0) unawaited(_loadHomeLeadCount());
+    if (index == 0) unawaited(_loadHomeOpportunityCount());
     if (_attendancePageOpen || _leaveApplicationOpen) {
       setState(() {
         _attendancePageOpen = false;
@@ -1147,23 +1149,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       setState(() => _showPendingDrawer = policy.rules['pending_drawer'] == true);
     } catch (_) {
       // A missing/unavailable drawer policy leaves only this entry hidden.
-    }
-  }
-
-  Future<void> _loadOpportunityVisibility() async {
-    final request = ++_opportunityAccessRequest;
-    if (!mounted) return;
-    setState(() => _showOpportunities = false);
-    try {
-      // Preserve Sales Manager access independently of New Visit creation.
-      final allowed =
-          (await SiteVisitCreationApi.homeQuickActionAccess())
-              .canViewOpportunities;
-      if (mounted && request == _opportunityAccessRequest) {
-        setState(() => _showOpportunities = allowed);
-      }
-    } catch (_) {
-      // Keep the entry hidden when the role cannot be verified.
     }
   }
 
@@ -1635,7 +1620,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       taskCount: _homeTaskTodayCount?.toString().padLeft(2, '0') ?? '?',
       taskSummary: _homeTaskSummary,
       visitCount: _assignedIncompleteSiteVisitCount.toString().padLeft(2, '0'),
-      leadCount: _homeLeadCount?.toString().padLeft(2, '0') ?? '?',
+      leadCount: _homeOpportunityCount?.toString().padLeft(2, '0') ?? '?',
       pendingCount: _homePendingCount?.toString().padLeft(2, '0') ?? '—',
       loading: _isLoading,
       attendanceBusy: _isActionLoading,
@@ -1657,7 +1642,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           _fetchData(),
           _loadHomePendingCount(),
           _loadHomeTaskTodayCount(),
-          _loadHomeLeadCount(),
+          _loadHomeOpportunityCount(),
           _loadHomeQuickActionAccess(),
           _loadSessionWebLinks(forceRefresh: true),
         ]);
@@ -1677,7 +1662,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           );
         }
       },
-      onLeads: _openMyLeads,
+      onLeads: _openMyOpportunities,
       onPending: _openPendingWork,
       onAttendance: _openAttendance,
       onAddLead:
@@ -2015,17 +2000,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                 );
               },
             ),
-          if (_featureVisible('opportunities', _showOpportunities))
-            _moreTile(
-              Icons.handshake_outlined,
-              'Opportunities',
-              'View opportunities created by you',
-              () => Navigator.of(context).push<void>(
-                MaterialPageRoute<void>(
-                  builder: (_) => const MyOpportunitiesPage(),
-                ),
-              ),
-            ),
           _moreTile(
             Icons.logout_rounded,
             'Log Out',
@@ -2075,11 +2049,20 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     return WillPopScope(
       onWillPop: () async {
         if (_leaveApplicationOpen) {
-          setState(() => _leaveApplicationOpen = false);
+          final page = _leaveApplicationWebViewKey.currentState;
+          if (page != null) {
+            await page.handleBack();
+          } else {
+            setState(() => _leaveApplicationOpen = false);
+          }
           return false;
         }
         if (_attendancePageOpen) {
           setState(() => _attendancePageOpen = false);
+          return false;
+        }
+        if (_selectedTab == 3 && _opportunitiesWebViewKey.currentState != null) {
+          await _opportunitiesWebViewKey.currentState!.handleBack();
           return false;
         }
         if (_selectedTab != 0) {
@@ -2255,7 +2238,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         ),
         body:
             _leaveApplicationOpen
-                ? LeaveApplicationPage(
+                ? LeaveApplicationWebViewPage(
+                  key: _leaveApplicationWebViewKey,
                   onBack: () => setState(() => _leaveApplicationOpen = false),
                   onNotifications: _openNotifications,
                 )
@@ -2270,7 +2254,11 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                         ? SiteVisitsPage(onVisitsUpdated: _onSiteVisitsUpdated)
                         : const SizedBox.shrink(),
                     _selectedTab == 3 && _showLeads
-                        ? const MyLeadsPage()
+                        ? OpportunitiesWebViewPage(
+                          key: _opportunitiesWebViewKey,
+                          onExit: () => _selectBottomTab(0),
+                          canCreateLead: _featureVisible('add_lead', _showHomeAddLead),
+                        )
                         : const SizedBox.shrink(),
                     _buildMoreTab(),
                   ],

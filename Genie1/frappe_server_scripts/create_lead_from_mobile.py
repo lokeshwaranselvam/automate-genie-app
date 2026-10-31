@@ -32,7 +32,25 @@ for fieldname in [
     if lead_meta.get_field(fieldname):
         lead_fields.append(fieldname)
 
-if request_method == "GET" and lead_view == "list":
+if request_method == "GET" and lead_view == "location_options":
+    fieldname = frappe.form_dict.get("fieldname") or ""
+    txt = frappe.form_dict.get("txt") or ""
+    if fieldname not in ["custom_citytown", "custom_district"]:
+        frappe.throw("Invalid Lead location field.")
+    if not isinstance(txt, str) or len(txt) > 140:
+        frappe.throw("Search text must be at most 140 characters.")
+    field = lead_meta.get_field(fieldname)
+    if not field or field.fieldtype not in ["Select", "Link"] or not field.options:
+        frappe.throw("Configure Lead." + fieldname + " as a Select or Link field with options.")
+    if field.fieldtype == "Select":
+        matches = [{"value": option.strip()} for option in field.options.splitlines()
+                   if option.strip() and txt.strip().lower() in option.lower()]
+    else:
+        matches = frappe.call("frappe.desk.search.search_link", doctype=field.options,
+            txt=txt.strip(), page_length=20, reference_doctype="Lead", ignore_user_permissions=False)
+    frappe.response["message"] = {"options": matches}
+
+elif request_method == "GET" and lead_view == "list":
     leads = frappe.get_all(
         "Lead",
         filters={"lead_owner": current_user},
@@ -122,6 +140,16 @@ elif request_method == "GET":
             "default": customer_category_field.get("default") or "",
             "options": customer_category_options,
         }
+    location_fields = {}
+    for fieldname in ["custom_citytown", "custom_district"]:
+        field = lead_meta.get_field(fieldname)
+        if not field or field.fieldtype not in ["Select", "Link"] or not field.options:
+            frappe.throw("Configure Lead." + fieldname + " as a Select or Link field with options.")
+        location_fields[fieldname] = {
+            "fieldtype": field.fieldtype,
+            "options": [option.strip() for option in field.options.splitlines() if option.strip()]
+                       if field.fieldtype == "Select" else [],
+        }
     csrf_token = (
         frappe.session.get("csrf_token")
         or frappe.session.data.csrf_token
@@ -135,6 +163,7 @@ elif request_method == "GET":
         "customer_category_options": customer_category_options,
         "csrf_token": csrf_token,
         "business_policy": business_policy,
+        "location_fields": location_fields,
     }
 
 elif request_method == "POST":
@@ -179,6 +208,26 @@ elif request_method == "POST":
         frappe.throw("Customer Category is required.")
     if customer_category_field.get("read_only") and customer_category != (customer_category_field.get("default") or ""):
         frappe.throw("Customer Category is read-only.")
+    location_values = {}
+    for fieldname, label in [("custom_citytown", "City/Town"), ("custom_district", "District")]:
+        value = frappe.form_dict.get(fieldname) or ""
+        if not isinstance(value, str) or not value.strip():
+            frappe.throw(label + " is required.")
+        value = value.strip()
+        if len(value) > 140:
+            frappe.throw("Choose a valid " + label + ".")
+        field = lead_meta.get_field(fieldname)
+        if not field or field.fieldtype not in ["Select", "Link"] or not field.options:
+            frappe.throw("Configure Lead." + fieldname + " as a Select or Link field with options.")
+        if field.fieldtype == "Select":
+            if value not in [option.strip() for option in field.options.splitlines() if option.strip()]:
+                frappe.throw("Choose " + label + " from the configured options.")
+        else:
+            allowed = frappe.get_list(field.options, filters={"name": value}, fields=["name"],
+                limit_page_length=1, reference_doctype="Lead")
+            if not allowed:
+                frappe.throw("Choose an accessible " + label + " from the configured options.")
+        location_values[fieldname] = value
     address = (frappe.form_dict.get("custom_address") or "").strip()
 
     if not first_name and business_policy["fields"]["first_name"]["required"]:
@@ -198,6 +247,8 @@ elif request_method == "POST":
         "custom_requirement": requirement, "source": source,
         "custom_product_enquired": product_category, "custom_address": address,
         "custom_customer_category": customer_category,
+        "custom_citytown": location_values["custom_citytown"],
+        "custom_district": location_values["custom_district"],
     })
 
     lead_meta = frappe.get_meta("Lead")
@@ -281,6 +332,8 @@ elif request_method == "POST":
         lead.custom_requirement = requirement
         lead.source = source
         lead.custom_product_enquired = product_category
+        lead.custom_citytown = location_values["custom_citytown"]
+        lead.custom_district = location_values["custom_district"]
         lead.custom_address = address
         lead.custom_customer_category = customer_category
         lead.flags.ignore_mandatory = True
@@ -297,6 +350,8 @@ elif request_method == "POST":
         "source": lead.source,
         "custom_product_enquired": lead.custom_product_enquired,
         "custom_address": lead.custom_address,
+        "custom_citytown": lead.get("custom_citytown") or "",
+        "custom_district": lead.get("custom_district") or "",
         "custom_customer_category": lead.get("custom_customer_category") or "",
     }
 

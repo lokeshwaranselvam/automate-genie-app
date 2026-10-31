@@ -7,9 +7,17 @@ import '../utils/theme/brand_theme.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import '../utils/widget/home_back_button.dart';
 import 'opportunity_details_page.dart';
+import 'lead_creation_page.dart';
 
 class MyOpportunitiesPage extends StatefulWidget {
-  const MyOpportunitiesPage({super.key});
+  const MyOpportunitiesPage({
+    super.key,
+    this.embedded = false,
+    this.canCreateLead = false,
+  });
+
+  final bool embedded;
+  final bool canCreateLead;
 
   @override
   State<MyOpportunitiesPage> createState() => _MyOpportunitiesPageState();
@@ -151,13 +159,32 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
     }
   }
 
+  Future<void> _createLead() async {
+    if (!widget.canCreateLead) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const LeadCreationPage()),
+    );
+    if (mounted) await _load();
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: const Color(0xFFF5F7FA),
-    appBar: brandAppBar(
-      leading: const HomeBackButton(color: Colors.white),
-      title: const Text('My Opportunities'),
-    ),
+    appBar:
+        widget.embedded
+            ? null
+            : brandAppBar(
+              leading: const HomeBackButton(color: Colors.white),
+              title: const Text('Opportunities'),
+            ),
+    floatingActionButton:
+        widget.canCreateLead
+            ? brandFloatingActionButton(
+              onPressed: _createLead,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('New Lead'),
+            )
+            : null,
     body: Column(
       children: [
         Padding(
@@ -214,7 +241,12 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
             onRefresh: () => _load(),
             child: ListView.builder(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                16,
+                16,
+                widget.canCreateLead ? 96 : 16,
+              ),
               itemCount: _items.length + 2,
               itemBuilder: (context, index) {
                 if (index == 0) {

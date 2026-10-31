@@ -1,0 +1,2629 @@
+<!-- ERPNext Web Page: route genie-opportunities, Content Type HTML. No credentials belong here. -->
+<style>
+  #go-app {
+    --ink: #101a36;
+    --muted: #66738c;
+    --purple: #5032f5;
+    --line: #e1e7f0;
+    position: fixed;
+    inset: 0;
+    z-index: 1035;
+    display: flex;
+    flex-direction: column;
+    background: #f3f7fc;
+    color: var(--ink);
+    font:
+      15px/1.45 system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      sans-serif;
+    isolation: isolate;
+  }
+  #go-app * {
+    box-sizing: border-box;
+  }
+  #go-app button,
+  #go-app input,
+  #go-app select,
+  #go-app textarea {
+    font: inherit;
+  }
+  #go-app button {
+    cursor: pointer;
+  }
+  #go-app button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  #go-app button:focus-visible,
+  #go-app input:focus-visible,
+  #go-app select:focus-visible,
+  #go-app textarea:focus-visible {
+    outline: 3px solid #80a6ff;
+    outline-offset: 2px;
+  }
+  #go-app .go-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 18px 16px;
+    padding-top: max(18px, env(safe-area-inset-top));
+    color: #fff;
+    background: linear-gradient(110deg, #0757ff, #8300e5);
+  }
+  #go-app .go-head h1 {
+    margin: 0;
+    font-size: 23px;
+    font-weight: 750;
+    flex: 1;
+  }
+  #go-app .go-head button {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 4px;
+    font-size: 27px;
+  }
+  #go-app .go-avatar {
+    display: grid;
+    place-items: center;
+    background: #ffffff26;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    font-size: 12px;
+  }
+  #go-app .go-main {
+    overflow: auto;
+    overscroll-behavior: contain;
+    flex: 1;
+    padding: 16px 16px 100px;
+    -webkit-overflow-scrolling: touch;
+  }
+  #go-app .go-container {
+    max-width: 760px;
+    margin: auto;
+  }
+  #go-app .go-search {
+    display: flex;
+    align-items: center;
+    background: #fff;
+    border-radius: 16px;
+    padding: 14px 16px;
+    gap: 12px;
+  }
+  #go-app input,
+  #go-app textarea,
+  #go-app select {
+    min-width: 0;
+    max-width: 100%;
+    color: var(--ink);
+    background: #fff;
+    border: 1px solid #d6deea;
+    border-radius: 10px;
+    padding: 11px;
+    width: 100%;
+  }
+  #go-app .go-search input {
+    border: 0;
+    padding: 0;
+    outline: none;
+  }
+  #go-app .go-search span {
+    font-size: 23px;
+  }
+  #go-app .go-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 12px 0 24px;
+  }
+  #go-app .go-pill,
+  #go-app .go-secondary {
+    background: transparent;
+    border: 1px solid #8c8998;
+    color: #514681;
+    border-radius: 22px;
+    padding: 8px 14px;
+  }
+  #go-app .go-refresh {
+    margin-left: auto;
+  }
+  #go-app .go-list {
+    display: grid;
+    gap: 10px;
+  }
+  #go-app .go-card {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    text-align: left;
+    width: 100%;
+    border: 0;
+    background: #f6f2fb;
+    border-radius: 14px;
+    padding: 16px;
+    color: var(--ink);
+  }
+  #go-app .go-card .go-card-text {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  #go-app .go-card strong {
+    font-size: 17px;
+    display: block;
+  }
+  #go-app .go-card small {
+    font-size: 14px;
+    color: #53515e;
+    display: block;
+  }
+  #go-app .go-badge {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    color: #543996;
+    background: #e8dcff;
+    font-size: 22px;
+  }
+  #go-app .go-chevron {
+    font-size: 27px;
+  }
+  #go-app .go-message {
+    text-align: center;
+    color: var(--muted);
+    padding: 44px 12px;
+  }
+  #go-app .go-error {
+    color: #a52b40;
+    background: #fff0f2;
+    padding: 12px;
+    border-radius: 10px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  #go-app .go-more {
+    display: block;
+    margin: 20px auto;
+  }
+  #go-app .go-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 12px 0;
+  }
+  #go-app .go-note + .go-note {
+    border-top: 1px solid var(--line);
+  }
+  #go-app .go-note-body {
+    flex: 3;
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  #go-app .go-note-audit {
+    flex: 2;
+    min-width: 0;
+    text-align: right;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  #go-app .go-note-audit time {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 4px;
+  }
+  #go-app .go-section {
+    background: #fff;
+    border-radius: 18px;
+    padding: 14px;
+    margin: 14px 0;
+    box-shadow: 0 4px 0 #eaf0f8;
+  }
+  #go-app .go-section summary {
+    font-size: 17px;
+    font-weight: 750;
+    cursor: pointer;
+    padding: 6px 0 12px;
+  }
+  #go-app .go-field {
+    display: flex;
+    gap: 12px;
+    padding: 9px 0;
+    align-items: flex-start;
+  }
+  #go-app .go-field + .go-field {
+    border-top: 1px solid #f0f3f8;
+  }
+  #go-app .go-value {
+    flex: 1;
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  #go-app .go-label {
+    font-size: 12px;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 3px;
+  }
+  #go-app .go-id {
+    font-size: 20px;
+    font-weight: 750;
+    overflow-wrap: anywhere;
+  }
+  #go-app .go-tag {
+    display: inline-block;
+    border-radius: 24px;
+    background: #eee6ff;
+    color: #5032f5;
+    padding: 7px 14px;
+    margin-top: 10px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  #go-app .go-edit-row {
+    text-align: right;
+    margin: 12px 0;
+  }
+  #go-app .go-link {
+    border: 0;
+    color: var(--purple);
+    background: transparent;
+    padding: 7px;
+  }
+  #go-app .go-primary {
+    border: 0;
+    border-radius: 22px;
+    color: #fff;
+    background: linear-gradient(105deg, #0757ff, #8300e5);
+    padding: 11px 22px;
+    font-weight: 700;
+  }
+  #go-app label {
+    display: block;
+    font-size: 13px;
+    font-weight: 650;
+    margin: 12px 0 5px;
+  }
+  #go-app .go-hint {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 6px 0;
+    white-space: pre-wrap;
+  }
+  #go-app .go-modal {
+    border: 0;
+    border-radius: 22px;
+    padding: 22px;
+    width: min(460px, calc(100vw - 30px));
+    max-height: 85vh;
+    overflow: auto;
+    background: #fff;
+    color: var(--ink);
+    box-shadow: 0 14px 60px #101a3640;
+  }
+  #go-app .go-modal::backdrop {
+    background: #101a3670;
+  }
+  #go-app .go-modal h2 {
+    margin: 0 0 14px;
+    font-size: 21px;
+  }
+  #go-app .go-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 18px;
+    flex-wrap: wrap;
+  }
+  #go-app .go-owner-results {
+    max-height: 220px;
+    overflow: auto;
+    display: grid;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  #go-app .go-owner-choice {
+    background: #f3f0ff;
+    border: 1px solid transparent;
+    text-align: left;
+    border-radius: 10px;
+    padding: 12px;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+  #go-app .go-owner-choice[aria-pressed="true"] {
+    border-color: var(--purple);
+  }
+  #go-app .go-owner-choice small {
+    display: block;
+    color: var(--muted);
+  }
+  #go-app .go-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  #go-app .go-table td {
+    border-top: 1px solid var(--line);
+    padding: 6px;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+  #go-app .go-state {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 0 0 12px;
+  }
+  #go-app .go-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  @media (min-width: 800px) {
+    #go-app .go-head {
+      padding-left: calc((100% - 760px) / 2);
+    }
+    #go-app .go-main {
+      padding-top: 24px;
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    #go-app .go-card {
+      transition: background 0.15s;
+    }
+    #go-app .go-card:hover {
+      background: #eee6ff;
+    }
+  }
+  #go-app .go-head {
+    flex: 0 0 auto;
+    min-height: 56px !important;
+    padding: 4px 14px !important;
+    gap: 10px;
+  }
+  #go-app .go-head h1 {
+    color: #fff !important;
+    font-size: 20px !important;
+    line-height: 1.2 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  #go-app .go-head button {
+    color: #fff !important;
+    width: 40px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    flex-shrink: 0;
+  }
+  #go-app .go-avatar {
+    color: #fff !important;
+  }
+  #go-app .go-icon {
+    width: 20px;
+    height: 20px;
+    display: inline-block;
+    vertical-align: middle;
+    flex-shrink: 0;
+    color: inherit;
+  }
+  #go-app .go-link,
+  #go-app .go-pill,
+  #go-app .go-refresh {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  #go-app .go-section summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    list-style: none;
+  }
+  #go-app .go-section summary::-webkit-details-marker {
+    display: none;
+  }
+  #go-app .go-section summary .go-disclosure {
+    margin-left: auto;
+    transition: transform 0.15s;
+  }
+  #go-app .go-section[open] > summary .go-disclosure {
+    transform: rotate(180deg);
+  }
+  #go-app .go-control {
+    width: 100%;
+    position: relative;
+  }
+  #go-app .go-control-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 46px;
+    border: 1px solid #d6deea;
+    border-radius: 11px;
+    background: #fff;
+    color: var(--ink);
+    padding: 11px 12px;
+    text-align: left;
+  }
+  #go-app .go-control-toggle > span {
+    flex: 1;
+  }
+  #go-app .go-options {
+    display: grid;
+    gap: 4px;
+    max-height: 230px;
+    overflow: auto;
+    padding: 6px;
+    margin-top: 6px;
+    border: 1px solid #ddd8f1;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 5px 18px #101a3612;
+  }
+  #go-app .go-options[hidden],
+  #go-app .go-calendar[hidden] {
+    display: none !important;
+  }
+  #go-app .go-choice-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 11px 12px;
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+    border-radius: 8px;
+    text-align: left;
+  }
+  #go-app .go-choice-option[aria-selected="true"] {
+    background: #eee8ff;
+    color: #5032f5;
+    font-weight: 700;
+  }
+  #go-app .go-choice-option:hover {
+    background: #f4f1ff;
+  }
+  #go-app .go-calendar {
+    padding: 12px;
+    margin-top: 8px;
+    border: 1px solid #ded7f7;
+    border-radius: 14px;
+    background: #faf9ff;
+  }
+  #go-app .go-calendar-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  #go-app .go-calendar-head > .go-control {
+    flex: 1;
+    min-width: 0;
+  }
+  #go-app .go-calendar-head .go-control-toggle {
+    padding: 8px;
+    font-size: 13px;
+    min-height: 38px;
+  }
+  #go-app .go-calendar-head .go-icon {
+    width: 16px;
+    height: 16px;
+  }
+  #go-app .go-calendar-arrow {
+    border: 0;
+    background: #ede7ff;
+    color: #5032f5;
+    border-radius: 9px;
+    min-width: 32px;
+    min-height: 38px;
+    display: grid;
+    place-items: center;
+  }
+  #go-app .go-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 3px;
+  }
+  #go-app .go-calendar-week {
+    text-align: center;
+    color: var(--muted);
+    font-size: 11px;
+    padding: 5px 0;
+  }
+  #go-app .go-calendar-day {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--ink);
+    border-radius: 9px;
+    min-height: 34px;
+    padding: 4px 0;
+    font-size: 13px;
+  }
+  #go-app .go-calendar-day[aria-selected="true"] {
+    background: #5032f5;
+    color: #fff;
+    font-weight: 700;
+  }
+  #go-app .go-calendar-day.go-today:not([aria-selected="true"]) {
+    border-color: #b6a6fa;
+  }
+  #go-app .go-calendar-day:disabled {
+    color: #b8bac4;
+    opacity: 1;
+  }
+  #go-app .go-calendar-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+  }
+  #go-app .go-calendar-foot button {
+    border: 0;
+    border-radius: 8px;
+    padding: 7px 10px;
+    background: #eee8ff;
+    color: #5032f5;
+    font-size: 12px;
+  }
+  #go-app .go-choice-option[aria-selected="false"] > .go-icon {
+    visibility: hidden;
+  }
+  #go-app .go-icon,
+  #go-app .go-icon path {
+    fill: none !important;
+    stroke: currentColor !important;
+  }
+  #go-app .go-warning {
+    text-align: center;
+    max-width: 380px;
+  }
+  #go-app .go-warning-badge {
+    display: grid;
+    place-items: center;
+    width: 62px;
+    height: 62px;
+    margin: 6px auto 16px;
+    border-radius: 50%;
+    background: #fff0f1;
+    color: #cc3949;
+  }
+  #go-app .go-warning p {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    margin: 12px 0 22px;
+    line-height: 1.5;
+  }
+  #go-app .go-warning .go-primary {
+    min-width: 100px;
+  }
+  #go-app .go-warning-badge .go-icon {
+    width: 30px;
+    height: 30px;
+  }
+</style>
+<div id="go-app">
+  <header class="go-head">
+    <button id="go-back" type="button" aria-label="Back">←</button>
+    <h1 id="go-title">Opportunities</h1>
+    <span id="go-avatar" class="go-avatar" aria-label="Session user">…</span>
+  </header>
+  <main id="go-main" class="go-main">
+    <div class="go-container">
+      <div id="go-content" aria-live="polite">
+        <p class="go-message">Verifying your ERP session…</p>
+      </div>
+    </div>
+  </main>
+  <dialog
+    id="go-dialog"
+    class="go-modal"
+    aria-labelledby="go-dialog-title"
+  ></dialog>
+  <dialog
+    id="go-warning"
+    class="go-modal go-warning"
+    role="alertdialog"
+    aria-modal="true"
+    aria-labelledby="go-warning-title"
+    aria-describedby="go-warning-message"
+  ></dialog>
+</div>
+<script>
+  (() => {
+    "use strict";
+    const root = document.getElementById("go-app");
+    if (!root || root.dataset.started) return;
+    root.dataset.started = "true";
+    const $ = (id) => document.getElementById(id);
+    const content = $("go-content"),
+      modal = $("go-dialog");
+    const POLICY = "/api/method/mobile_opportunity_policy";
+    const state = {
+      user: null,
+      stopped: false,
+      document: null,
+      canEdit: null,
+      phone: "",
+      status: "",
+      rows: [],
+      offset: 0,
+      more: false,
+      listVersion: 0,
+      routeVersion: 0,
+      busy: false,
+      csrf: null,
+    };
+    let searchTimer,
+      ownerTimer,
+      modalVersion = 0,
+      listBusy = false;
+    function el(tag, attrs = {}, ...children) {
+      const n = document.createElement(tag);
+      for (const [key, value] of Object.entries(attrs)) {
+        if (key === "class") n.className = value;
+        else if (key.startsWith("on") && typeof value === "function")
+          n.addEventListener(key.slice(2), value);
+        else if (key === "disabled") n.disabled = !!value;
+        else n.setAttribute(key, String(value));
+      }
+      for (const child of children.flat())
+        if (child !== null && child !== undefined)
+          n.append(
+            typeof child === "object"
+              ? child
+              : document.createTextNode(String(child)),
+          );
+      return n;
+    }
+    function icon(name, size = 20) {
+      const paths = {
+        warning: "M12 3 2 21h20zM12 9v5M12 17v1",
+        back: "M19 12H5m7-7-7 7 7 7",
+        chevron: "m9 5 7 7-7 7",
+        down: "m6 9 6 6 6-6",
+        search: "M21 21l-5-5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0",
+        close: "m6 6 12 12M6 18 18 6",
+        filter: "M4 6h16M7 12h10M10 18h4",
+        refresh:
+          "M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 13-3l2 2M4 17l2 2a8 8 0 0 0 13-3",
+        user: "M20 21v-2a6 6 0 0 0-6-6h-4a6 6 0 0 0-6 6v2M16 5a4 4 0 1 1-8 0 4 4 0 0 1 8 0",
+        briefcase:
+          "M3 7h18v14H3zM8 7V3h8v4M3 12a22 22 0 0 0 18 0M10 12h4v4h-4z",
+        document: "M14 2H5v20h14V7zM14 2v5h5M8 12h8M8 16h8",
+        calendar: "M4 5h16v16H4zM4 10h16M8 3v4M16 3v4M8 14h2M14 14h2M8 18h2",
+        edit: "m16 3 5 5-12 12-6 1 1-6zM14 5l5 5",
+        phone: "M6 3 3 5c0 9 7 16 16 16l2-3-5-4-3 3-6-6 3-3z",
+        mail: "M3 5h18v14H3zM3 5l9 8 9-8",
+        pin: "M19 9c0 6-7 13-7 13S5 15 5 9a7 7 0 1 1 14 0M15 9a3 3 0 1 1-6 0 3 3 0 0 1 6 0",
+        chart: "M4 20V4M4 20h17M8 16v-4M13 16V8M18 16V6",
+        notes: "M4 3h16v15l-5 3H4zM8 8h8M8 12h8M8 16h4",
+        check: "m5 12 4 4L19 6",
+      };
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      for (const [key, value] of Object.entries({
+        viewBox: "0 0 24 24",
+        width: size,
+        height: size,
+        fill: "none",
+        stroke: "currentColor",
+        "stroke-width": "1.8",
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+        "aria-hidden": "true",
+        focusable: "false",
+        class: "go-icon",
+      }))
+        svg.setAttribute(key, String(value));
+      const path = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "path",
+      );
+      path.setAttribute("d", paths[name] || paths.document);
+      svg.append(path);
+      return svg;
+    }
+    function fieldIcon(key) {
+      if (isPhone(key)) return "phone";
+      if (
+        key === "owner" ||
+        key.includes("owner") ||
+        key.includes("person") ||
+        key.includes("name")
+      )
+        return "user";
+      if (key.includes("email")) return "mail";
+      if (key.includes("date") || key.includes("closing")) return "calendar";
+      if (
+        key.includes("address") ||
+        ["city", "state", "country", "territory"].includes(key) ||
+        key.includes("pincode")
+      )
+        return "pin";
+      return "document";
+    }
+    function filterCaption(value) {
+      return [icon("filter"), el("span", {}, `Status: ${value || "All"}`)];
+    }
+    function choiceControl(id, choices, initial, name) {
+      const input = el("input", { id, type: "hidden" });
+      input.value = initial;
+      const panel = el("div", {
+        class: "go-options",
+        id: id + "-options",
+        role: "listbox",
+        "aria-label": name,
+        hidden: "",
+      });
+      const button = el("button", {
+        type: "button",
+        class: "go-control-toggle",
+        id: id + "-toggle",
+        "aria-haspopup": "listbox",
+        "aria-expanded": "false",
+        "aria-controls": id + "-options",
+        "aria-label": name,
+      });
+      function caption() {
+        const choice = choices.find((x) => x.value === input.value);
+        button.replaceChildren(
+          el(
+            "span",
+            {},
+            choice ? choice.label : String(input.value || "Select " + name),
+          ),
+          icon("down"),
+        );
+      }
+      function close() {
+        panel.hidden = true;
+        button.setAttribute("aria-expanded", "false");
+      }
+      function toggle() {
+        if (button.disabled) return;
+        panel.hidden = !panel.hidden;
+        button.setAttribute("aria-expanded", String(!panel.hidden));
+        if (!panel.hidden) {
+          const selected =
+            panel.querySelector('[aria-selected="true"]') ||
+            panel.querySelector("button");
+          selected?.focus();
+        }
+      }
+      for (const choice of choices) {
+        const option = el(
+          "button",
+          {
+            type: "button",
+            class: "go-choice-option",
+            role: "option",
+            "aria-selected": choice.value === initial,
+            "data-value": choice.value,
+            onclick: () => {
+              input.value = choice.value;
+              panel
+                .querySelectorAll("button")
+                .forEach((x) =>
+                  x.setAttribute("aria-selected", String(x === option)),
+                );
+              caption();
+              close();
+              button.focus();
+              input.dispatchEvent(new Event("change", { bubbles: true }));
+            },
+          },
+          el("span", {}, choice.label),
+          icon("check"),
+        );
+        panel.append(option);
+      }
+      button.addEventListener("click", toggle);
+      button.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          if (panel.hidden) toggle();
+        }
+      });
+      panel.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+          button.focus();
+        } else if (
+          ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
+        ) {
+          event.preventDefault();
+          const items = [...panel.querySelectorAll("button")],
+            current = items.indexOf(document.activeElement);
+          const index =
+            event.key === "Home"
+              ? 0
+              : event.key === "End"
+                ? items.length - 1
+                : (current +
+                    (event.key === "ArrowDown" ? 1 : -1) +
+                    items.length) %
+                  items.length;
+          items[index]?.focus();
+        }
+      });
+      caption();
+      return {
+        input,
+        button,
+        panel,
+        element: el("div", { class: "go-control" }, input, button, panel),
+        close,
+      };
+    }
+    function parseDay(value) {
+      const m = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!m) return null;
+      const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12);
+      return date.getFullYear() === Number(m[1]) &&
+        date.getMonth() === Number(m[2]) - 1 &&
+        date.getDate() === Number(m[3])
+        ? date
+        : null;
+    }
+    function dayValue(date) {
+      return `${String(date.getFullYear()).padStart(4, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    }
+    function dateCaption(value) {
+      const date = parseDay(value);
+      return date
+        ? `${String(date.getDate()).padStart(2, "0")} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][date.getMonth()]} ${date.getFullYear()}`
+        : "Select a date";
+    }
+    function calendarControl(id, initial, minimum) {
+      const input = el("input", { id, type: "hidden" });
+      input.value = initial;
+      input.min = minimum || "";
+      const panel = el("div", {
+        class: "go-calendar",
+        id: id + "-calendar",
+        hidden: "",
+        "aria-label": "Choose follow-up date",
+      });
+      const button = el("button", {
+        type: "button",
+        class: "go-control-toggle",
+        id: id + "-toggle",
+        "aria-expanded": "false",
+        "aria-controls": id + "-calendar",
+        "aria-label": "Next follow-up date",
+      });
+      const today = new Date(),
+        selected = parseDay(initial),
+        min = parseDay(minimum);
+      let cursor = selected || min || today;
+      if (min && cursor < min) cursor = min;
+      let year = cursor.getFullYear(),
+        month = cursor.getMonth();
+      function caption() {
+        button.replaceChildren(
+          icon("calendar"),
+          el("span", {}, dateCaption(input.value)),
+          icon("down"),
+        );
+      }
+      function choose(value) {
+        input.value = value;
+        caption();
+        panel.hidden = true;
+        button.setAttribute("aria-expanded", "false");
+        button.focus();
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      function render() {
+        const names = [
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+        ];
+        const months = choiceControl(
+          id + "-month",
+          names.map((name, index) => ({ value: String(index), label: name })),
+          String(month),
+          "Month",
+        );
+        const years = choiceControl(
+          id + "-year",
+          Array.from({ length: 25 }, (_, index) => year - 12 + index)
+            .filter((x) => x >= 1000 && x <= 9999)
+            .map((x) => ({ value: String(x), label: String(x) })),
+          String(year),
+          "Year",
+        );
+        months.input.addEventListener("change", () => {
+          month = Number(months.input.value);
+          render();
+        });
+        years.input.addEventListener("change", () => {
+          year = Number(years.input.value);
+          render();
+        });
+        const previous = el(
+          "button",
+          {
+            type: "button",
+            class: "go-calendar-arrow",
+            "aria-label": "Previous month",
+            onclick: () => {
+              month--;
+              if (month < 0) {
+                month = 11;
+                year--;
+              }
+              render();
+            },
+          },
+          icon("back", 16),
+        );
+        previous.disabled =
+          (year <= 1000 && month === 0) ||
+          !!(min && new Date(year, month, 0, 12) < min);
+        const next = el(
+          "button",
+          {
+            type: "button",
+            class: "go-calendar-arrow",
+            "aria-label": "Next month",
+            disabled: year >= 9999 && month === 11,
+            onclick: () => {
+              month++;
+              if (month > 11) {
+                month = 0;
+                year++;
+              }
+              render();
+            },
+          },
+          icon("chevron", 16),
+        );
+        const grid = el("div", {
+          class: "go-calendar-grid",
+          role: "group",
+          "aria-label": `${names[month]} ${year}`,
+        });
+        ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].forEach((day) =>
+          grid.append(
+            el(
+              "span",
+              { class: "go-calendar-week", "aria-hidden": "true" },
+              day,
+            ),
+          ),
+        );
+        for (
+          let space = 0;
+          space < new Date(year, month, 1, 12).getDay();
+          space++
+        )
+          grid.append(el("span", { "aria-hidden": "true" }));
+        const days = new Date(year, month + 1, 0, 12).getDate();
+        for (let day = 1; day <= days; day++) {
+          const value = dayValue(new Date(year, month, day, 12));
+          grid.append(
+            el(
+              "button",
+              {
+                type: "button",
+                class:
+                  "go-calendar-day" +
+                  (value === dayValue(today) ? " go-today" : ""),
+                "aria-label": dateCaption(value),
+                "aria-selected": value === input.value,
+                disabled: !!minimum && value < minimum,
+                "data-date": value,
+                onclick: () => choose(value),
+              },
+              day,
+            ),
+          );
+        }
+        panel.replaceChildren(
+          el(
+            "div",
+            { class: "go-calendar-head" },
+            previous,
+            months.element,
+            years.element,
+            next,
+          ),
+          grid,
+          el(
+            "div",
+            { class: "go-calendar-foot" },
+            el(
+              "button",
+              {
+                type: "button",
+                disabled: !!minimum && dayValue(today) < minimum,
+                onclick: () => choose(dayValue(today)),
+              },
+              "Today",
+            ),
+            el(
+              "button",
+              { type: "button", onclick: () => choose("") },
+              "Clear",
+            ),
+            el(
+              "button",
+              {
+                type: "button",
+                onclick: () => {
+                  panel.hidden = true;
+                  button.setAttribute("aria-expanded", "false");
+                  button.focus();
+                },
+              },
+              "Close",
+            ),
+          ),
+        );
+      }
+      button.addEventListener("click", () => {
+        if (button.disabled) return;
+        panel.hidden = !panel.hidden;
+        button.setAttribute("aria-expanded", String(!panel.hidden));
+        if (!panel.hidden) render();
+      });
+      panel.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          panel.hidden = true;
+          button.setAttribute("aria-expanded", "false");
+          button.focus();
+        }
+      });
+      caption();
+      return {
+        input,
+        button,
+        panel,
+        element: el("div", { class: "go-control" }, input, button, panel),
+      };
+    }
+    function plain(value) {
+      const text = document.createElement("textarea");
+      text.innerHTML = String(value ?? "")
+        .replace(/<br\s*\/?\s*>|<\/p>|<\/div>/gi, "\n")
+        .replace(/<[^>]*>/g, "");
+      return text.value.trim();
+    }
+    const label = (key) =>
+      ({
+        owner: "Created By",
+        email_id: "Email",
+        contact_email: "Contact Email",
+        custom_next_followup_date: "Next Follow-up Date",
+      })[key] ||
+      key
+        .replace(/^custom_/, "")
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+    const present = (v) =>
+      v !== null &&
+      v !== undefined &&
+      String(v).trim() !== "" &&
+      !(Array.isArray(v) && !v.length);
+    function assertOwner(doc) {
+      if (!doc || doc.opportunity_owner !== state.user || !doc.name)
+        throw new Error(
+          "Only records where you are the Opportunity Owner can be displayed here.",
+        );
+      return doc;
+    }
+    function notifyNative(action, extra = {}) {
+      if (
+        window.GenieOpportunities &&
+        typeof window.GenieOpportunities.postMessage === "function"
+      )
+        window.GenieOpportunities.postMessage(
+          JSON.stringify({ action, ...extra }),
+        );
+    }
+    function stopSession(message) {
+      state.stopped = true;
+      state.document = null;
+      state.rows = [];
+      state.csrf = null;
+      state.routeVersion++;
+      state.listVersion++;
+      modalVersion++;
+      closeWarning(false);
+      if (modal.open) modal.close();
+      content.replaceChildren(el("p", { class: "go-error" }, message));
+      notifyNative("session_expired");
+    }
+    class ApiError extends Error {
+      constructor(message, status = 0, uncertain = false) {
+        super(message);
+        this.status = status;
+        this.uncertain = uncertain;
+      }
+    }
+    async function raw(path, { query, body, token, html = false } = {}) {
+      const url = new URL(path, window.location.origin);
+      if (
+        url.origin !== window.location.origin ||
+        !url.pathname.startsWith("/")
+      )
+        throw new Error("Invalid ERP request.");
+      for (const [k, v] of Object.entries(query || {}))
+        url.searchParams.set(k, typeof v === "string" ? v : JSON.stringify(v));
+      const controller = new AbortController(),
+        timer = setTimeout(() => controller.abort(), 25000);
+      try {
+        const headers = {
+          Accept: html ? "text/html" : "application/json",
+          "Cache-Control": "no-cache",
+        };
+        if (body) {
+          headers["Content-Type"] = "application/json";
+          headers["X-Frappe-CSRF-Token"] = token;
+        }
+        const response = await fetch(url.href, {
+          method: body ? "POST" : "GET",
+          credentials: "same-origin",
+          cache: "no-store",
+          redirect: "error",
+          headers,
+          signal: controller.signal,
+          body: body
+            ? JSON.stringify({ ...body, csrf_token: token })
+            : undefined,
+        });
+        if (html) {
+          if (!response.ok)
+            throw new ApiError(
+              "Could not initialize your update session.",
+              response.status,
+            );
+          return response.text();
+        }
+        let data;
+        try {
+          data = await response.json();
+        } catch (_) {
+          throw new ApiError(
+            "ERP did not confirm the request. Refresh before retrying.",
+            response.status,
+            !!body,
+          );
+        }
+        if (!response.ok || data.exc_type || data.exception) {
+          const csrf =
+            data.exc_type === "CSRFTokenError" ||
+            String(data.exception || "").startsWith(
+              "frappe.exceptions.CSRFTokenError:",
+            );
+          let message =
+            response.status === 403
+              ? "You do not have permission for this Opportunity action."
+              : response.status === 401
+                ? "Your session expired. Sign in again."
+                : `ERP could not complete this action (${response.status}).`;
+          if (response.status === 417 || csrf) {
+            try {
+              const entries =
+                typeof data._server_messages === "string"
+                  ? JSON.parse(data._server_messages)
+                  : data._server_messages;
+              const messages = (entries || [])
+                .map((x) => (typeof x === "string" ? JSON.parse(x) : x))
+                .map((x) => plain(x.message))
+                .filter(Boolean);
+              if (messages.length) message = messages.join("\n");
+            } catch (_) {}
+          }
+          const error = new ApiError(
+            message,
+            response.status,
+            !!body && response.status >= 500,
+          );
+          error.csrf = csrf;
+          throw error;
+        }
+        return data;
+      } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(
+          body
+            ? "The save or call result is uncertain. Check ERP before trying again."
+            : "ERP could not be reached. Check your connection and retry.",
+          0,
+          !!body,
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    async function session() {
+      if (state.stopped)
+        throw new Error("Reopen this page after signing in again.");
+      let result;
+      try {
+        result = await raw("/api/method/frappe.auth.get_logged_user");
+      } catch (error) {
+        if (error.status === 401 || error.status === 403)
+          stopSession(
+            "Your ERP session expired. Sign in again and reopen Opportunities.",
+          );
+        throw error;
+      }
+      const user = result.message;
+      if (
+        typeof user !== "string" ||
+        !user ||
+        user === "Guest" ||
+        (state.user && user !== state.user)
+      ) {
+        stopSession(
+          "Your ERP session expired or the signed-in account changed. Reopen Opportunities from the app.",
+        );
+        throw new Error("Your session changed.");
+      }
+      state.user = user;
+      $("go-avatar").textContent = user.slice(0, 2).toUpperCase();
+      return user;
+    }
+    async function csrf(force = false) {
+      if (force) state.csrf = null;
+      if (state.csrf) return state.csrf;
+      let token = !force && window.frappe && window.frappe.csrf_token;
+      if (!token || token === "None") {
+        const html = await raw("/app", { html: true });
+        token = (html.match(/frappe\.csrf_token\s*=\s*["']([^"']+)["']/) ||
+          [])[1];
+      }
+      if (!token || token === "None")
+        throw new Error(
+          "Could not initialize your update session. Reopen this page after signing in.",
+        );
+      state.csrf = token;
+      return token;
+    }
+    async function write(path, body) {
+      await session();
+      let result;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          result = await raw(path, { body, token: await csrf(attempt > 0) });
+          break;
+        } catch (error) {
+          if (!error.csrf || attempt) throw error;
+        }
+      }
+      await session();
+      return result;
+    }
+    function errorView(error, retry) {
+      if (state.stopped) return;
+      content.replaceChildren(
+        el("p", { class: "go-error" }, error.message),
+        el("button", { class: "go-secondary", onclick: retry }, "Retry"),
+      );
+    }
+    function currentId() {
+      return new URLSearchParams(window.location.hash.slice(1)).get(
+        "opportunity",
+      );
+    }
+    function openDetail(name) {
+      window.location.hash = "opportunity=" + encodeURIComponent(name);
+    }
+    function back() {
+      if ($("go-warning").hasAttribute("open")) {
+        closeWarning();
+        return;
+      }
+      if (state.busy) return;
+      if (currentId()) {
+        window.location.hash = "";
+      } else {
+        if (window.GenieOpportunities) notifyNative("close");
+        else if (window.history.length > 1) window.history.back();
+      }
+    }
+    function setTitle(detail) {
+      $("go-title").textContent = detail
+        ? "Opportunity Details"
+        : "Opportunities";
+      notifyNative("route", { detail });
+    }
+    function listShell() {
+      const input = el("input", {
+        type: "tel",
+        inputmode: "numeric",
+        maxlength: "15",
+        placeholder: "Search by phone number",
+        "aria-label": "Search by phone number",
+      });
+      input.value = state.phone;
+      input.addEventListener("input", () => {
+        const value = input.value.replace(/\D/g, "").slice(0, 15);
+        input.value = value;
+        state.phone = value;
+        clearTimeout(searchTimer);
+        state.listVersion++;
+        state.rows = [];
+        state.offset = 0;
+        state.more = false;
+        $("go-list").replaceChildren(
+          el("p", { class: "go-message" }, "Searching…"),
+        );
+        $("go-list-end").replaceChildren();
+        searchTimer = setTimeout(() => loadList(false), 450);
+      });
+      const clear = el(
+        "button",
+        {
+          class: "go-link",
+          "aria-label": "Clear phone search",
+          onclick: () => {
+            input.value = "";
+            state.phone = "";
+            clearTimeout(searchTimer);
+            loadList(false);
+          },
+        },
+        icon("close"),
+      );
+      content.replaceChildren(
+        el(
+          "div",
+          { class: "go-search" },
+          el("span", { "aria-hidden": "true" }, icon("search")),
+          input,
+          clear,
+        ),
+        el(
+          "div",
+          { class: "go-toolbar" },
+          el(
+            "button",
+            { id: "go-filter", class: "go-pill", onclick: filterDialog },
+            ...filterCaption(state.status),
+          ),
+          el(
+            "button",
+            {
+              class: "go-secondary go-refresh",
+              onclick: () => loadList(false),
+            },
+            icon("refresh"),
+            "Refresh",
+          ),
+        ),
+        el("div", { id: "go-list", class: "go-list" }),
+        el("div", { id: "go-list-end" }),
+      );
+    }
+    function renderRows() {
+      const list = $("go-list");
+      if (!list) return;
+      list.replaceChildren(
+        ...state.rows.map((row) =>
+          el(
+            "button",
+            { class: "go-card", onclick: () => openDetail(row.name) },
+            el(
+              "span",
+              { class: "go-badge", "aria-hidden": "true" },
+              icon("briefcase", 24),
+            ),
+            el(
+              "span",
+              { class: "go-card-text" },
+              el("strong", {}, row.customer_name || row.party_name || row.name),
+              el("small", {}, row.name),
+              el("small", {}, row.status || ""),
+            ),
+            el(
+              "span",
+              { class: "go-chevron", "aria-hidden": "true" },
+              icon("chevron"),
+            ),
+          ),
+        ),
+      );
+      if (!state.rows.length)
+        list.append(
+          el(
+            "p",
+            { class: "go-message" },
+            state.phone || state.status
+              ? "No opportunities match your filters."
+              : "No opportunities are assigned to you.",
+          ),
+        );
+      const end = $("go-list-end");
+      end.replaceChildren();
+      if (state.more)
+        end.append(
+          el(
+            "button",
+            { class: "go-secondary go-more", onclick: () => loadList(true) },
+            "Load more",
+          ),
+        );
+    }
+    async function loadList(more = false) {
+      if (state.stopped || currentId() || (more && listBusy)) return;
+      clearTimeout(searchTimer);
+      const version = ++state.listVersion;
+      listBusy = true;
+      if (!more) {
+        state.offset = 0;
+        state.rows = [];
+        state.more = false;
+      }
+      if (!$("go-list")) listShell();
+      if (!more) $("go-list").replaceChildren();
+      $("go-list-end").replaceChildren(
+        el("p", { class: "go-message" }, "Loading opportunities…"),
+      );
+      try {
+        await session();
+        const result = await raw(POLICY, {
+          query: {
+            action: "list",
+            start: more ? state.offset : 0,
+            phone: state.phone,
+            status: state.status,
+          },
+        });
+        await session();
+        if (version !== state.listVersion || currentId() || state.stopped)
+          return;
+        const message = result.message;
+        if (
+          message?.current_user !== state.user ||
+          !Array.isArray(message.items) ||
+          message.items.some(
+            (x) => !x || typeof x.name !== "string" || !x.name,
+          ) ||
+          typeof message.has_more !== "boolean" ||
+          !Number.isInteger(message.next_start) ||
+          message.next_start !==
+            (more ? state.offset : 0) + message.items.length
+        )
+          throw new Error(
+            "ERP did not return a valid Opportunity list for this session.",
+          );
+        const rows = new Map((more ? state.rows : []).map((x) => [x.name, x]));
+        message.items.forEach((x) => rows.set(x.name, x));
+        state.rows = [...rows.values()];
+        state.offset = message.next_start;
+        state.more = message.has_more;
+        renderRows();
+      } catch (error) {
+        if (version !== state.listVersion || state.stopped) return;
+        $("go-list-end")?.replaceChildren(
+          el("p", { class: "go-error" }, error.message),
+          el(
+            "button",
+            { class: "go-secondary", onclick: () => loadList(more) },
+            "Retry",
+          ),
+        );
+      } finally {
+        if (version === state.listVersion) listBusy = false;
+      }
+    }
+    function dialog(title) {
+      if (state.busy) return null;
+      clearTimeout(ownerTimer);
+      const version = ++modalVersion;
+      modal.replaceChildren(el("h2", { id: "go-dialog-title" }, title));
+      if (!modal.open) {
+        if (modal.showModal) modal.showModal();
+        else modal.setAttribute("open", "");
+      }
+      const body = el("div"),
+        error = el("div", { "aria-live": "polite" }),
+        actions = el("div", { class: "go-actions" });
+      modal.append(body, error, actions);
+      const cancel = el(
+        "button",
+        {
+          class: "go-secondary",
+          onclick: () => {
+            if (!state.busy) {
+              modalVersion++;
+              modal.close();
+            }
+          },
+        },
+        "Cancel",
+      );
+      actions.append(cancel);
+      return { body, error, actions, cancel, version };
+    }
+    async function policyOptions(name) {
+      const [metadata, response] = await Promise.all([
+        raw("/api/method/frappe.desk.form.load.getdoctype", {
+          query: { doctype: "Opportunity" },
+        }),
+        raw(POLICY, { query: { action: "get", ...(name ? { name } : {}) } }),
+      ]);
+      const docs = metadata.docs;
+      if (!Array.isArray(docs))
+        throw new Error("ERP did not return Opportunity fields.");
+      const meta = docs.find((x) => x.name === "Opportunity"),
+        fields = meta?.fields || [],
+        policy = response.message;
+      const statuses = String(
+        fields.find((x) => x.fieldname === "status")?.options || "",
+      )
+        .split("\n")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (
+        !policy ||
+        policy.current_user !== state.user ||
+        !Array.isArray(policy.editable_statuses) ||
+        !policy.editable_statuses.length ||
+        policy.editable_statuses.some((x) => !statuses.includes(x)) ||
+        !policy.followup_policy ||
+        typeof policy.followup_policy.allow_past !== "boolean" ||
+        !policy.status_transitions ||
+        !policy.business_policy
+      )
+        throw new Error(
+          "ERP returned invalid Opportunity settings. Check mobile_opportunity_policy.",
+        );
+      const norm = (x) =>
+        String(x || "")
+          .toLowerCase()
+          .replace(/[^a-z]/g, "");
+      const dates = fields.filter(
+        (x) =>
+          x.fieldtype === "Date" &&
+          (norm(x.label) === "nextfollowupdate" ||
+            norm(x.fieldname).replace(/^custom/, "") === "nextfollowupdate"),
+      );
+      const table = fields.find(
+          (x) => x.fieldname === "notes" && x.fieldtype === "Table",
+        ),
+        child = docs.find((x) => x.name === table?.options);
+      return {
+        policy,
+        fields,
+        dateField: dates.length === 1 ? dates[0].fieldname : null,
+        notesType: child?.fields?.some((x) => x.fieldname === "note")
+          ? table.options
+          : null,
+      };
+    }
+    async function filterDialog() {
+      const view = dialog("Filter by status");
+      if (!view) return;
+      view.body.append(el("p", {}, "Loading statuses…"));
+      try {
+        const options = await policyOptions();
+        if (view.version !== modalVersion) return;
+        view.body.replaceChildren();
+        for (const status of options.policy.editable_statuses) {
+          view.body.append(
+            el(
+              "button",
+              {
+                class: "go-owner-choice",
+                style: "display:block;width:100%;margin:5px 0",
+                onclick: () => {
+                  state.status = status;
+                  modal.close();
+                  $("go-filter").replaceChildren(...filterCaption(status));
+                  loadList(false);
+                },
+              },
+              status,
+            ),
+          );
+        }
+        view.actions.prepend(
+          el(
+            "button",
+            {
+              class: "go-link",
+              onclick: () => {
+                state.status = "";
+                modal.close();
+                $("go-filter").replaceChildren(...filterCaption(""));
+                loadList(false);
+              },
+            },
+            "Clear filter",
+          ),
+        );
+      } catch (error) {
+        if (view.version === modalVersion)
+          view.body.replaceChildren(
+            el("p", { class: "go-error" }, error.message),
+          );
+      }
+    }
+    const contacts = [
+      "contact_person",
+      "job_title",
+      "contact_email",
+      "email_id",
+      "contact_mobile",
+      "mobile_no",
+      "phone",
+      "phone_ext",
+      "whatsapp_no",
+      "whatsapp",
+      "contact_display",
+      "contact_html",
+    ];
+    const addresses = [
+      "custom_address",
+      "address_display",
+      "address_html",
+      "customer_address",
+      "territory",
+      "city",
+      "state",
+      "country",
+      "custom_pincode",
+      "pincode",
+    ];
+    const info = [
+      "opportunity_from",
+      "party_name",
+      "customer_name",
+      "lead_name",
+      "first_name",
+      "middle_name",
+      "last_name",
+      "company_name",
+      "source",
+      "custom_source",
+      "opportunity_owner",
+      "lead_owner",
+      "sales_stage",
+      "expected_closing",
+      "custom_requirement",
+      "custom_product_enquired",
+      "custom_customer_category",
+      "custom_sales_person",
+    ];
+    const phoneKeys = new Set([
+      "contact_mobile",
+      "mobile",
+      "mobile_no",
+      "mobile_number",
+      "phone",
+      "phone_no",
+      "phone_number",
+      "contact_number",
+      "contact_no",
+    ]);
+    const isPhone = (key) =>
+      phoneKeys.has(key.toLowerCase().replace(/^custom_/, ""));
+    function field(key, value) {
+      const row = el(
+        "div",
+        { class: "go-field" },
+        el(
+          "span",
+          { class: "go-badge", "aria-hidden": "true" },
+          icon(fieldIcon(key), 22),
+        ),
+        el(
+          "div",
+          { class: "go-value" },
+          el("span", { class: "go-label" }, label(key)),
+          plain(value),
+        ),
+      );
+      if (key === "opportunity_owner" && canEditCurrent())
+        row.append(
+          el(
+            "button",
+            {
+              class: "go-link",
+              "aria-label": "Edit Opportunity Owner",
+              onclick: ownerDialog,
+            },
+            icon("edit"),
+          ),
+        );
+      if (
+        isPhone(key) &&
+        present(value) &&
+        state.document?.opportunity_owner === state.user
+      )
+        row.append(
+          el(
+            "button",
+            {
+              class: "go-link",
+              "aria-label": `Call ${value}`,
+              onclick: () => callContact(String(value).trim()),
+            },
+            icon("phone"),
+          ),
+        );
+      return row;
+    }
+    function section(title, children) {
+      const box = el(
+        "details",
+        { class: "go-section", open: "" },
+        el(
+          "summary",
+          {},
+          icon(
+            title === "Notes"
+              ? "notes"
+              : title.includes("Contact")
+                ? "phone"
+                : title.includes("Address")
+                  ? "pin"
+                  : title.includes("Audit")
+                    ? "document"
+                    : title.includes("Value")
+                      ? "briefcase"
+                      : "chart",
+          ),
+          el("span", {}, title),
+          el("span", { class: "go-disclosure" }, icon("down")),
+        ),
+        ...children,
+      );
+      return box;
+    }
+    function canEditCurrent() {
+      return (
+        state.document?.opportunity_owner === state.user &&
+        state.canEdit !== false
+      );
+    }
+    function renderDetail(doc, creatorName) {
+      const used = new Set([
+        "name",
+        "status",
+        "doctype",
+        "docstatus",
+        "naming_series",
+        "creation",
+        "modified",
+        "modified_by",
+        "opportunity_type",
+        "probability",
+        "conversion_rate",
+        "opportunity_amount",
+        "base_opportunity_amount",
+        "base_total",
+        "total",
+        "annual_revenue",
+      ]);
+      const sections = [];
+      function add(title, keys) {
+        const valid = [...new Set(keys)].filter(
+          (k) => !used.has(k) && present(doc[k]),
+        );
+        valid.forEach((k) => used.add(k));
+        if (valid.length)
+          sections.push(
+            section(
+              title,
+              valid.map((k) => field(k, doc[k])),
+            ),
+          );
+      }
+      const summary = el(
+        "div",
+        { class: "go-section" },
+        el("span", { class: "go-label" }, "OPPORTUNITY ID"),
+        el("div", { class: "go-id" }, doc.name),
+        el("span", { class: "go-tag" }, doc.status || "Not set"),
+      );
+      if (doc.opportunity_from)
+        summary.append(
+          el("div", { class: "go-hint" }, `From ${doc.opportunity_from}`),
+        );
+      if (doc.owner) {
+        used.add("owner");
+        sections.push(
+          section("Audit Information", [
+            field("owner", creatorName || "Full name unavailable"),
+          ]),
+        );
+      }
+      const followups = Object.keys(doc).filter(
+        (k) =>
+          k
+            .replace(/^custom_/, "")
+            .replace(/[^a-z]/gi, "")
+            .toLowerCase() === "nextfollowupdate",
+      );
+      add("Opportunity Information", [...info, ...followups]);
+      add("Contact Information", [
+        ...contacts,
+        ...Object.keys(doc).filter(isPhone),
+      ]);
+      add("Address Information", addresses);
+      add("Value & Company", ["company", "currency"]);
+      add(
+        "Additional Information",
+        Object.keys(doc).filter((k) =>
+          ["customertype", "citytown", "district"].includes(
+            k
+              .replace(/^custom_/, "")
+              .replace(/[^a-z]/gi, "")
+              .toLowerCase(),
+          ),
+        ),
+      );
+      if (Array.isArray(doc.notes) && doc.notes.length) {
+        used.add("notes");
+        const sorted = doc.notes
+          .map((row, index) => ({
+            row,
+            index,
+            time: Date.parse(row.added_on || row.creation || ""),
+          }))
+          .sort((a, b) =>
+            Number.isNaN(a.time) && Number.isNaN(b.time)
+              ? b.index - a.index
+              : Number.isNaN(a.time)
+                ? 1
+                : Number.isNaN(b.time)
+                  ? -1
+                  : b.time - a.time || b.index - a.index,
+          )
+          .slice(0, 3);
+        sections.push(
+          section(
+            "Notes",
+            sorted.map(({ row }, index) =>
+              el(
+                "div",
+                { class: "go-note" },
+                el(
+                  "div",
+                  { class: "go-note-body" },
+                  el("span", { class: "go-label" }, `Note ${index + 1}`),
+                  plain(row.note),
+                ),
+                el(
+                  "div",
+                  { class: "go-note-audit" },
+                  row.added_by || "Author unavailable",
+                  el("time", {}, formatTime(row.added_on)),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      for (const [key, rows] of Object.entries(doc)) {
+        if (
+          used.has(key) ||
+          !Array.isArray(rows) ||
+          !rows.length ||
+          key.startsWith("_")
+        )
+          continue;
+        sections.push(
+          section(
+            label(key),
+            rows.map((row, index) =>
+              el(
+                "details",
+                {},
+                el("summary", {}, `Row ${index + 1}`),
+                ...Object.entries(row)
+                  .filter(
+                    ([k, v]) =>
+                      ![
+                        "doctype",
+                        "parent",
+                        "parenttype",
+                        "parentfield",
+                        "idx",
+                      ].includes(k) &&
+                      !k.startsWith("_") &&
+                      present(v),
+                  )
+                  .map(([k, v]) => field(k, v)),
+              ),
+            ),
+          ),
+        );
+      }
+      content.replaceChildren(
+        summary,
+        ...(canEditCurrent()
+          ? [
+              el(
+                "div",
+                { class: "go-edit-row" },
+                el(
+                  "button",
+                  { class: "go-link", onclick: editDialog },
+                  icon("edit"),
+                  "Edit status, notes & follow-up",
+                ),
+              ),
+            ]
+          : []),
+        ...sections,
+      );
+    }
+    function formatTime(value) {
+      if (!value) return "Time unavailable";
+      const match = String(value).match(
+        /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/,
+      );
+      if (!match) return String(value);
+      const [, year, month, day, hour, minute] = match,
+        months = [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ];
+      return `${day} ${months[Number(month) - 1] || month} ${year}, ${String(Number(hour) % 12 || 12).padStart(2, "0")}:${minute} ${Number(hour) >= 12 ? "PM" : "AM"}`;
+    }
+    async function loadDetail(name) {
+      const version = ++state.routeVersion;
+      state.listVersion++;
+      listBusy = false;
+      state.document = null;
+      setTitle(true);
+      content.replaceChildren(
+        el("p", { class: "go-message" }, "Loading Opportunity…"),
+      );
+      try {
+        await session();
+        const response = await raw(POLICY, {
+          query: { action: "detail", name },
+        });
+        await session();
+        if (version !== state.routeVersion || currentId() !== name) return;
+        const message = response.message;
+        if (
+          message?.current_user !== state.user ||
+          typeof message.can_edit !== "boolean"
+        )
+          throw new Error(
+            "ERP returned invalid Opportunity access information.",
+          );
+        const doc = message.document;
+        if (!doc || doc.name !== name)
+          throw new Error("ERP returned another Opportunity.");
+        let creatorName = "";
+        try {
+          const r = await raw("/api/method/frappe.client.get_value", {
+            query: {
+              doctype: "User",
+              filters: { name: doc.owner },
+              fieldname: "full_name",
+            },
+          });
+          creatorName = r.message?.full_name || "";
+        } catch (_) {}
+        await session();
+        if (
+          version !== state.routeVersion ||
+          state.stopped ||
+          currentId() !== name
+        )
+          return;
+        state.document = doc;
+        state.canEdit = message.can_edit;
+        renderDetail(doc, creatorName);
+      } catch (error) {
+        if (version === state.routeVersion)
+          errorView(error, () => loadDetail(name));
+      }
+    }
+    function rule(options, key) {
+      return options.policy.business_policy.fields?.[key] || {};
+    }
+    function requiredNote(options, status, date, doc) {
+      const rules = options.policy.business_policy.rules || {};
+      return (
+        rule(options, "note").required === true ||
+        (rules.note_on_status_change !== false && status !== doc.status) ||
+        (rules.note_on_followup_change !== false &&
+          options.dateField &&
+          date !== String(doc[options.dateField] || ""))
+      );
+    }
+    function validateField(value, definition, name) {
+      if (definition.required && !String(value || "").trim())
+        throw new Error(`${name} is required.`);
+      if (
+        definition.max_length > 0 &&
+        String(value || "").length > definition.max_length
+      )
+        throw new Error(`${name} is too long.`);
+    }
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+    let warningFocus = null;
+    function closeWarning(restoreFocus = true) {
+      const popup = $("go-warning");
+      if (!popup.hasAttribute("open")) return;
+      if (popup.close) popup.close();
+      else popup.removeAttribute("open");
+      if (restoreFocus && warningFocus?.isConnected) warningFocus.focus();
+      warningFocus = null;
+    }
+    function showWarning(message, focusTarget) {
+      if (state.stopped) return;
+      const popup = $("go-warning");
+      warningFocus = focusTarget || document.activeElement;
+      popup.replaceChildren(
+        el("div", { class: "go-warning-badge" }, icon("warning", 30)),
+        el("h2", { id: "go-warning-title" }, "Warning"),
+        el("p", { id: "go-warning-message" }, message),
+        el(
+          "button",
+          {
+            type: "button",
+            class: "go-primary",
+            onclick: () => closeWarning(),
+          },
+          "OK",
+        ),
+      );
+      if (!popup.hasAttribute("open")) {
+        if (popup.showModal) popup.showModal();
+        else popup.setAttribute("open", "");
+      }
+      popup.querySelector("button").focus();
+    }
+    function modalError(view, error) {
+      view.error.replaceChildren(el("p", { class: "go-error" }, error.message));
+      if (error.uncertain)
+        view.error.append(
+          el(
+            "p",
+            { class: "go-hint" },
+            "This action may already have completed. Close and refresh the record before trying again.",
+          ),
+        );
+    }
+    async function editDialog() {
+      const doc = state.document;
+      if (!doc || !canEditCurrent()) return;
+      const view = dialog("Edit Opportunity");
+      if (!view) return;
+      view.body.append(el("p", {}, "Loading edit settings…"));
+      try {
+        const options = await policyOptions(doc.name);
+        if (view.version !== modalVersion || state.stopped) return;
+        view.body.replaceChildren();
+        const transition = options.policy.status_transitions[doc.status];
+        const statuses = options.policy.editable_statuses.filter(
+          (x) => !transition || transition.includes(x) || x === doc.status,
+        );
+        if (!statuses.includes(doc.status)) statuses.unshift(doc.status);
+        const statusWidget = choiceControl(
+          "go-edit-status",
+          statuses.map((value) => ({ value, label: value })),
+          doc.status,
+          "Status",
+        );
+        const status = statusWidget.input;
+        status.disabled = rule(options, "status").read_only === true;
+        statusWidget.button.disabled = status.disabled;
+        if (rule(options, "status").visible !== false)
+          view.body.append(
+            el("label", { for: "go-edit-status-toggle" }, "Status"),
+            statusWidget.element,
+          );
+        const dateWidget = calendarControl(
+          "go-edit-date",
+          options.dateField ? String(doc[options.dateField] || "") : "",
+          options.policy.followup_policy.earliest_date || "",
+        );
+        const date = dateWidget.input;
+        date.disabled = rule(options, "followup_date").read_only === true;
+        dateWidget.button.disabled = date.disabled;
+        if (options.policy.followup_policy.earliest_date)
+          date.min = options.policy.followup_policy.earliest_date;
+        if (
+          options.dateField &&
+          rule(options, "followup_date").visible !== false
+        )
+          view.body.append(
+            el("label", { for: "go-edit-date-toggle" }, "Next follow-up date"),
+            dateWidget.element,
+          );
+        const note = el("textarea", { id: "go-edit-note", rows: "4" });
+        note.value = String(rule(options, "note").default || "");
+        note.disabled = rule(options, "note").read_only === true;
+        if (rule(options, "note").max_length > 0)
+          note.maxLength = rule(options, "note").max_length;
+        if (options.notesType && rule(options, "note").visible !== false)
+          view.body.append(
+            el("label", { for: "go-edit-note" }, "Add note"),
+            note,
+            el(
+              "p",
+              { class: "go-hint" },
+              "A new note is required when changing status or follow-up date. Existing notes are retained.",
+            ),
+          );
+        else
+          view.body.append(
+            el(
+              "p",
+              { class: "go-hint" },
+              "The notes field is unavailable for editing.",
+            ),
+          );
+        const dependencies =
+          options.policy.business_policy.rules?.dependencies || [];
+        status.addEventListener("change", () => {
+          const warning = dependencies
+            .filter(
+              (x) =>
+                x.statuses?.includes(status.value) &&
+                status.value !== doc.status,
+            )
+            .map((x) => x.message)
+            .join("\n");
+          if (warning) showWarning(warning, statusWidget.button);
+        });
+        const save = el(
+          "button",
+          {
+            class: "go-primary",
+            onclick: async () => {
+              if (state.busy) return;
+              let uncertain = false;
+              try {
+                const changes = {};
+                validateField(status.value, rule(options, "status"), "Status");
+                validateField(
+                  date.value,
+                  rule(options, "followup_date"),
+                  "Follow-up date",
+                );
+                validateField(note.value.trim(), rule(options, "note"), "Note");
+                if (status.value !== doc.status) changes.status = status.value;
+                if (
+                  options.dateField &&
+                  date.value !== String(doc[options.dateField] || "")
+                )
+                  changes[options.dateField] = date.value;
+                if (
+                  options.dateField &&
+                  (date.value ||
+                    Object.prototype.hasOwnProperty.call(
+                      changes,
+                      options.dateField,
+                    )) &&
+                  (!/^\d{4}-\d{2}-\d{2}$/.test(date.value) ||
+                    (date.min && date.value < date.min))
+                )
+                  throw new Error(
+                    `Choose a valid next follow-up date${date.min ? " on or after " + date.min : ""}.`,
+                  );
+                if (
+                  requiredNote(options, status.value, date.value, doc) &&
+                  (!note.value.trim() || !options.notesType)
+                )
+                  throw new Error(
+                    "Note required: add a new note explaining the status or follow-up date change.",
+                  );
+                if (options.notesType && note.value.trim())
+                  changes.notes = [
+                    ...(doc.notes || []).map((x) => ({ ...x })),
+                    {
+                      doctype: options.notesType,
+                      note:
+                        "<p>" +
+                        escapeHtml(note.value.trim()).replace(/\n/g, "<br>") +
+                        "</p>",
+                    },
+                  ];
+                if (!Object.keys(changes).length) {
+                  modal.close();
+                  return;
+                }
+                state.busy = true;
+                save.disabled = true;
+                view.cancel.disabled = true;
+                view.error.replaceChildren();
+                await session();
+                const fresh = assertOwner(
+                  (
+                    await raw(
+                      "/api/resource/Opportunity/" +
+                        encodeURIComponent(doc.name),
+                    )
+                  ).data,
+                );
+                if (fresh.modified !== doc.modified)
+                  throw new Error(
+                    "This Opportunity changed. Close and refresh before editing again.",
+                  );
+                const response = await write(POLICY, {
+                  action: "save",
+                  name: doc.name,
+                  modified: doc.modified,
+                  changes,
+                });
+                const updated = assertOwner(response.data);
+                if (updated.name !== doc.name || updated.owner !== doc.owner)
+                  throw new ApiError(
+                    "ERP did not confirm the saved Opportunity. Refresh before retrying.",
+                    200,
+                    true,
+                  );
+                modal.close();
+                await loadDetail(doc.name);
+              } catch (error) {
+                uncertain = !!error.uncertain;
+                const noteWarning = /\bnote\b[\s\S]*\brequired\b/i.test(
+                  error.message,
+                );
+                const eventWarning =
+                  error.status === 417 &&
+                  dependencies.some(
+                    (dependency) =>
+                      dependency.statuses?.includes(status.value) &&
+                      (error.message === dependency.message ||
+                        /\bevents?\b/i.test(error.message)),
+                  );
+                if (noteWarning || eventWarning) {
+                  view.error.replaceChildren();
+                  showWarning(
+                    error.message,
+                    noteWarning ? note : statusWidget.button,
+                  );
+                } else modalError(view, error);
+              } finally {
+                state.busy = false;
+                save.disabled = uncertain;
+                view.cancel.disabled = false;
+              }
+            },
+          },
+          "Save",
+        );
+        view.actions.append(save);
+      } catch (error) {
+        if (view.version === modalVersion) modalError(view, error);
+      }
+    }
+    async function ownerDialog() {
+      const doc = state.document;
+      if (!doc || !canEditCurrent()) return;
+      const view = dialog("Edit Opportunity Owner");
+      if (!view) return;
+      let selected = null,
+        version = 0;
+      const search = el("input", {
+          id: "go-owner-search",
+          type: "search",
+          maxlength: "140",
+          placeholder: "Search ERP users",
+        }),
+        results = el("div", { class: "go-owner-results" }),
+        selection = el("p", { class: "go-hint" });
+      view.body.append(
+        el("p", {}, `Current owner: ${doc.opportunity_owner}`),
+        el("label", { for: "go-owner-search" }, "Search ERP users"),
+        search,
+        results,
+        selection,
+        el(
+          "p",
+          { class: "go-hint" },
+          "After reassignment, this Opportunity will leave your owner-based list.",
+        ),
+      );
+      const save = el(
+        "button",
+        {
+          class: "go-primary",
+          disabled: true,
+          onclick: async () => {
+            if (state.busy || !selected) return;
+            let uncertain = false;
+            try {
+              state.busy = true;
+              save.disabled = true;
+              view.cancel.disabled = true;
+              search.disabled = true;
+              view.error.replaceChildren();
+              const r = await write(POLICY, {
+                action: "change_owner",
+                name: doc.name,
+                modified: doc.modified,
+                new_owner: selected,
+              });
+              const m = r.message;
+              if (
+                !m ||
+                m.status !== "success" ||
+                m.name !== doc.name ||
+                m.opportunity_owner !== selected ||
+                m.current_user !== state.user
+              )
+                throw new ApiError(
+                  "ERP did not confirm the owner change. Refresh before retrying.",
+                  200,
+                  true,
+                );
+              modal.close();
+              state.document = null;
+              window.location.hash = "";
+            } catch (error) {
+              uncertain = !!error.uncertain;
+              modalError(view, error);
+            } finally {
+              state.busy = false;
+              save.disabled = uncertain || !selected;
+              view.cancel.disabled = false;
+              search.disabled = false;
+            }
+          },
+        },
+        "Save",
+      );
+      view.actions.append(save);
+      async function searchUsers() {
+        const request = ++version;
+        results.replaceChildren(
+          el("p", { class: "go-hint" }, "Loading users…"),
+        );
+        try {
+          const r = await raw(POLICY, {
+            query: {
+              action: "owner_options",
+              name: doc.name,
+              txt: search.value.trim(),
+            },
+          });
+          if (
+            request !== version ||
+            view.version !== modalVersion ||
+            state.stopped
+          )
+            return;
+          if (
+            r.message?.current_user !== state.user ||
+            !Array.isArray(r.message.options)
+          )
+            throw new Error("ERP returned invalid owner choices.");
+          results.replaceChildren();
+          for (const item of r.message.options) {
+            if (typeof item.value !== "string") continue;
+            const button = el(
+              "button",
+              {
+                class: "go-owner-choice",
+                "aria-pressed": selected === item.value,
+                disabled: item.value === doc.opportunity_owner,
+                onclick: () => {
+                  if (state.busy) return;
+                  selected = item.value;
+                  selection.textContent = `New owner: ${selected}`;
+                  save.disabled = false;
+                  results
+                    .querySelectorAll("button")
+                    .forEach((x) => x.setAttribute("aria-pressed", "false"));
+                  button.setAttribute("aria-pressed", "true");
+                },
+              },
+              item.label || item.value,
+              el(
+                "small",
+                {},
+                item.label ? item.value : plain(item.description || ""),
+              ),
+            );
+            results.append(button);
+          }
+          if (!results.children.length)
+            results.append(el("p", { class: "go-hint" }, "No matching users."));
+        } catch (error) {
+          if (request === version && view.version === modalVersion)
+            results.replaceChildren(
+              el("p", { class: "go-error" }, error.message),
+              el(
+                "button",
+                { class: "go-secondary", onclick: searchUsers },
+                "Retry",
+              ),
+            );
+        }
+      }
+      search.addEventListener("input", () => {
+        clearTimeout(ownerTimer);
+        version++;
+        ownerTimer = setTimeout(searchUsers, 300);
+      });
+      await searchUsers();
+    }
+    async function callContact(number) {
+      const doc = state.document;
+      if (!doc || doc.opportunity_owner !== state.user || state.busy) return;
+      const view = dialog("Call contact");
+      if (!view) return;
+      if (
+        doc.owner !== state.user ||
+        !Object.entries(doc).some(
+          ([key, value]) =>
+            isPhone(key) && String(value ?? "").trim() === number,
+        )
+      ) {
+        view.body.append(
+          el(
+            "p",
+            { class: "go-error" },
+            "The existing mobile calling rule requires you to be the Opportunity creator.",
+          ),
+        );
+        return;
+      }
+      if (
+        !/^[+0-9\s().-]+$/.test(number) ||
+        !/^\d{7,15}$/.test(number.replace(/[+\s().-]/g, ""))
+      ) {
+        view.body.append(
+          el(
+            "p",
+            { class: "go-error" },
+            "Update this invalid contact number in ERP before calling.",
+          ),
+        );
+        return;
+      }
+      view.body.append(el("p", {}, `Call ${number}?`));
+      const call = el(
+        "button",
+        {
+          class: "go-primary",
+          onclick: async () => {
+            if (state.busy) return;
+            state.busy = true;
+            call.disabled = true;
+            view.cancel.disabled = true;
+            try {
+              assertOwner(doc);
+              const r = await write("/api/method/smartflo.api.initiate_call", {
+                doc: { ...doc, doctype: "Opportunity" },
+                number,
+              });
+              const m = r.message;
+              if (
+                !m ||
+                m.success === false ||
+                m.success === 0 ||
+                m.error ||
+                ["error", "failed", "failure"].includes(
+                  String(m.status || "").toLowerCase(),
+                )
+              )
+                throw new Error(
+                  typeof m?.message === "string"
+                    ? plain(m.message)
+                    : "The call could not be confirmed. Check your phone before trying again.",
+                );
+              view.body.replaceChildren(
+                el("p", {}, "Call request sent. Please check your phone."),
+              );
+            } catch (error) {
+              modalError(view, error);
+            } finally {
+              state.busy = false;
+              view.cancel.disabled = false;
+              view.cancel.textContent = "Close";
+            }
+          },
+        },
+        "Call",
+      );
+      view.actions.append(call);
+    }
+    async function route() {
+      if (state.stopped) return;
+      closeWarning(false);
+      if (modal.open && !state.busy) modal.close();
+      const id = currentId();
+      if (id) {
+        await loadDetail(id);
+      } else {
+        state.routeVersion++;
+        state.document = null;
+        setTitle(false);
+        listShell();
+        await loadList(false);
+      }
+    }
+    modal.addEventListener("cancel", (event) => {
+      if (state.busy) event.preventDefault();
+      else modalVersion++;
+    });
+    $("go-warning").addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeWarning();
+    });
+    $("go-back").replaceChildren(icon("back", 22));
+    $("go-back").addEventListener("click", back);
+    window.addEventListener("hashchange", () => {
+      if (state.busy) {
+        if (state.document)
+          window.history.replaceState(
+            null,
+            "",
+            "#opportunity=" + encodeURIComponent(state.document.name),
+          );
+        return;
+      }
+      route();
+    });
+    window.addEventListener("genie-opportunities-refresh", () => {
+      if (!state.busy) route();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && state.user && !state.busy)
+        session().catch((error) => {
+          if (!state.stopped) stopSession(error.message);
+        });
+    });
+    // GO_BOOTSTRAP
+    session()
+      .then(route)
+      .catch((error) => {
+        if (!state.stopped) errorView(error, () => window.location.reload());
+      });
+  })();
+</script>

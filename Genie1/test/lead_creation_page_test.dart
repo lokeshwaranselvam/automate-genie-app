@@ -48,7 +48,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.byType(RawAutocomplete<String>), findsNWidgets(3));
+        expect(find.byType(RawAutocomplete<String>), findsNWidgets(5));
         expect(
           find.text('Phone and WhatsApp numbers are the same'),
           findsOneWidget,
@@ -84,6 +84,16 @@ void main() {
               'source_options': ['Website', 'Referral'],
               'product_category_options': ['Doors', 'Windows'],
               'customer_category_options': ['B2B', 'B2C'],
+              'location_fields': {
+                'custom_citytown': {
+                  'fieldtype': 'Select',
+                  'options': ['Chennai', 'Madurai'],
+                },
+                'custom_district': {
+                  'fieldtype': 'Select',
+                  'options': ['Chennai - TN', 'Madurai - TN'],
+                },
+              },
               'csrf_token': 'preview-token',
             },
           }),
@@ -112,14 +122,8 @@ void main() {
           await tester.enterText(fields.at(0), 'Customer One');
           await tester.enterText(fields.at(1), '9876543210');
           await tester.enterText(fields.at(2), '+91 98765 43210');
-          await tester.enterText(
-            find.byWidgetPredicate(
-              (widget) =>
-                  widget is TextField &&
-                  widget.decoration?.hintText == 'Chennai',
-            ),
-            'Chennai',
-          );
+          expect(find.text('Location', findRichText: true), findsOneWidget);
+          expect(find.text('Location *', findRichText: true), findsNothing);
           await tester.enterText(
             find.byWidgetPredicate(
               (widget) =>
@@ -129,7 +133,7 @@ void main() {
             ),
             'New doors',
           );
-          expect(find.byIcon(Icons.search_rounded), findsNothing);
+          expect(find.byIcon(Icons.search_rounded), findsNWidgets(2));
           await tester.tap(find.byType(CheckboxListTile));
           await tester.pumpAndSettle();
           expect(
@@ -228,6 +232,29 @@ void main() {
             'B2B',
           );
 
+          tester.widget<FilledButton>(find.byType(FilledButton)).onPressed!();
+          await tester.pumpAndSettle();
+          expect(posts, 0);
+          expect(
+            find.text('Select City/Town from the configured options.'),
+            findsOneWidget,
+          );
+          expect(
+            find.text('Select District from the configured options.'),
+            findsOneWidget,
+          );
+          await tester.ensureVisible(choice('custom_citytown'));
+          await tester.enterText(choice('custom_citytown'), 'chen');
+          await tester.pumpAndSettle();
+          expect(find.text('Madurai'), findsNothing);
+          await tester.tap(find.widgetWithText(ListTile, 'Chennai'));
+          await tester.pumpAndSettle();
+          await tester.ensureVisible(choice('custom_district'));
+          await tester.enterText(choice('custom_district'), 'chen');
+          await tester.pumpAndSettle();
+          await tester.tap(find.widgetWithText(ListTile, 'Chennai - TN'));
+          await tester.pumpAndSettle();
+
           final button = tester.widget<FilledButton>(find.byType(FilledButton));
           button.onPressed!();
           button.onPressed!();
@@ -238,6 +265,9 @@ void main() {
           await tester.pump();
           expect(posts, 1);
           expect(submittedFields?['first_name'], 'Customer One');
+          expect(submittedFields?['custom_address'], isEmpty);
+          expect(submittedFields?['custom_citytown'], 'Chennai');
+          expect(submittedFields?['custom_district'], 'Chennai - TN');
           expect(submittedFields?['custom_product_enquired'], 'Doors');
           expect(submittedFields?['source'], 'Website');
           expect(submittedFields?['custom_customer_category'], 'B2B');
@@ -280,6 +310,16 @@ void main() {
                 'source_options': ['Website'],
                 'product_category_options': ['Doors'],
                 'customer_category_options': ['B2B', 'B2C'],
+                'location_fields': {
+                  'custom_citytown': {
+                    'fieldtype': 'Select',
+                    'options': ['Chennai', 'Madurai'],
+                  },
+                  'custom_district': {
+                    'fieldtype': 'Select',
+                    'options': ['Chennai - TN', 'Madurai - TN'],
+                  },
+                },
                 'csrf_token': 'form-token',
               },
             }),
@@ -289,4 +329,71 @@ void main() {
       );
     },
   );
+  testWidgets('Link locations search ERP and retain a selected value', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({'session_sid': 'location-session'});
+    dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
+    await tester.binding.setSurfaceSize(const Size(800, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final searches = <String>[];
+    await http.runWithClient(
+      () async {
+        await tester.pumpWidget(const MaterialApp(home: LeadCreationPage()));
+        await tester.pumpAndSettle();
+        final city = find.descendant(
+          of: find.byKey(const ValueKey('custom_citytown')),
+          matching: find.byType(TextFormField),
+        );
+        await tester.ensureVisible(city);
+        await tester.enterText(city, 'che');
+        await tester.pump(const Duration(milliseconds: 350));
+        await tester.pumpAndSettle();
+        expect(searches, ['che']);
+        await tester.tap(find.widgetWithText(ListTile, 'Chennai'));
+        await tester.pump(const Duration(milliseconds: 350));
+        await tester.pumpAndSettle();
+        expect(tester.widget<TextFormField>(city).controller!.text, 'Chennai');
+        expect(
+          tester.widget<TextFormField>(city).validator!('Chennai'),
+          isNull,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(milliseconds: 350));
+      },
+      () => MockClient((request) async {
+        if (request.url.queryParameters['view'] == 'location_options') {
+          expect(request.url.queryParameters['fieldname'], 'custom_citytown');
+          expect(request.headers['Cookie'], 'sid=location-session');
+          searches.add(request.url.queryParameters['txt']!);
+          return http.Response(
+            jsonEncode({
+              'message': {
+                'options': [
+                  {'value': 'Chennai'},
+                ],
+              },
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'message': {
+              'source_options': ['Website'],
+              'product_category_options': ['Doors'],
+              'customer_category_options': ['B2B'],
+              'csrf_token': 'token',
+              'location_fields': {
+                'custom_citytown': {'fieldtype': 'Link', 'options': []},
+                'custom_district': {'fieldtype': 'Link', 'options': []},
+              },
+            },
+          }),
+          200,
+        );
+      }),
+    );
+  });
 }

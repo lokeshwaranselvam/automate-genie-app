@@ -44,6 +44,27 @@ void main() {
       });
 
   test(
+    'Home count uses the centralized permitted Opportunity visibility without a page cap',
+    () async {
+      await http.runWithClient(
+        () async {
+          expect(await OpportunityApi.getMyOpportunityCount(), 1251);
+        },
+        () => client((request) async {
+          expect(request.url.path, '/api/method/mobile_opportunity_policy');
+          expect(request.url.queryParameters['action'], 'count');
+          return http.Response(
+            jsonEncode({
+              'message': {'current_user': opportunityUser, 'count': 1251},
+            }),
+            200,
+          );
+        }),
+      );
+    },
+  );
+
+  test(
     'list filters by Opportunity Owner and includes records created by others',
     () async {
       await http.runWithClient(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../theme/brand_theme.dart';
 import '../opportunity_contact.dart';
@@ -14,6 +15,7 @@ class CrmDocumentDetails extends StatelessWidget {
     this.onCallContact,
     this.callInProgress = false,
     this.onEditOpportunity,
+    this.onEditOpportunityOwner,
     this.creatorFullName,
     this.onOpenOpportunity,
     this.openingOpportunity = false,
@@ -26,6 +28,7 @@ class CrmDocumentDetails extends StatelessWidget {
   final ValueChanged<String>? onCallContact;
   final bool callInProgress;
   final VoidCallback? onEditOpportunity;
+  final VoidCallback? onEditOpportunityOwner;
   final String? creatorFullName;
   final VoidCallback? onOpenOpportunity;
   final bool openingOpportunity;
@@ -409,6 +412,15 @@ class CrmDocumentDetails extends StatelessWidget {
     return notes.take(3).map((entry) => entry.row).toList();
   }
 
+  String _noteTimestamp(dynamic row) {
+    final raw = row is Map ? row['added_on']?.toString().trim() ?? '' : '';
+    if (raw.isEmpty) return 'Time unavailable';
+    final timestamp = DateTime.tryParse(raw);
+    return timestamp == null
+        ? raw
+        : DateFormat('dd MMM yyyy, hh:mm a').format(timestamp);
+  }
+
   Widget _field(String key, dynamic value) {
     if (documentType == 'Opportunity' && key == 'notes' && value is List) {
       final notes = _visibleValue(key, value) as List;
@@ -417,9 +429,55 @@ class CrmDocumentDetails extends StatelessWidget {
         children: [
           for (var i = 0; i < notes.length; i++) ...[
             if (i > 0) const Divider(height: 1, color: Color(0xFFE1E7F0)),
-            _field(
-              'note_${i + 1}',
-              notes[i] is Map ? notes[i]['note'] ?? '' : notes[i],
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: _field(
+                    'note_${i + 1}',
+                    notes[i] is Map ? notes[i]['note'] ?? '' : notes[i],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          notes[i] is Map &&
+                                  (notes[i]['added_by']
+                                          ?.toString()
+                                          .trim()
+                                          .isNotEmpty ??
+                                      false)
+                              ? notes[i]['added_by'].toString()
+                              : 'Author unavailable',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: _ink,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _noteTimestamp(notes[i]),
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: _muted,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ],
@@ -450,6 +508,15 @@ class CrmDocumentDetails extends StatelessWidget {
               ],
             ),
           ),
+          if (documentType == 'Opportunity' &&
+              key == 'opportunity_owner' &&
+              onEditOpportunityOwner != null)
+            IconButton(
+              tooltip: 'Edit Opportunity Owner',
+              icon: const Icon(Icons.edit_outlined),
+              color: BrandColors.ink,
+              onPressed: refreshing ? null : onEditOpportunityOwner,
+            ),
           if (documentType == 'Opportunity' &&
               onCallContact != null &&
               OpportunityContact.isPhoneField(key) &&
@@ -517,6 +584,7 @@ class CrmDocumentDetails extends StatelessWidget {
             .toSet();
     final sections = <Widget>[];
     if (documentType == 'Opportunity') {
+      remaining.removeAll(['opportunity_type', 'probability']);
       remaining.removeAll(_document);
       remaining.removeAll(_valueFields.skip(2));
       remaining.removeAll(_audit.skip(1));

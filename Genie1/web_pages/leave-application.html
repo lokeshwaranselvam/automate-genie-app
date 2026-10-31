@@ -1,0 +1,1231 @@
+<!-- ERP Web Page route: genie-leave-application. Combined HTML/CSS/JS. -->
+<style>
+  #la-app {
+    position: fixed;
+    inset: 0;
+    z-index: 1035;
+    background: #fff;
+    color: #202b3c;
+    font-family:
+      Roboto,
+      system-ui,
+      -apple-system,
+      sans-serif;
+    font-size: 14px;
+    overflow: auto;
+    color-scheme: light;
+  }
+  #la-app,
+  #la-app * {
+    box-sizing: border-box;
+  }
+  #la-app [hidden] {
+    display: none !important;
+  }
+  #la-app button,
+  #la-app textarea {
+    font: inherit;
+  }
+  #la-app button {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  #la-app button:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+  #la-app button:focus-visible,
+  #la-app textarea:focus-visible {
+    outline: 3px solid #b8c9ff;
+    outline-offset: 2px;
+  }
+  #la-app .la-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    min-height: 56px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 16px;
+    background: linear-gradient(110deg, #0755ff, #8b00e8);
+    color: #fff;
+  }
+  #la-app .la-header h1 {
+    margin: 0;
+    padding: 0;
+    flex: 1;
+    color: #fff !important;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  #la-app .la-header button {
+    background: transparent;
+    border: 0;
+    padding: 6px;
+    color: #fff;
+    display: grid;
+    place-items: center;
+    min-width: 36px;
+    min-height: 36px;
+  }
+  #la-app .la-body {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 18px 20px 28px;
+  }
+  #la-app .la-field {
+    margin-bottom: 20px;
+  }
+  #la-app label,
+  #la-app .la-label {
+    display: block;
+    margin: 0 0 7px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  #la-app .la-required {
+    color: #c84b55;
+  }
+  #la-app .la-input {
+    width: 100%;
+    min-height: 46px;
+    padding: 12px;
+    border: 1px solid #dde2e7;
+    border-radius: 8px;
+    color: #202b3c;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    text-align: left;
+  }
+  #la-app textarea.la-input {
+    resize: vertical;
+    min-height: 100px;
+    display: block;
+    line-height: 1.5;
+  }
+  #la-app textarea::placeholder {
+    color: #8b929b;
+  }
+  #la-app .la-days {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    margin: 22px 0 18px;
+    font-weight: 600;
+  }
+  #la-app .la-days span:first-child {
+    font-size: 13px;
+  }
+  #la-app hr {
+    border: 0;
+    border-top: 1px solid #eef0f3;
+    margin: 18px 0;
+  }
+  #la-app .la-half {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 26px;
+    font-size: 13px;
+    font-weight: 400;
+  }
+  #la-app .la-half input {
+    width: 20px;
+    height: 20px;
+    accent-color: #344bdb;
+    margin: 0;
+  }
+  #la-app .la-primary {
+    width: 100%;
+    min-height: 48px;
+    border: 0;
+    border-radius: 28px;
+    background: linear-gradient(110deg, #0755ff, #8b00e8);
+    color: #fff;
+    padding: 12px 20px;
+    font-weight: 600;
+  }
+  #la-app .la-secondary {
+    border: 1px solid #dde2e7;
+    border-radius: 22px;
+    padding: 10px 18px;
+    background: #fff;
+    color: #514597;
+  }
+  #la-app .la-message {
+    text-align: center;
+    padding: 32px 8px;
+    line-height: 1.6;
+  }
+  #la-app .la-hint {
+    color: #697586;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  #la-app .la-refresh {
+    display: block;
+    margin: 16px auto 0;
+    border: 0;
+    background: transparent;
+    color: #514597;
+  }
+  #la-app .la-control {
+    position: relative;
+  }
+  #la-app .la-panel {
+    position: relative;
+    margin-top: 8px;
+    border: 1px solid #dde2e7;
+    border-radius: 12px;
+    background: #fff;
+    padding: 10px;
+    box-shadow: 0 6px 18px #17202a12;
+  }
+  #la-app .la-options {
+    max-height: 240px;
+    overflow: auto;
+  }
+  #la-app .la-options button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: 0;
+    background: #fff;
+    padding: 12px;
+    border-radius: 6px;
+    color: #202b3c;
+  }
+  #la-app .la-options button[aria-selected="true"] {
+    background: #eee6ff;
+    color: #514597;
+    font-weight: 600;
+  }
+  #la-app .la-calendar-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  #la-app .la-calendar-head button {
+    display: grid;
+    place-items: center;
+    padding: 8px;
+    border: 0;
+    background: #f3f1fb;
+    color: #514597;
+    border-radius: 8px;
+  }
+  #la-app .la-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+    text-align: center;
+  }
+  #la-app .la-week {
+    font-size: 12px;
+    color: #697586;
+    padding: 7px 0;
+  }
+  #la-app .la-day {
+    aspect-ratio: 1;
+    min-height: 34px;
+    border: 0;
+    border-radius: 50%;
+    background: #fff;
+    color: #202b3c;
+    padding: 4px;
+  }
+  #la-app .la-day[aria-selected="true"] {
+    background: #5745d6;
+    color: #fff;
+  }
+  #la-app .la-day:disabled {
+    color: #aeb4be;
+    background: #f8f9fb;
+  }
+  #la-app dialog {
+    width: calc(100% - 40px);
+    max-width: 440px;
+    border: 0;
+    border-radius: 22px;
+    padding: 24px;
+    color: #202b3c;
+    background: #fff;
+  }
+  #la-app dialog::backdrop {
+    background: #14203970;
+  }
+  #la-app dialog[open] {
+    display: block;
+  }
+  #la-app dialog h2 {
+    font-size: 21px;
+    margin: 0 0 16px;
+    color: #202b3c;
+  }
+  #la-app dialog p {
+    white-space: pre-line;
+    line-height: 1.6;
+  }
+  #la-app dialog button {
+    float: right;
+    width: auto;
+    min-width: 90px;
+    margin-top: 12px;
+  }
+  @media (max-width: 360px) {
+    #la-app .la-body {
+      padding: 16px;
+    }
+    #la-app .la-grid {
+      gap: 2px;
+    }
+  }
+</style>
+<div id="la-app">
+  <header class="la-header">
+    <button id="la-back" type="button" aria-label="Back to More"></button>
+    <h1>Leave Application</h1>
+    <button
+      id="la-notifications"
+      type="button"
+      aria-label="Notifications"
+    ></button>
+  </header>
+  <main id="la-content" class="la-body" aria-live="polite"></main>
+  <dialog
+    id="la-dialog"
+    aria-labelledby="la-dialog-title"
+    aria-modal="true"
+  ></dialog>
+</div>
+<script>
+  (() => {
+    "use strict";
+    const root = document.getElementById("la-app");
+    if (!root || root.dataset.started) return;
+    root.dataset.started = "true";
+    const $ = (id) => document.getElementById(id),
+      content = $("la-content"),
+      modal = $("la-dialog");
+    const API = "/api/method/create_leave_application_from_mobile";
+    const state = {
+      user: null,
+      stopped: false,
+      csrf: null,
+      options: null,
+      policy: { fields: {}, rules: {} },
+      busy: false,
+      loading: false,
+      uncertain: false,
+      version: 0,
+      draft: {
+        leave_type: "",
+        from_date: "",
+        to_date: "",
+        description: "",
+        half_day: false,
+      },
+    };
+    function el(tag, attrs = {}, ...children) {
+      const node = document.createElement(tag);
+      for (const [key, value] of Object.entries(attrs)) {
+        if (key === "class") node.className = value;
+        else if (key.startsWith("on") && typeof value === "function")
+          node.addEventListener(key.slice(2), value);
+        else if (key === "disabled") node.disabled = !!value;
+        else node.setAttribute(key, String(value));
+      }
+      for (const child of children.flat())
+        if (child !== null && child !== undefined)
+          node.append(
+            typeof child === "object"
+              ? child
+              : document.createTextNode(String(child)),
+          );
+      return node;
+    }
+    function icon(name) {
+      const paths = {
+        back: "M19 12H5m7-7-7 7 7 7",
+        down: "m6 9 6 6 6-6",
+        next: "m9 5 7 7-7 7",
+        calendar: "M4 5h16v16H4zM4 10h16M8 3v4M16 3v4M8 14h2M14 14h2M8 18h2",
+        bell: "M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4",
+      };
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      for (const [key, value] of Object.entries({
+        viewBox: "0 0 24 24",
+        width: 22,
+        height: 22,
+        fill: "none",
+        stroke: "currentColor",
+        "stroke-width": 1.8,
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+        "aria-hidden": "true",
+      }))
+        svg.setAttribute(key, String(value));
+      const path = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "path",
+      );
+      path.setAttribute("d", paths[name]);
+      svg.append(path);
+      return svg;
+    }
+    function plain(value) {
+      const node = document.createElement("textarea");
+      node.innerHTML = String(value ?? "").replace(/<[^>]*>/g, "");
+      return node.value.trim();
+    }
+    function notifyNative(action, extra = {}) {
+      if (window.GenieLeaveApplication?.postMessage)
+        window.GenieLeaveApplication.postMessage(
+          JSON.stringify({ action, ...extra }),
+        );
+    }
+    function stopSession(message) {
+      state.stopped = true;
+      state.options = null;
+      state.csrf = null;
+      state.draft = {
+        leave_type: "",
+        from_date: "",
+        to_date: "",
+        description: "",
+        half_day: false,
+      };
+      state.version++;
+      if (modal.open) modal.close();
+      content.replaceChildren(el("p", { class: "la-message" }, message));
+      notifyNative("session_expired");
+    }
+    class ApiError extends Error {
+      constructor(message, status = 0, uncertain = false) {
+        super(message);
+        this.status = status;
+        this.uncertain = uncertain;
+      }
+    }
+    async function raw(path, { query, body, token, html = false } = {}) {
+      const url = new URL(path, window.location.origin);
+      if (
+        url.origin !== window.location.origin ||
+        !url.pathname.startsWith("/")
+      )
+        throw new Error("Invalid ERP request.");
+      for (const [k, v] of Object.entries(query || {}))
+        url.searchParams.set(k, typeof v === "string" ? v : JSON.stringify(v));
+      const controller = new AbortController(),
+        timer = setTimeout(() => controller.abort(), body ? 90000 : 25000);
+      try {
+        const headers = {
+          Accept: html ? "text/html" : "application/json",
+          "Cache-Control": "no-cache",
+        };
+        if (body) {
+          headers["Content-Type"] = "application/x-www-form-urlencoded";
+          headers["X-Frappe-CSRF-Token"] = token;
+        }
+        const response = await fetch(url.href, {
+          method: body ? "POST" : "GET",
+          credentials: "same-origin",
+          cache: "no-store",
+          redirect: "error",
+          headers,
+          signal: controller.signal,
+          body: body
+            ? new URLSearchParams({ ...body, csrf_token: token }).toString()
+            : undefined,
+        });
+        if (html) {
+          if (!response.ok)
+            throw new ApiError(
+              "Could not initialize your update session.",
+              response.status,
+            );
+          return response.text();
+        }
+        let data;
+        try {
+          data = await response.json();
+        } catch (_) {
+          throw new ApiError(
+            "ERP did not confirm the request. Refresh before retrying.",
+            response.status,
+            !!body,
+          );
+        }
+        if (!response.ok || data.exc_type || data.exception) {
+          const csrf =
+            data.exc_type === "CSRFTokenError" ||
+            String(data.exception || "").startsWith(
+              "frappe.exceptions.CSRFTokenError:",
+            );
+          let message =
+            response.status === 403
+              ? "You do not have permission for this Leave Application."
+              : response.status === 401
+                ? "Your session expired. Sign in again."
+                : `ERP could not complete this action (${response.status}).`;
+          if (response.status < 500 || csrf) {
+            try {
+              const entries =
+                typeof data._server_messages === "string"
+                  ? JSON.parse(data._server_messages)
+                  : data._server_messages;
+              const messages = (entries || [])
+                .map((x) => (typeof x === "string" ? JSON.parse(x) : x))
+                .map((x) => plain(x.message))
+                .filter(Boolean);
+              if (messages.length) message = messages.join("\n");
+              else if (typeof data.message === "string")
+                message = plain(data.message);
+            } catch (_) {}
+          }
+          const error = new ApiError(
+            message,
+            response.status,
+            !!body && response.status >= 500,
+          );
+          error.csrf = csrf;
+          if (response.status === 401)
+            stopSession(
+              "Your ERP session expired. Sign in again and reopen Leave Application.",
+            );
+          throw error;
+        }
+        return data;
+      } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(
+          body
+            ? "The submission result is uncertain. Check ERP before trying again."
+            : "ERP could not be reached. Check your connection and retry.",
+          0,
+          !!body,
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    async function session() {
+      if (state.stopped)
+        throw new Error("Reopen this page after signing in again.");
+      let result;
+      try {
+        result = await raw("/api/method/frappe.auth.get_logged_user");
+      } catch (error) {
+        if (error.status === 401 || error.status === 403)
+          stopSession(
+            "Your ERP session expired. Sign in again and reopen Leave Application.",
+          );
+        throw error;
+      }
+      const user = result.message;
+      if (
+        typeof user !== "string" ||
+        !user ||
+        user === "Guest" ||
+        (state.user && user !== state.user)
+      ) {
+        stopSession(
+          "Your ERP session expired or the signed-in account changed. Reopen Leave Application from the app.",
+        );
+        throw new Error("Your session changed.");
+      }
+      state.user = user;
+
+      return user;
+    }
+    async function csrf(force = false) {
+      if (force) state.csrf = null;
+      if (state.csrf) return state.csrf;
+      let token = !force && window.frappe && window.frappe.csrf_token;
+      if (!token || token === "None") {
+        const html = await raw("/app", { html: true });
+        token = (html.match(/frappe\.csrf_token\s*=\s*["']([^"']+)["']/) ||
+          [])[1];
+      }
+      if (!token || token === "None")
+        throw new Error(
+          "Could not initialize your update session. Reopen this page after signing in.",
+        );
+      state.csrf = token;
+      return token;
+    }
+    async function write(path, body) {
+      await session();
+      let result;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const token = await csrf(attempt > 0);
+          validate();
+          result = await raw(path, { body, token });
+          break;
+        } catch (error) {
+          if (!error.csrf || attempt) throw error;
+          await session();
+        }
+      }
+      try {
+        await session();
+      } catch (error) {
+        error.uncertain = true;
+        throw error;
+      }
+      return result;
+    }
+
+    function dayValue(date) {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    }
+    function today() {
+      return dayValue(new Date());
+    }
+    function validDate(value) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const d = new Date(value + "T12:00:00");
+      return !Number.isNaN(d.getTime()) && dayValue(d) === value;
+    }
+    function caption(value) {
+      return validDate(value)
+        ? new Date(value + "T12:00:00").toLocaleDateString("en-GB", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          })
+        : "Choose date";
+    }
+    function field(name) {
+      return state.policy.fields[name] || {};
+    }
+    function required(name, legacy = true) {
+      return Object.prototype.hasOwnProperty.call(state.policy.fields, name)
+        ? field(name).required === true
+        : legacy;
+    }
+    function bounds() {
+      const rules = state.policy.rules,
+        current = today();
+      const minimum =
+        validDate(rules.earliest_date || "") && rules.earliest_date > current
+          ? rules.earliest_date
+          : current;
+      const maximum = validDate(rules.latest_date || "")
+        ? rules.latest_date
+        : `${new Date().getFullYear() + 5}-12-31`;
+      if (maximum < minimum)
+        throw new Error(
+          "No current or future leave dates are available under the ERP date policy.",
+        );
+      return { minimum, maximum };
+    }
+    function days() {
+      const d = state.draft;
+      if (!validDate(d.from_date) || !validDate(d.to_date)) return 0;
+      return (
+        (Date.parse(d.to_date + "T00:00:00Z") -
+          Date.parse(d.from_date + "T00:00:00Z")) /
+          86400000 +
+        1 -
+        (d.half_day ? 0.5 : 0)
+      );
+    }
+    function daysLabel(value) {
+      return `${value} ${value === 1 ? "day" : "days"}`;
+    }
+    function popup(title, message, onClose) {
+      modal.replaceChildren(
+        el("h2", { id: "la-dialog-title" }, title),
+        el("p", {}, message),
+        el(
+          "button",
+          {
+            type: "button",
+            class: "la-primary",
+            onclick: () => {
+              modal.close();
+              onClose?.();
+            },
+          },
+          "OK",
+        ),
+      );
+      if (!modal.open) {
+        if (modal.showModal) modal.showModal();
+        else modal.setAttribute("open", "");
+      }
+    }
+    function label(name, text) {
+      return el(
+        "label",
+        { for: "la-" + name },
+        text,
+        required(name) ? el("span", { class: "la-required" }, " *") : null,
+      );
+    }
+    function wrapper(name, text, control) {
+      const box = el("div", {
+        class: "la-field",
+        hidden: field(name).visible === false ? "" : undefined,
+      });
+      if (field(name).visible !== false) box.removeAttribute("hidden");
+      box.append(label(name, text), control);
+      return box;
+    }
+    function choiceControl() {
+      const panel = el("div", {
+        class: "la-panel la-options",
+        role: "listbox",
+        hidden: "",
+        "aria-label": "Leave Type",
+      });
+      const selected = state.options.leave_types.find(
+        (x) => x.value === state.draft.leave_type,
+      );
+      const button = el(
+        "button",
+        {
+          type: "button",
+          id: "la-leave_type",
+          class: "la-input",
+          disabled: field("leave_type").read_only === true,
+          "aria-haspopup": "listbox",
+          "aria-expanded": "false",
+          onclick: () => {
+            panel.hidden = !panel.hidden;
+            button.setAttribute("aria-expanded", String(!panel.hidden));
+          },
+        },
+        el("span", {}, selected?.label || "Select Leave Type"),
+        icon("down"),
+      );
+      for (const item of state.options.leave_types)
+        panel.append(
+          el(
+            "button",
+            {
+              type: "button",
+              role: "option",
+              "data-value": item.value,
+              "aria-selected": item.value === state.draft.leave_type,
+              onclick: () => {
+                if (state.busy || field("leave_type").read_only) return;
+                state.draft.leave_type = item.value;
+                renderForm();
+                $("la-leave_type").focus();
+              },
+            },
+            item.label,
+          ),
+        );
+      panel.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          panel.hidden = true;
+          button.setAttribute("aria-expanded", "false");
+          button.focus();
+        }
+      });
+      return el("div", { class: "la-control" }, button, panel);
+    }
+    function calendarControl(name) {
+      const selected = state.draft[name],
+        initial = new Date(selected + "T12:00:00");
+      let year = initial.getFullYear(),
+        month = initial.getMonth();
+      const panel = el("div", { class: "la-panel", hidden: "" });
+      const button = el(
+        "button",
+        {
+          type: "button",
+          class: "la-input",
+          id: "la-" + name,
+          disabled: field(name).read_only === true,
+          "aria-haspopup": "true",
+          "aria-expanded": "false",
+          onclick: () => {
+            if (state.busy) return;
+            panel.hidden = !panel.hidden;
+            button.setAttribute("aria-expanded", String(!panel.hidden));
+            if (!panel.hidden) renderCalendar();
+          },
+        },
+        el("span", {}, caption(selected)),
+        icon("calendar"),
+      );
+      function renderCalendar() {
+        const { minimum, maximum } = bounds(),
+          min =
+            name === "to_date" && state.draft.from_date > minimum
+              ? state.draft.from_date
+              : minimum;
+        const head = el(
+          "div",
+          { class: "la-calendar-head" },
+          el(
+            "button",
+            {
+              type: "button",
+              "aria-label": "Previous month",
+              disabled: dayValue(new Date(year, month, 0, 12)) < min,
+              onclick: () => {
+                month--;
+                if (month < 0) {
+                  month = 11;
+                  year--;
+                }
+                renderCalendar();
+              },
+            },
+            icon("back"),
+          ),
+          el(
+            "strong",
+            {},
+            new Date(year, month, 1, 12).toLocaleDateString("en-GB", {
+              month: "long",
+              year: "numeric",
+            }),
+          ),
+          el(
+            "button",
+            {
+              type: "button",
+              "aria-label": "Next month",
+              disabled: dayValue(new Date(year, month + 1, 1, 12)) > maximum,
+              onclick: () => {
+                month++;
+                if (month > 11) {
+                  month = 0;
+                  year++;
+                }
+                renderCalendar();
+              },
+            },
+            icon("next"),
+          ),
+        );
+        const grid = el("div", {
+          class: "la-grid",
+          role: "group",
+          "aria-label": "Calendar dates",
+        });
+        for (const text of ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"])
+          grid.append(el("span", { class: "la-week" }, text));
+        for (let i = 0; i < new Date(year, month, 1, 12).getDay(); i++)
+          grid.append(el("span", { "aria-hidden": "true" }));
+        for (let n = 1; n <= new Date(year, month + 1, 0, 12).getDate(); n++) {
+          const value = dayValue(new Date(year, month, n, 12));
+          grid.append(
+            el(
+              "button",
+              {
+                type: "button",
+                class: "la-day",
+                "data-date": value,
+                "aria-label": caption(value),
+                "aria-selected": selected === value,
+                disabled: value < min || value > maximum,
+                onclick: () => {
+                  const fresh = bounds();
+                  if (
+                    state.busy ||
+                    field(name).read_only ||
+                    value < fresh.minimum ||
+                    value > fresh.maximum ||
+                    (name === "to_date" && value < state.draft.from_date)
+                  )
+                    return;
+                  if (
+                    name === "from_date" &&
+                    state.draft.to_date < value &&
+                    field("to_date").read_only
+                  ) {
+                    popup(
+                      "Check date",
+                      "From Date cannot be after the read-only To Date.",
+                    );
+                    return;
+                  }
+                  state.draft[name] = value;
+                  if (name === "from_date" && state.draft.to_date < value)
+                    state.draft.to_date = value;
+                  renderForm();
+                  $("la-" + name).focus();
+                },
+              },
+              n,
+            ),
+          );
+        }
+        panel.replaceChildren(head, grid);
+      }
+      panel.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          panel.hidden = true;
+          button.setAttribute("aria-expanded", "false");
+          button.focus();
+        }
+      });
+      return el("div", { class: "la-control" }, button, panel);
+    }
+    function renderForm() {
+      if (state.stopped || !state.options) return;
+      const form = el("form", {
+        id: "la-form",
+        onsubmit: (event) => {
+          event.preventDefault();
+          submit();
+        },
+      });
+      const controls = el("fieldset", {
+        style: "border:0;padding:0;margin:0;min-width:0",
+        disabled: state.busy || state.uncertain,
+      });
+      controls.append(
+        wrapper("leave_type", "Leave Type", choiceControl()),
+        wrapper("from_date", "From Date", calendarControl("from_date")),
+        wrapper("to_date", "To Date", calendarControl("to_date")),
+        el(
+          "div",
+          { class: "la-days" },
+          el("span", {}, "Total Days"),
+          el("span", { id: "la-total-days" }, daysLabel(days())),
+        ),
+        el("hr"),
+      );
+      const reason = el("textarea", {
+        id: "la-description",
+        class: "la-input",
+        rows: 3,
+        placeholder: "Enter reason for leave",
+        oninput: (event) => {
+          state.draft.description = event.target.value;
+        },
+      });
+      reason.value = state.draft.description;
+      reason.readOnly = field("description").read_only === true;
+      if (Number(field("description").max_length) > 0)
+        reason.maxLength = Number(field("description").max_length);
+      controls.append(wrapper("description", "Reason", reason));
+      const half = el("input", {
+        id: "la-half_day",
+        type: "checkbox",
+        disabled:
+          field("half_day").read_only === true ||
+          state.policy.rules.half_day_allowed === false,
+        onchange: (event) => {
+          state.draft.half_day = event.target.checked;
+          $("la-total-days").textContent = daysLabel(days());
+        },
+      });
+      half.checked = state.draft.half_day;
+      if (field("half_day").visible !== false)
+        controls.append(
+          el(
+            "label",
+            { class: "la-half", for: "la-half_day" },
+            half,
+            "Apply for half day",
+          ),
+        );
+      controls.append(
+        el(
+          "button",
+          {
+            type: "submit",
+            id: "la-submit",
+            class: "la-primary",
+            disabled: state.busy || state.uncertain,
+          },
+          state.busy ? "Submitting?" : "Submit Application",
+        ),
+      );
+      form.append(controls);
+      if (state.uncertain)
+        form.append(
+          el(
+            "p",
+            { class: "la-hint", role: "alert" },
+            "The submission result is uncertain. Check Leave Applications in ERPNext before reloading or trying again; it may have been saved.",
+          ),
+        );
+      form.append(
+        el(
+          "button",
+          {
+            type: "button",
+            class: "la-refresh",
+            disabled: state.busy || state.uncertain,
+            onclick: () => loadOptions(),
+          },
+          "Refresh leave options",
+        ),
+      );
+      content.replaceChildren(form);
+    }
+    function validate() {
+      const d = state.draft,
+        { minimum, maximum } = bounds();
+      if (!validDate(d.from_date) || !validDate(d.to_date))
+        throw new Error("Choose valid From and To dates.");
+      if (d.from_date < minimum || d.to_date < minimum)
+        throw new Error(
+          "Past dates are not allowed. Choose today or a future date within the ERP date policy.",
+        );
+      if (d.from_date > maximum || d.to_date > maximum)
+        throw new Error("Choose dates within the ERP permitted date range.");
+      if (d.to_date < d.from_date)
+        throw new Error("To Date must be on or after From Date.");
+      if (!state.options.leave_types.some((x) => x.value === d.leave_type))
+        throw new Error("Choose a leave type.");
+      for (const [name, title] of [
+        ["description", "Reason"],
+        ["leave_type", "Leave Type"],
+        ["from_date", "From Date"],
+        ["to_date", "To Date"],
+      ]) {
+        const value = String(d[name] || "").trim(),
+          rule = field(name);
+        if (required(name) && !value) throw new Error(`${title} is required.`);
+        if (
+          Number(rule.max_length) > 0 &&
+          value.length > Number(rule.max_length)
+        )
+          throw new Error(`${title} is too long.`);
+        if (
+          Array.isArray(rule.options) &&
+          value &&
+          !rule.options.includes(value)
+        )
+          throw new Error(`Choose a valid ${title}.`);
+      }
+      if (d.half_day && state.policy.rules.half_day_allowed === false)
+        throw new Error("Half-day leave is not available.");
+      if (
+        Number(state.policy.rules.max_days) > 0 &&
+        days() > Number(state.policy.rules.max_days)
+      )
+        throw new Error("The leave exceeds the permitted number of days.");
+    }
+    async function loadOptions() {
+      if (state.busy || state.loading || state.stopped || state.uncertain)
+        return;
+      const version = ++state.version;
+      state.loading = true;
+      content.replaceChildren(
+        el("p", { class: "la-message" }, "Loading leave options?"),
+      );
+      try {
+        await session();
+        const response = await raw(API);
+        await session();
+        if (version !== state.version || state.stopped) return;
+        const message = response.message;
+        if (
+          !message ||
+          typeof message.employee !== "string" ||
+          !message.employee ||
+          !Array.isArray(message.leave_types)
+        )
+          throw new Error("ERP did not return the leave form options.");
+        const policy = message.business_policy ?? { fields: {}, rules: {} };
+        if (
+          !policy.fields ||
+          typeof policy.fields !== "object" ||
+          Array.isArray(policy.fields) ||
+          !policy.rules ||
+          typeof policy.rules !== "object" ||
+          Array.isArray(policy.rules)
+        )
+          throw new Error("ERP returned an invalid leave form policy.");
+        state.policy = policy;
+        const seen = new Set(),
+          types = message.leave_types
+            .filter(
+              (x) =>
+                x &&
+                typeof x.value === "string" &&
+                x.value.trim() &&
+                !seen.has(x.value) &&
+                seen.add(x.value),
+            )
+            .map((x) => ({
+              value: x.value,
+              label: typeof x.label === "string" && x.label ? x.label : x.value,
+            }))
+            .filter(
+              (x) =>
+                !Array.isArray(field("leave_type").options) ||
+                field("leave_type").options.includes(x.value),
+            );
+        if (!types.length)
+          throw new Error("No eligible Leave Types are available in ERPNext.");
+        state.options = { ...message, leave_types: types };
+        const { minimum, maximum } = bounds(),
+          d = state.draft;
+        for (const name of [
+          "leave_type",
+          "description",
+          "from_date",
+          "to_date",
+          "half_day",
+        ]) {
+          const definition = field(name);
+          if (
+            Object.prototype.hasOwnProperty.call(definition, "default") &&
+            (definition.read_only === true || !d[name])
+          )
+            d[name] =
+              name === "half_day"
+                ? definition.default === true
+                : String(definition.default ?? "");
+        }
+        if (!types.some((x) => x.value === d.leave_type)) d.leave_type = "";
+        if (policy.rules.half_day_allowed === false) d.half_day = false;
+        for (const name of ["from_date", "to_date"]) {
+          if (
+            field(name).read_only === true &&
+            (!validDate(d[name]) || d[name] < minimum || d[name] > maximum)
+          )
+            throw new Error(
+              "The ERP read-only date default must be today or later within the permitted range.",
+            );
+          if (!validDate(d[name]) || d[name] < minimum) d[name] = minimum;
+          if (d[name] > maximum) d[name] = maximum;
+        }
+        if (d.to_date < d.from_date) {
+          if (field("to_date").read_only)
+            throw new Error("The ERP read-only To Date is before From Date.");
+          d.to_date = d.from_date;
+        }
+        state.csrf =
+          typeof message.csrf_token === "string" && message.csrf_token.trim()
+            ? message.csrf_token.trim()
+            : null;
+        if (!state.csrf) await csrf();
+        renderForm();
+      } catch (error) {
+        if (!state.stopped && version === state.version)
+          content.replaceChildren(
+            el("p", { class: "la-message" }, error.message),
+            el(
+              "button",
+              {
+                class: "la-secondary",
+                type: "button",
+                onclick: () => loadOptions(),
+              },
+              "Retry",
+            ),
+          );
+      } finally {
+        if (version === state.version) state.loading = false;
+      }
+    }
+    async function submit() {
+      if (
+        state.busy ||
+        state.loading ||
+        state.stopped ||
+        state.uncertain ||
+        !state.options
+      )
+        return;
+      try {
+        validate();
+      } catch (error) {
+        popup("Check application", error.message);
+        return;
+      }
+      state.busy = true;
+      notifyNative("busy", { value: true });
+      renderForm();
+      try {
+        // Revalidate after session checks as an open form may cross midnight.
+        await session();
+        validate();
+        const d = state.draft;
+        const response = await write(API, {
+          leave_type: d.leave_type,
+          from_date: d.from_date,
+          to_date: d.to_date,
+          description: d.description.trim(),
+          half_day: d.half_day ? "1" : "0",
+        });
+        const message = response.message;
+        if (
+          message?.status !== "success" ||
+          typeof message.name !== "string" ||
+          !message.name
+        ) {
+          const e = new Error(
+            "ERP did not confirm the application. Check ERPNext before retrying.",
+          );
+          e.uncertain = true;
+          throw e;
+        }
+        const total = message.total_leave_days;
+        state.draft = {
+          leave_type: "",
+          from_date: "",
+          to_date: "",
+          description: "",
+          half_day: false,
+        };
+        state.busy = false;
+        renderForm();
+        popup(
+          "Success",
+          `Leave Application ${message.name} created${total !== undefined && total !== null && Number.isFinite(Number(total)) ? " for " + daysLabel(Number(total)) + "." : "."}`,
+        );
+        await loadOptions();
+      } catch (error) {
+        state.uncertain = error.uncertain === true;
+        if (!state.stopped)
+          popup(
+            state.uncertain
+              ? "Check ERPNext before retrying"
+              : "Unable to submit",
+            error.message,
+          );
+      } finally {
+        state.busy = false;
+        notifyNative("busy", { value: false });
+        if (!state.stopped) renderForm();
+      }
+    }
+    function back() {
+      if (state.busy) return;
+      if (modal.open) {
+        modal.close();
+        return;
+      }
+      if (window.GenieLeaveApplication) notifyNative("close");
+      else if (window.history.length > 1) window.history.back();
+    }
+    function notifications() {
+      if (state.busy || state.stopped) return;
+      if (window.GenieLeaveApplication) notifyNative("notifications");
+      else window.location.assign("/app/notifications");
+    }
+    // LA_BOOTSTRAP
+    $("la-back").replaceChildren(icon("back"));
+    $("la-notifications").replaceChildren(icon("bell"));
+    $("la-back").addEventListener("click", back);
+    $("la-notifications").addEventListener("click", notifications);
+    window.addEventListener("genie-leave-back", back);
+    modal.addEventListener("cancel", (event) => {
+      if (state.busy) event.preventDefault();
+    });
+    loadOptions();
+  })();
+</script>

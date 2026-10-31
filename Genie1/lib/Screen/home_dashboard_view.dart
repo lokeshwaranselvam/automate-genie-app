@@ -118,7 +118,7 @@ class HomeDashboardView extends StatelessWidget {
                     _metric(
                       Icons.handshake_rounded,
                       leadCount,
-                      'My Leads',
+                      'My Opportunities',
                       const Color(0xFFAC7309),
                       const Color(0xFFFFF6E5),
                       onLeads,
@@ -1025,15 +1025,24 @@ class HomeNavigationBar extends StatelessWidget {
                                     : const Color(0xFFE2DDFF),
                           ),
                           const SizedBox(height: 4),
-                          Text(
-                            ['Home', 'Tasks', 'Visits', 'Leads', 'More'][index],
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight:
-                                  index == currentIndex
-                                      ? FontWeight.w700
-                                      : FontWeight.w400,
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              [
+                                'Home',
+                                'Tasks',
+                                'Visits',
+                                'Opportunities',
+                                'More',
+                              ][index],
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight:
+                                    index == currentIndex
+                                        ? FontWeight.w700
+                                        : FontWeight.w400,
+                              ),
                             ),
                           ),
                           const SizedBox(height: 6),

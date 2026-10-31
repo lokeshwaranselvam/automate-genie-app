@@ -168,6 +168,29 @@ class OpportunityApi {
     return rows.map((row) => Map<String, dynamic>.from(row as Map)).toList();
   }
 
+  static Future<int> getMyOpportunityCount() async {
+    final user = await SessionAuthApi.getActiveSessionUser();
+    if (user == null || user == 'Guest') {
+      throw StateError('Your session expired. Please sign in again.');
+    }
+    final body = await _request(
+      '/api/method/mobile_opportunity_policy',
+      query: {'action': 'count'},
+    );
+    if (await SessionAuthApi.getSavedSessionUser() != user) {
+      throw StateError('Your account changed. Reopen Opportunities.');
+    }
+    final message = body['message'];
+    final count =
+        message is Map && message['current_user'] == user
+            ? int.tryParse(message['count'].toString())
+            : null;
+    if (count == null || count < 0) {
+      throw const FormatException('ERP did not return the Opportunity count.');
+    }
+    return count;
+  }
+
   static Future<Map<String, dynamic>> getDetails(String name) async {
     if (name.trim().isEmpty) throw ArgumentError('Opportunity ID is required.');
     return Map<String, dynamic>.from(await _read(name: name));
@@ -364,6 +387,64 @@ class OpportunityApi {
       );
     }
     return Map<String, dynamic>.from(data);
+  }
+
+  static Future<List<Map<String, dynamic>>> searchOwners(
+    String name,
+    String query,
+  ) async {
+    final body = await _request(
+      '/api/method/mobile_opportunity_policy',
+      query: {'action': 'owner_options', 'name': name, 'txt': query},
+    );
+    final message = body['message'];
+    final user = await SessionAuthApi.getSavedSessionUser();
+    if (message is! Map ||
+        message['current_user'] != user ||
+        message['options'] is! List) {
+      throw const FormatException(
+        'ERP did not return Opportunity Owner choices.',
+      );
+    }
+    final rows = message['options'] as List;
+    if (rows.any((row) => row is! Map || row['value'] is! String)) {
+      throw const FormatException(
+        'ERP returned invalid Opportunity Owner choices.',
+      );
+    }
+    return rows.map((row) => Map<String, dynamic>.from(row as Map)).toList();
+  }
+
+  static Future<void> changeOwner({
+    required Map<String, dynamic> original,
+    required String newOwner,
+  }) async {
+    final name = original['name']?.toString() ?? '';
+    if (name.isEmpty ||
+        newOwner.trim().isEmpty ||
+        original['modified'] == null) {
+      throw ArgumentError('Refresh the Opportunity and select an owner.');
+    }
+    final body = await _request(
+      '/api/method/mobile_opportunity_policy',
+      expectedOpportunityOwner: original['opportunity_owner']?.toString(),
+      changes: {
+        'action': 'change_owner',
+        'name': name,
+        'new_owner': newOwner.trim(),
+        'modified': original['modified'],
+      },
+    );
+    final message = body['message'];
+    if (message is! Map ||
+        message['status'] != 'success' ||
+        message['name'] != name ||
+        message['opportunity_owner'] != newOwner.trim() ||
+        message['current_user'] != original['opportunity_owner']) {
+      throw const FormatException(
+        'ERP did not confirm the owner change. Refresh before retrying.',
+      );
+    }
   }
 
   static Future<Map<String, dynamic>> _request(

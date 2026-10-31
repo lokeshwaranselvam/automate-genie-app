@@ -11,7 +11,7 @@ import '../utils/api/session_auth.dart';
 import '../utils/widget/pending_work_alarm_player.dart';
 import '../utils/widget/glass_card.dart';
 import '../utils/widget/home_back_button.dart';
-import 'opportunity_details_page.dart';
+import 'opportunities_webview_page.dart';
 
 const Color _primary = BrandColors.ink;
 const Color _primaryDark = BrandColors.indigo;
@@ -462,7 +462,7 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => OpportunityDetailsPage(opportunityId: id),
+            builder: (_) => OpportunitiesWebViewPage(initialOpportunityId: id),
           ),
         );
         return;

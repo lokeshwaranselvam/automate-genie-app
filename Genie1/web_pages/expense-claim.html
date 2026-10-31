@@ -1,0 +1,1869 @@
+<!-- ERP Web Page: genie-expense-claim. Combined HTML/CSS/JavaScript. -->
+<style>
+  #ec-app {
+    position: fixed;
+    inset: 0;
+    z-index: 1035;
+    background: #fff;
+    color: #202b3c;
+    font-family:
+      Roboto,
+      system-ui,
+      -apple-system,
+      sans-serif;
+    font-size: 14px;
+    overflow: auto;
+    color-scheme: light;
+  }
+  #ec-app,
+  #ec-app * {
+    box-sizing: border-box;
+  }
+  #ec-app [hidden] {
+    display: none !important;
+  }
+  #ec-app button,
+  #ec-app textarea {
+    font: inherit;
+  }
+  #ec-app button {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  #ec-app button:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+  #ec-app button:focus-visible,
+  #ec-app textarea:focus-visible {
+    outline: 3px solid #b8c9ff;
+    outline-offset: 2px;
+  }
+  #ec-app .ec-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    min-height: 56px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 16px;
+    background: linear-gradient(110deg, #0755ff, #8b00e8);
+    color: #fff;
+  }
+  #ec-app .ec-header h1 {
+    margin: 0;
+    padding: 0;
+    flex: 1;
+    color: #fff !important;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  #ec-app .ec-header button {
+    background: transparent;
+    border: 0;
+    padding: 6px;
+    color: #fff;
+    display: grid;
+    place-items: center;
+    min-width: 36px;
+    min-height: 36px;
+  }
+  #ec-app .ec-body {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 18px 20px 28px;
+  }
+  #ec-app .ec-field {
+    margin-bottom: 20px;
+  }
+  #ec-app label,
+  #ec-app .ec-label {
+    display: block;
+    margin: 0 0 7px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  #ec-app .ec-required {
+    color: #c84b55;
+  }
+  #ec-app .ec-input {
+    width: 100%;
+    min-height: 46px;
+    padding: 12px;
+    border: 1px solid #dde2e7;
+    border-radius: 8px;
+    color: #202b3c;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    text-align: left;
+  }
+  #ec-app textarea.ec-input {
+    resize: vertical;
+    min-height: 100px;
+    display: block;
+    line-height: 1.5;
+  }
+  #ec-app textarea::placeholder {
+    color: #8b929b;
+  }
+  #ec-app .ec-days {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    margin: 22px 0 18px;
+    font-weight: 600;
+  }
+  #ec-app .ec-days span:first-child {
+    font-size: 13px;
+  }
+  #ec-app hr {
+    border: 0;
+    border-top: 1px solid #eef0f3;
+    margin: 18px 0;
+  }
+  #ec-app .ec-half {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 26px;
+    font-size: 13px;
+    font-weight: 400;
+  }
+  #ec-app .ec-half input {
+    width: 20px;
+    height: 20px;
+    accent-color: #344bdb;
+    margin: 0;
+  }
+  #ec-app .ec-primary {
+    width: 100%;
+    min-height: 48px;
+    border: 0;
+    border-radius: 28px;
+    background: linear-gradient(110deg, #0755ff, #8b00e8);
+    color: #fff;
+    padding: 12px 20px;
+    font-weight: 600;
+  }
+  #ec-app .ec-secondary {
+    border: 1px solid #dde2e7;
+    border-radius: 22px;
+    padding: 10px 18px;
+    background: #fff;
+    color: #514597;
+  }
+  #ec-app .ec-message {
+    text-align: center;
+    padding: 32px 8px;
+    line-height: 1.6;
+  }
+  #ec-app .ec-hint {
+    color: #697586;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  #ec-app .ec-refresh {
+    display: block;
+    margin: 16px auto 0;
+    border: 0;
+    background: transparent;
+    color: #514597;
+  }
+  #ec-app .ec-control {
+    position: relative;
+  }
+  #ec-app .ec-panel {
+    position: relative;
+    margin-top: 8px;
+    border: 1px solid #dde2e7;
+    border-radius: 12px;
+    background: #fff;
+    padding: 10px;
+    box-shadow: 0 6px 18px #17202a12;
+  }
+  #ec-app .ec-options {
+    max-height: 240px;
+    overflow: auto;
+  }
+  #ec-app .ec-options button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: 0;
+    background: #fff;
+    padding: 12px;
+    border-radius: 6px;
+    color: #202b3c;
+  }
+  #ec-app .ec-options button[aria-selected="true"] {
+    background: #eee6ff;
+    color: #514597;
+    font-weight: 600;
+  }
+  #ec-app .ec-calendar-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  #ec-app .ec-calendar-head button {
+    display: grid;
+    place-items: center;
+    padding: 8px;
+    border: 0;
+    background: #f3f1fb;
+    color: #514597;
+    border-radius: 8px;
+  }
+  #ec-app .ec-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+    text-align: center;
+  }
+  #ec-app .ec-week {
+    font-size: 12px;
+    color: #697586;
+    padding: 7px 0;
+  }
+  #ec-app .ec-day {
+    aspect-ratio: 1;
+    min-height: 34px;
+    border: 0;
+    border-radius: 50%;
+    background: #fff;
+    color: #202b3c;
+    padding: 4px;
+  }
+  #ec-app .ec-day[aria-selected="true"] {
+    background: #5745d6;
+    color: #fff;
+  }
+  #ec-app .ec-day:disabled {
+    color: #aeb4be;
+    background: #f8f9fb;
+  }
+  #ec-app dialog {
+    width: calc(100% - 40px);
+    max-width: 440px;
+    border: 0;
+    border-radius: 22px;
+    padding: 24px;
+    color: #202b3c;
+    background: #fff;
+  }
+  #ec-app dialog::backdrop {
+    background: #14203970;
+  }
+  #ec-app dialog[open] {
+    display: block;
+  }
+  #ec-app dialog h2 {
+    font-size: 21px;
+    margin: 0 0 16px;
+    color: #202b3c;
+  }
+  #ec-app dialog p {
+    white-space: pre-line;
+    line-height: 1.6;
+  }
+  #ec-app dialog button {
+    float: right;
+    width: auto;
+    min-width: 90px;
+    margin-top: 12px;
+  }
+  @media (max-width: 360px) {
+    #ec-app .ec-body {
+      padding: 16px;
+    }
+    #ec-app .ec-grid {
+      gap: 2px;
+    }
+  }
+
+  #ec-app .ec-card {
+    border: 1px solid #d9dee5;
+    border-radius: 12px;
+    padding: 10px 14px 0;
+    margin: 14px 0;
+  }
+  #ec-app .ec-row-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  #ec-app .ec-remove {
+    border: 0;
+    background: transparent;
+    color: #514597;
+    padding: 8px;
+  }
+  #ec-app .ec-total {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    background: #f5f9ff;
+    border-radius: 10px;
+    padding: 16px;
+    margin: 20px 0;
+  }
+  #ec-app .ec-total strong {
+    color: #344bdb;
+  }
+  #ec-app .ec-bills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 10px 0 22px;
+  }
+  #ec-app .ec-bill {
+    position: relative;
+    margin: 0;
+  }
+  #ec-app .ec-bill img {
+    width: 104px;
+    height: 100px;
+    object-fit: cover;
+    border-radius: 10px;
+  }
+  #ec-app .ec-bill button {
+    position: absolute;
+    right: 2px;
+    top: 2px;
+    background: #fff;
+    border: 0;
+    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+  }
+  #ec-app .ec-add-photo {
+    width: 140px;
+    height: 100px;
+    border: 1px solid #b9d1f0;
+    border-radius: 10px;
+    background: #f5f9ff;
+    color: #344bdb;
+    font-weight: 600;
+  }
+  #ec-app input.ec-input {
+    display: block;
+    font-weight: 400;
+  }
+  #ec-app h2 {
+    font-size: 18px;
+    margin: 4px 0 6px;
+    color: #26313f;
+  }
+  #ec-app .ec-file-name {
+    font-size: 11px;
+    max-width: 104px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #ec-app .ec-error {
+    color: #a32d43;
+    line-height: 1.5;
+  }
+  #ec-app .ec-field > label {
+    font-size: 15px;
+  }
+</style>
+<div id="ec-app">
+  <header class="ec-header">
+    <button id="ec-back" type="button" aria-label="Back"></button>
+    <h1>Expense Claim</h1>
+  </header>
+  <main id="ec-content" class="ec-body" aria-live="polite"></main>
+  <dialog
+    id="ec-dialog"
+    aria-modal="true"
+    aria-labelledby="ec-dialog-title"
+  ></dialog>
+</div>
+<script>
+  (() => {
+    "use strict";
+    const root = document.getElementById("ec-app");
+    if (!root || root.dataset.started) return;
+    root.dataset.started = "true";
+    const $ = (id) => document.getElementById(id),
+      content = $("ec-content"),
+      modal = $("ec-dialog"),
+      API = "/api/method/create_expense_claim_from_mobile";
+    const state = {
+      user: null,
+      stopped: false,
+      csrf: null,
+      options: null,
+      policy: { fields: {}, rules: {}, uploads: {} },
+      hasPolicy: false,
+      busy: false,
+      loading: false,
+      loadingApprovers: false,
+      approverError: "",
+      uncertain: false,
+      version: 0,
+      employee: "",
+      approver: "",
+      rows: [],
+      bills: [],
+      nextId: 0,
+    };
+    function el(tag, attrs = {}, ...children) {
+      const node = document.createElement(tag);
+      for (const [key, value] of Object.entries(attrs)) {
+        if (key === "class") node.className = value;
+        else if (key.startsWith("on") && typeof value === "function")
+          node.addEventListener(key.slice(2), value);
+        else if (key === "disabled") node.disabled = !!value;
+        else node.setAttribute(key, String(value));
+      }
+      for (const child of children.flat())
+        if (child !== null && child !== undefined)
+          node.append(
+            typeof child === "object"
+              ? child
+              : document.createTextNode(String(child)),
+          );
+      return node;
+    }
+    function icon(name) {
+      const paths = {
+        back: "M19 12H5m7-7-7 7 7 7",
+        down: "m6 9 6 6 6-6",
+        next: "m9 5 7 7-7 7",
+        calendar: "M4 5h16v16H4zM4 10h16M8 3v4M16 3v4M8 14h2M14 14h2M8 18h2",
+        bell: "M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4",
+      };
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      for (const [key, value] of Object.entries({
+        viewBox: "0 0 24 24",
+        width: 22,
+        height: 22,
+        fill: "none",
+        stroke: "currentColor",
+        "stroke-width": 1.8,
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+        "aria-hidden": "true",
+      }))
+        svg.setAttribute(key, String(value));
+      const path = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "path",
+      );
+      path.setAttribute("d", paths[name]);
+      svg.append(path);
+      return svg;
+    }
+    function plain(value) {
+      const node = document.createElement("textarea");
+      node.innerHTML = String(value ?? "").replace(/<[^>]*>/g, "");
+      return node.value.trim();
+    }
+
+    function notifyNative(action, extra = {}) {
+      if (window.GenieExpenseClaim?.postMessage)
+        window.GenieExpenseClaim.postMessage(
+          JSON.stringify({ action, ...extra }),
+        );
+    }
+    function clearBills() {
+      for (const bill of state.bills)
+        if (bill.url) URL.revokeObjectURL(bill.url);
+      state.bills = [];
+    }
+    function stopSession(message) {
+      state.stopped = true;
+      state.options = null;
+      state.csrf = null;
+      state.employee = "";
+      state.approver = "";
+      state.rows = [];
+      clearBills();
+      state.version++;
+      if (modal.open) modal.close();
+      content.replaceChildren(el("p", { class: "ec-message" }, message));
+      notifyNative("session_expired");
+    }
+    class ApiError extends Error {
+      constructor(message, status = 0, uncertain = false) {
+        super(message);
+        this.status = status;
+        this.uncertain = uncertain;
+      }
+    }
+    async function raw(path, { query, body, token, html = false } = {}) {
+      const url = new URL(path, window.location.origin);
+      if (
+        url.origin !== window.location.origin ||
+        !url.pathname.startsWith("/")
+      )
+        throw new Error("Invalid ERP request.");
+      for (const [k, v] of Object.entries(query || {}))
+        url.searchParams.set(k, typeof v === "string" ? v : JSON.stringify(v));
+      const controller = new AbortController(),
+        timer = setTimeout(() => controller.abort(), body ? 90000 : 25000);
+      try {
+        const headers = {
+          Accept: html ? "text/html" : "application/json",
+          "Cache-Control": "no-cache",
+        };
+        if (body) {
+          headers["X-Frappe-CSRF-Token"] = token;
+        }
+        const response = await fetch(url.href, {
+          method: body ? "POST" : "GET",
+          credentials: "same-origin",
+          cache: "no-store",
+          redirect: "error",
+          headers,
+          signal: controller.signal,
+          body: body || undefined,
+        });
+        if (html) {
+          if (!response.ok)
+            throw new ApiError(
+              "Could not initialize your update session.",
+              response.status,
+            );
+          return response.text();
+        }
+        let data;
+        try {
+          data = await response.json();
+        } catch (_) {
+          throw new ApiError(
+            "ERP did not confirm the request. Refresh before retrying.",
+            response.status,
+            !!body,
+          );
+        }
+        if (!response.ok || data.exc_type || data.exception) {
+          const csrf =
+            data.exc_type === "CSRFTokenError" ||
+            String(data.exception || "").startsWith(
+              "frappe.exceptions.CSRFTokenError:",
+            );
+          let message =
+            response.status === 403
+              ? "You do not have permission for this Expense Claim."
+              : response.status === 401
+                ? "Your session expired. Sign in again."
+                : `ERP could not complete this action (${response.status}).`;
+          if (response.status < 500 || csrf) {
+            try {
+              const entries =
+                typeof data._server_messages === "string"
+                  ? JSON.parse(data._server_messages)
+                  : data._server_messages;
+              const messages = (entries || [])
+                .map((x) => (typeof x === "string" ? JSON.parse(x) : x))
+                .map((x) => plain(x.message))
+                .filter(Boolean);
+              if (messages.length) message = messages.join("\n");
+              else if (typeof data.message === "string")
+                message = plain(data.message);
+            } catch (_) {}
+          }
+          const error = new ApiError(
+            message,
+            response.status,
+            !!body && response.status >= 500,
+          );
+          error.csrf = csrf;
+          if (response.status === 401)
+            stopSession(
+              "Your ERP session expired. Sign in again and reopen Expense Claim.",
+            );
+          throw error;
+        }
+        return data;
+      } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(
+          body
+            ? "The submission result is uncertain. Check ERP before trying again."
+            : "ERP could not be reached. Check your connection and retry.",
+          0,
+          !!body,
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    async function session() {
+      if (state.stopped)
+        throw new Error("Reopen this page after signing in again.");
+      let result;
+      try {
+        result = await raw("/api/method/frappe.auth.get_logged_user");
+      } catch (error) {
+        if (error.status === 401 || error.status === 403)
+          stopSession(
+            "Your ERP session expired. Sign in again and reopen Expense Claim.",
+          );
+        throw error;
+      }
+      const user = result.message;
+      if (
+        typeof user !== "string" ||
+        !user ||
+        user === "Guest" ||
+        (state.user && user !== state.user)
+      ) {
+        stopSession(
+          "Your ERP session expired or the signed-in account changed. Reopen Expense Claim from the app.",
+        );
+        throw new Error("Your session changed.");
+      }
+      state.user = user;
+
+      return user;
+    }
+    async function csrf(force = false) {
+      if (force) state.csrf = null;
+      if (state.csrf) return state.csrf;
+      let token = !force && window.frappe && window.frappe.csrf_token;
+      if (!token || token === "None") {
+        const html = await raw("/app", { html: true });
+        token = (html.match(/frappe\.csrf_token\s*=\s*["']([^"']+)["']/) ||
+          [])[1];
+      }
+      if (!token || token === "None")
+        throw new Error(
+          "Could not initialize your update session. Reopen this page after signing in.",
+        );
+      state.csrf = token;
+      return token;
+    }
+    async function write(path, makeBody) {
+      await session();
+      let result;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const token = await csrf(attempt > 0);
+          validate();
+          result = await raw(path, { body: makeBody(token), token });
+          break;
+        } catch (error) {
+          if (!error.csrf || attempt) throw error;
+          await session();
+        }
+      }
+      try {
+        await session();
+      } catch (error) {
+        error.uncertain = true;
+        throw error;
+      }
+      return result;
+    }
+
+    function dayValue(date) {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    }
+    function today() {
+      return dayValue(new Date());
+    }
+    function validDate(value) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const d = new Date(value + "T12:00:00");
+      return !Number.isNaN(d.getTime()) && dayValue(d) === value;
+    }
+    function caption(value) {
+      return validDate(value)
+        ? new Date(value + "T12:00:00").toLocaleDateString("en-GB", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          })
+        : "Choose date";
+    }
+    function popup(title, message, onClose) {
+      modal.replaceChildren(
+        el("h2", { id: "ec-dialog-title" }, title),
+        el("p", {}, message),
+        el(
+          "button",
+          {
+            type: "button",
+            class: "ec-primary",
+            onclick: () => {
+              modal.close();
+              onClose?.();
+            },
+          },
+          "OK",
+        ),
+      );
+      if (!modal.open) {
+        if (modal.showModal) modal.showModal();
+        else modal.setAttribute("open", "");
+      }
+    }
+
+    function field(name) {
+      return state.policy.fields[name] || {};
+    }
+    function required(name, legacy = true) {
+      return Object.prototype.hasOwnProperty.call(state.policy.fields, name)
+        ? field(name).required === true
+        : legacy;
+    }
+    function bounds() {
+      const year = new Date().getFullYear();
+      return { minimum: `${year - 10}-01-01`, maximum: `${year + 1}-12-31` };
+    }
+    function blocked() {
+      return state.busy || state.uncertain || state.stopped;
+    }
+    function newRow(type = "") {
+      return {
+        id: ++state.nextId,
+        expense_type: type,
+        amount: "",
+        expense_date: today(),
+        description: "",
+      };
+    }
+    function syncRows() {
+      for (const row of state.rows) {
+        for (const name of [
+          "expense_type",
+          "amount",
+          "description",
+          "expense_date",
+        ]) {
+          const rule = field(name);
+          if (
+            Object.prototype.hasOwnProperty.call(rule, "default") &&
+            (rule.read_only === true || !row[name])
+          )
+            row[name] = String(rule.default ?? "");
+        }
+        if (
+          !state.options.expense_types.some((x) => x.value === row.expense_type)
+        )
+          row.expense_type = state.options.expense_types[0].value;
+      }
+    }
+    function parseAmount(value) {
+      const text = String(value).trim().replace(/,/g, "");
+      return text ? Number(text) : NaN;
+    }
+    function totalAmount() {
+      return state.rows.reduce((sum, row) => {
+        const value = parseAmount(row.amount);
+        return sum + (Number.isFinite(value) && value > 0 ? value : 0);
+      }, 0);
+    }
+    function updateTotal() {
+      const total = $("ec-total");
+      if (total)
+        total.textContent = `${state.options.currency} ${totalAmount().toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+    function label(name, text, id) {
+      return el(
+        "label",
+        { for: id },
+        text,
+        required(name) ? el("span", { class: "ec-required" }, " *") : null,
+      );
+    }
+    function wrapper(name, text, id, control) {
+      const box = el("div", { class: "ec-field" });
+      box.hidden = field(name).visible === false;
+      box.append(label(name, text, id), control);
+      return box;
+    }
+    function popupError(error) {
+      popup("Check claim", error.message || String(error));
+    }
+    function searchControl(
+      id,
+      options,
+      value,
+      placeholder,
+      onSelect,
+      disabled = false,
+    ) {
+      const selected = options.find((x) => x.value === value),
+        panel = el("div", {
+          class: "ec-panel ec-options",
+          role: "listbox",
+          hidden: "",
+          "aria-label": placeholder,
+        });
+      const input = el("input", {
+        id,
+        class: "ec-input",
+        type: "text",
+        autocomplete: "off",
+        placeholder,
+        role: "combobox",
+        "aria-autocomplete": "list",
+        "aria-expanded": "false",
+        "aria-controls": id + "-options",
+        disabled,
+      });
+      panel.id = id + "-options";
+      input.value = selected?.label || "";
+      function show() {
+        if (input.disabled || blocked()) return;
+        const q = input.value.trim().toLowerCase();
+        const matches = options
+          .filter(
+            (x) =>
+              !q ||
+              x.label.toLowerCase().includes(q) ||
+              x.value.toLowerCase().includes(q),
+          )
+          .slice(0, 30);
+        panel.replaceChildren(
+          ...matches.map((item) =>
+            el(
+              "button",
+              {
+                type: "button",
+                role: "option",
+                "data-value": item.value,
+                "aria-selected": item.value === value,
+                onclick: () => {
+                  if (blocked()) return;
+                  panel.hidden = true;
+                  input.setAttribute("aria-expanded", "false");
+                  onSelect(item.value);
+                },
+              },
+              item.label,
+            ),
+          ),
+        );
+        if (!matches.length)
+          panel.append(el("p", { class: "ec-hint" }, "No matching options"));
+        panel.hidden = false;
+        input.setAttribute("aria-expanded", "true");
+      }
+      input.addEventListener("focus", () => {
+        input.value = "";
+        show();
+      });
+      input.addEventListener("input", () => {
+        if (value && input.value !== selected?.label) {
+          value = "";
+          onSelect("");
+        }
+        show();
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          panel.hidden = true;
+          input.setAttribute("aria-expanded", "false");
+        }
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          show();
+          panel.querySelector("button")?.focus();
+        }
+      });
+      input.addEventListener("blur", () => {
+        setTimeout(() => {
+          if (!panel.contains(document.activeElement)) {
+            panel.hidden = true;
+            input.setAttribute("aria-expanded", "false");
+            const current = options.find((x) => x.value === value);
+            if (current) input.value = current.label;
+          }
+        }, 160);
+      });
+      return el("div", { class: "ec-control" }, input, panel);
+    }
+    function typeControl(row) {
+      const panel = el("div", {
+          class: "ec-panel ec-options",
+          role: "listbox",
+          hidden: "",
+          "aria-label": "Expense Type",
+        }),
+        id = "ec-type-" + row.id;
+      const button = el(
+        "button",
+        {
+          type: "button",
+          id,
+          class: "ec-input",
+          disabled: field("expense_type").read_only === true,
+          "aria-expanded": "false",
+          "aria-haspopup": "listbox",
+          onclick: () => {
+            if (blocked()) return;
+            panel.hidden = !panel.hidden;
+            button.setAttribute("aria-expanded", String(!panel.hidden));
+          },
+        },
+        el(
+          "span",
+          {},
+          state.options.expense_types.find((x) => x.value === row.expense_type)
+            ?.label || "Choose expense type",
+        ),
+        icon("down"),
+      );
+      for (const item of state.options.expense_types)
+        panel.append(
+          el(
+            "button",
+            {
+              type: "button",
+              role: "option",
+              "data-value": item.value,
+              onclick: () => {
+                if (blocked() || field("expense_type").read_only) return;
+                row.expense_type = item.value;
+                renderForm();
+              },
+            },
+            item.label,
+          ),
+        );
+      return el("div", { class: "ec-control" }, button, panel);
+    }
+    function calendarControl(row) {
+      const initial = new Date(
+        (validDate(row.expense_date) ? row.expense_date : today()) +
+          "T12:00:00",
+      );
+      let year = initial.getFullYear(),
+        month = initial.getMonth();
+      const id = "ec-date-" + row.id;
+      const panel = el("div", { class: "ec-panel", hidden: "" }),
+        button = el(
+          "button",
+          {
+            type: "button",
+            id,
+            class: "ec-input",
+            disabled: field("expense_date").read_only === true,
+            "aria-expanded": "false",
+            onclick: () => {
+              if (blocked()) return;
+              panel.hidden = !panel.hidden;
+              button.setAttribute("aria-expanded", String(!panel.hidden));
+              if (!panel.hidden) render();
+            },
+          },
+          el("span", {}, caption(row.expense_date)),
+          icon("calendar"),
+        );
+      function render() {
+        const { minimum, maximum } = bounds();
+        const grid = el("div", {
+          class: "ec-grid",
+          role: "group",
+          "aria-label": "Expense date calendar",
+        });
+        for (const text of ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"])
+          grid.append(el("span", { class: "ec-week" }, text));
+        for (let i = 0; i < new Date(year, month, 1, 12).getDay(); i++)
+          grid.append(el("span", { "aria-hidden": "true" }));
+        for (
+          let day = 1;
+          day <= new Date(year, month + 1, 0, 12).getDate();
+          day++
+        ) {
+          const value = dayValue(new Date(year, month, day, 12));
+          grid.append(
+            el(
+              "button",
+              {
+                type: "button",
+                class: "ec-day",
+                "data-date": value,
+                "aria-label": caption(value),
+                "aria-selected": value === row.expense_date,
+                disabled: value < minimum || value > maximum,
+                onclick: () => {
+                  if (
+                    blocked() ||
+                    field("expense_date").read_only ||
+                    value < minimum ||
+                    value > maximum
+                  )
+                    return;
+                  row.expense_date = value;
+                  renderForm();
+                },
+              },
+              day,
+            ),
+          );
+        }
+        const months = [
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+        ];
+        // In-page month/year controls keep old expense dates practical to select.
+        const heading = el(
+          "button",
+          {
+            type: "button",
+            "aria-label": "Choose month and year",
+            onclick: () => {
+              const monthButtons = months.map((text, index) =>
+                el(
+                  "button",
+                  {
+                    type: "button",
+                    onclick: () => {
+                      month = index;
+                      render();
+                    },
+                  },
+                  text,
+                ),
+              );
+              const yearPanel = el("div", { class: "ec-options" });
+              for (
+                let value = Number(minimum.slice(0, 4));
+                value <= Number(maximum.slice(0, 4));
+                value++
+              )
+                yearPanel.append(
+                  el(
+                    "button",
+                    {
+                      type: "button",
+                      onclick: () => {
+                        year = value;
+                        panel.replaceChildren(
+                          el("div", { class: "ec-options" }, ...monthButtons),
+                        );
+                      },
+                    },
+                    String(value),
+                  ),
+                );
+              panel.replaceChildren(yearPanel);
+            },
+          },
+          `${months[month]} ${year}`,
+        );
+        panel.replaceChildren(
+          el(
+            "div",
+            { class: "ec-calendar-head" },
+            el(
+              "button",
+              {
+                type: "button",
+                "aria-label": "Previous month",
+                disabled: dayValue(new Date(year, month, 0, 12)) < minimum,
+                onclick: () => {
+                  month--;
+                  if (month < 0) {
+                    month = 11;
+                    year--;
+                  }
+                  render();
+                },
+              },
+              icon("back"),
+            ),
+            heading,
+            el(
+              "button",
+              {
+                type: "button",
+                "aria-label": "Next month",
+                disabled: dayValue(new Date(year, month + 1, 1, 12)) > maximum,
+                onclick: () => {
+                  month++;
+                  if (month > 11) {
+                    month = 0;
+                    year++;
+                  }
+                  render();
+                },
+              },
+              icon("next"),
+            ),
+          ),
+          grid,
+        );
+      }
+      return el("div", { class: "ec-control" }, button, panel);
+    }
+    function addExpense() {
+      if (blocked() || state.loadingApprovers) return;
+      if (!state.options.supports_multiple_expenses) {
+        popup(
+          "Multiple expenses unavailable",
+          "You can still submit one expense with one bill.",
+        );
+        return;
+      }
+      const max = Number(state.policy.rules.max_expense_rows) || 0;
+      if (max && state.rows.length >= max) {
+        popup(
+          "Expense limit",
+          "The permitted expense row count has been exceeded.",
+        );
+        return;
+      }
+      state.rows.push(newRow(state.options.expense_types[0].value));
+      syncRows();
+      renderForm();
+    }
+    function removeExpense(id) {
+      if (blocked() || state.rows.length === 1) return;
+      state.rows = state.rows.filter((row) => row.id !== id);
+      renderForm();
+    }
+    function validateBills(bills) {
+      const uploads = state.policy.uploads || {},
+        minimum = state.hasPolicy ? Number(uploads.min_count) || 0 : 1;
+      if (bills.length < minimum)
+        throw new Error("Attach a bill photo before submitting.");
+      if (!state.options.supports_multiple_expenses && bills.length > 1)
+        throw new Error("Only one bill is supported by this API version.");
+      if (
+        Number(uploads.max_count) > 0 &&
+        bills.length > Number(uploads.max_count)
+      )
+        throw new Error("The permitted attachment count has been exceeded.");
+      for (const bill of bills) {
+        const file = bill.file;
+        if (!file.size) throw new Error("The selected bill image is empty.");
+        if (
+          Number(uploads.max_bytes) > 0 &&
+          file.size > Number(uploads.max_bytes)
+        )
+          throw new Error("The attachment exceeds the permitted file size.");
+        if (
+          Array.isArray(uploads.extensions) &&
+          uploads.extensions.length &&
+          !uploads.extensions.some((ext) =>
+            file.name.toLowerCase().endsWith(String(ext).toLowerCase()),
+          )
+        )
+          throw new Error("This attachment format is not allowed.");
+      }
+    }
+    function addBills(files) {
+      if (blocked()) return;
+      try {
+        let next = state.options.supports_multiple_expenses
+          ? [...state.bills]
+          : [];
+        for (const file of files) {
+          if (
+            !file.type.startsWith("image/") &&
+            !/\.(jpe?g|png|webp|gif|heic|heif|bmp)$/i.test(file.name)
+          )
+            throw new Error("Choose a bill photo.");
+          const key = `${file.name}:${file.size}:${file.lastModified}`;
+          if (!next.some((bill) => bill.key === key))
+            next.push({ file, key, url: "" });
+        }
+        if (!state.options.supports_multiple_expenses) next = next.slice(0, 1);
+        const uploads = state.policy.uploads || {};
+        const previousMinimum = uploads.min_count;
+        state.policy.uploads = { ...uploads, min_count: 0 };
+        try {
+          validateBills(next);
+        } finally {
+          state.policy.uploads = uploads;
+        }
+        if (!state.hasPolicy && next.length === 0) return;
+        for (const bill of state.bills)
+          if (!next.includes(bill) && bill.url) URL.revokeObjectURL(bill.url);
+        for (const bill of next)
+          if (!bill.url) bill.url = URL.createObjectURL(bill.file);
+        state.bills = next;
+        renderForm();
+      } catch (error) {
+        popupError(error);
+      }
+    }
+    function removeBill(key) {
+      if (blocked()) return;
+      const bill = state.bills.find((x) => x.key === key);
+      if (bill?.url) URL.revokeObjectURL(bill.url);
+      state.bills = state.bills.filter((x) => x.key !== key);
+      renderForm();
+    }
+    function showBillPicker() {
+      if (blocked()) return;
+      modal.replaceChildren(
+        el("h2", { id: "ec-dialog-title" }, "Attach Bills"),
+      );
+      for (const [text, camera] of [
+        ["Take photo", true],
+        ["Choose from gallery", false],
+      ]) {
+        const input = el("input", {
+          type: "file",
+          accept: "image/*",
+          hidden: "",
+          onchange: (event) => {
+            modal.close();
+            addBills(Array.from(event.target.files || []));
+          },
+        });
+        if (camera) input.setAttribute("capture", "environment");
+        else if (state.options.supports_multiple_expenses)
+          input.multiple = true;
+        modal.append(
+          el(
+            "button",
+            {
+              type: "button",
+              class: "ec-secondary",
+              onclick: () => input.click(),
+            },
+            text,
+          ),
+          input,
+        );
+      }
+      modal.append(
+        el(
+          "button",
+          {
+            type: "button",
+            class: "ec-secondary",
+            onclick: () => modal.close(),
+          },
+          "Cancel",
+        ),
+      );
+      if (!modal.open) {
+        if (modal.showModal) modal.showModal();
+        else modal.setAttribute("open", "");
+      }
+    }
+    function renderForm() {
+      if (state.stopped || !state.options) return;
+      const form = el("form", {
+          id: "ec-form",
+          onsubmit: (event) => {
+            event.preventDefault();
+            submit();
+          },
+        }),
+        controls = el("fieldset", {
+          style: "border:0;padding:0;margin:0;min-width:0",
+          disabled: state.busy || state.uncertain,
+        });
+      controls.append(
+        wrapper(
+          "employee",
+          "Employee",
+          "ec-employee",
+          searchControl(
+            "ec-employee",
+            state.options.employee_options,
+            state.employee,
+            "Select or type employee name",
+            selectEmployee,
+          ),
+        ),
+        wrapper(
+          "expense_approver",
+          "Expense Approver",
+          "ec-approver",
+          searchControl(
+            "ec-approver",
+            state.options.expense_approver_options,
+            state.approver,
+            "Select or type approver name",
+            (value) => {
+              state.approver = value;
+            },
+            !state.employee || state.loadingApprovers,
+          ),
+        ),
+      );
+      if (state.loadingApprovers)
+        controls.append(
+          el("p", { class: "ec-hint" }, "Loading employee approvers?"),
+        );
+      if (state.approverError)
+        controls.append(
+          el("p", { class: "ec-error" }, state.approverError),
+          el(
+            "button",
+            {
+              type: "button",
+              class: "ec-secondary",
+              onclick: () => loadOptions(state.employee),
+            },
+            "Retry employee options",
+          ),
+        );
+      controls.append(
+        el("h2", {}, "Expenses"),
+        el(
+          "p",
+          { class: "ec-hint" },
+          "Add each expense as a separate row in this claim.",
+        ),
+      );
+      state.rows.forEach((row, index) => {
+        const amount = el("input", {
+          class: "ec-input",
+          id: "ec-amount-" + row.id,
+          type: "text",
+          inputmode: "decimal",
+          placeholder: "Enter amount",
+          oninput: (event) => {
+            row.amount = event.target.value;
+            updateTotal();
+          },
+        });
+        amount.value = row.amount;
+        amount.readOnly = field("amount").read_only === true;
+        if (Number(field("amount").max_length) > 0)
+          amount.maxLength = Number(field("amount").max_length);
+        const description = el("textarea", {
+          class: "ec-input",
+          id: "ec-description-" + row.id,
+          rows: 2,
+          placeholder: "Enter expense details",
+          oninput: (event) => {
+            row.description = event.target.value;
+          },
+        });
+        description.value = row.description;
+        description.readOnly = field("description").read_only === true;
+        if (Number(field("description").max_length) > 0)
+          description.maxLength = Number(field("description").max_length);
+        controls.append(
+          el(
+            "section",
+            { class: "ec-card", "data-row": row.id },
+            el(
+              "div",
+              { class: "ec-row-head" },
+              el("strong", {}, `Expense ${index + 1}`),
+              el(
+                "button",
+                {
+                  type: "button",
+                  class: "ec-remove",
+                  "aria-label": `Remove expense ${index + 1}`,
+                  disabled: state.rows.length === 1,
+                  onclick: () => removeExpense(row.id),
+                },
+                "?",
+              ),
+            ),
+            wrapper(
+              "expense_type",
+              "Expense Type",
+              "ec-type-" + row.id,
+              typeControl(row),
+            ),
+            wrapper(
+              "amount",
+              `Amount${state.options.currency ? " (" + state.options.currency + ")" : ""}`,
+              amount.id,
+              amount,
+            ),
+            wrapper(
+              "expense_date",
+              "Date",
+              "ec-date-" + row.id,
+              calendarControl(row),
+            ),
+            wrapper("description", "Description", description.id, description),
+          ),
+        );
+      });
+      controls.append(
+        el(
+          "button",
+          {
+            type: "button",
+            class: "ec-secondary",
+            disabled: state.loadingApprovers,
+            onclick: addExpense,
+          },
+          "+ Add Expense",
+        ),
+      );
+      if (!state.options.supports_multiple_expenses)
+        controls.append(
+          el(
+            "p",
+            { class: "ec-hint" },
+            "Multiple expenses and bill photos are not available yet. You can still submit one expense with one bill.",
+          ),
+        );
+      controls.append(
+        el(
+          "div",
+          { class: "ec-total" },
+          el(
+            "span",
+            {},
+            `Total (${state.rows.length} ${state.rows.length === 1 ? "expense" : "expenses"})`,
+          ),
+          el("strong", { id: "ec-total" }, ""),
+        ),
+      );
+      const minimum = state.hasPolicy
+        ? Number(state.policy.uploads.min_count) || 0
+        : 1;
+      controls.append(
+        el(
+          "p",
+          { class: "ec-hint" },
+          minimum === 0
+            ? "Bill attachments are optional."
+            : minimum === 1
+              ? "Attach the bill photos for this claim. At least one photo is required."
+              : `Attach at least ${minimum} bill photos.`,
+        ),
+        el(
+          "div",
+          { class: "ec-label" },
+          "Attach Bills",
+          minimum > 0 ? el("span", { class: "ec-required" }, " *") : null,
+        ),
+      );
+      const bills = el("div", { class: "ec-bills" });
+      for (const bill of state.bills)
+        bills.append(
+          el(
+            "figure",
+            { class: "ec-bill" },
+            el("img", { src: bill.url, alt: "Bill photo " + bill.file.name }),
+            el(
+              "button",
+              {
+                type: "button",
+                "aria-label": "Remove bill " + bill.file.name,
+                onclick: () => removeBill(bill.key),
+              },
+              "?",
+            ),
+            el("figcaption", { class: "ec-file-name" }, bill.file.name),
+          ),
+        );
+      bills.append(
+        el(
+          "button",
+          { type: "button", class: "ec-add-photo", onclick: showBillPicker },
+          state.bills.length && !state.options.supports_multiple_expenses
+            ? "+ Replace Photo"
+            : "+ Add Photos",
+        ),
+      );
+      controls.append(
+        bills,
+        el(
+          "button",
+          {
+            type: "submit",
+            id: "ec-submit",
+            class: "ec-primary",
+            disabled: state.loadingApprovers || !!state.approverError,
+          },
+          state.busy ? "Submitting?" : "Submit Claim",
+        ),
+      );
+      form.append(controls);
+      if (state.uncertain)
+        form.append(
+          el(
+            "p",
+            { class: "ec-error", role: "alert" },
+            "The claim or bills may already have been saved. Check Expense Claims in ERPNext before reopening this form or trying again.",
+          ),
+        );
+      form.append(
+        el(
+          "button",
+          {
+            type: "button",
+            class: "ec-refresh",
+            disabled: state.busy || state.loadingApprovers || state.uncertain,
+            onclick: () => loadOptions(),
+          },
+          "Refresh claim options",
+        ),
+      );
+      content.replaceChildren(form);
+      updateTotal();
+    }
+    function optionList(raw, label, allowEmpty = false) {
+      if (!Array.isArray(raw))
+        throw new Error(`ERP did not return ${label} options.`);
+      const seen = new Set(),
+        rows = raw.filter(
+          (x) =>
+            x &&
+            typeof x.value === "string" &&
+            x.value &&
+            typeof x.label === "string" &&
+            x.label &&
+            !seen.has(x.value) &&
+            seen.add(x.value),
+        );
+      if (!rows.length && !allowEmpty)
+        throw new Error(`No ${label} options were returned by ERPNext.`);
+      return rows;
+    }
+    async function selectEmployee(employee) {
+      if (blocked()) return;
+      state.version++;
+      state.employee = employee;
+      state.approver = "";
+      state.approverError = "";
+      state.loadingApprovers = !!employee;
+      if (!employee) {
+        const approver = $("ec-approver");
+        if (approver) {
+          approver.value = "";
+          approver.disabled = true;
+        }
+        return;
+      }
+      renderForm();
+      await loadOptions(employee, true);
+    }
+    async function loadOptions(
+      employee = state.employee,
+      employeeChange = false,
+    ) {
+      if (blocked() || (!employeeChange && state.loading)) return;
+      const version = ++state.version;
+      if (employeeChange) state.loadingApprovers = true;
+      else {
+        state.loading = true;
+        content.replaceChildren(
+          el("p", { class: "ec-message" }, "Loading expense options?"),
+        );
+      }
+      try {
+        await session();
+        const response = await raw(API, {
+          query: employee ? { employee } : undefined,
+        });
+        await session();
+        if (version !== state.version || state.stopped) return;
+        const message = response.message;
+        if (
+          !message ||
+          typeof message !== "object" ||
+          (message.current_user && message.current_user !== state.user)
+        )
+          throw new Error("ERP returned options for a different session.");
+        const policy = message.business_policy ?? {
+          fields: {},
+          rules: {},
+          uploads: {},
+        };
+        if (
+          !policy.fields ||
+          Array.isArray(policy.fields) ||
+          !policy.rules ||
+          Array.isArray(policy.rules) ||
+          typeof policy.fields !== "object" ||
+          typeof policy.rules !== "object" ||
+          (policy.uploads && typeof policy.uploads !== "object")
+        )
+          throw new Error("ERP returned an invalid Expense Claim policy.");
+        const employees = optionList(message.employee_options, "Employee"),
+          approvers = optionList(
+            message.expense_approver_options,
+            "Expense Approver",
+          ),
+          types = optionList(message.expense_types, "Expense Type").filter(
+            (x) =>
+              !Array.isArray(policy.fields.expense_type?.options) ||
+              policy.fields.expense_type.options.includes(x.value),
+          );
+        if (!types.length)
+          throw new Error(
+            "No expense types are configured. Contact your administrator.",
+          );
+        const chosen = employee || message.employee;
+        if (!employees.some((x) => x.value === chosen))
+          throw new Error("Choose an Employee allowed by ERPNext.");
+        if (employee && message.employee !== employee)
+          throw new Error("ERP returned options for another Employee.");
+        state.policy = { ...policy, uploads: policy.uploads || {} };
+        state.hasPolicy = message.business_policy != null;
+        state.options = {
+          ...message,
+          employee_options: employees,
+          expense_approver_options: approvers,
+          expense_types: types,
+          supports_multiple_expenses:
+            message.supports_multiple_expenses === true,
+          currency: String(message.currency || ""),
+        };
+        state.employee = chosen;
+        if (
+          employeeChange ||
+          !approvers.some((x) => x.value === state.approver)
+        )
+          state.approver = approvers.some(
+            (x) => x.value === message.expense_approver,
+          )
+            ? message.expense_approver
+            : "";
+        if (!state.rows.length) state.rows.push(newRow());
+        syncRows();
+        state.csrf =
+          typeof message.csrf_token === "string" && message.csrf_token.trim()
+            ? message.csrf_token.trim()
+            : null;
+        if (!state.csrf) await csrf();
+        if (version !== state.version || state.stopped) return;
+        state.approverError = "";
+        state.loadingApprovers = false;
+        renderForm();
+      } catch (error) {
+        if (version !== state.version || state.stopped) return;
+        state.approverError = employeeChange ? error.message : "";
+        if (employeeChange) {
+          state.loadingApprovers = false;
+          renderForm();
+        } else
+          content.replaceChildren(
+            el("h2", {}, "Could not load expense options"),
+            el("p", { class: "ec-message" }, error.message),
+            el(
+              "button",
+              {
+                type: "button",
+                class: "ec-secondary",
+                onclick: () => loadOptions(employee),
+              },
+              "Retry",
+            ),
+          );
+      } finally {
+        if (version === state.version) {
+          state.loading = false;
+          state.loadingApprovers = false;
+        }
+      }
+    }
+    function validate() {
+      if (state.loadingApprovers || state.approverError)
+        throw new Error(
+          state.approverError ||
+            "Wait for employee approvers to finish loading.",
+        );
+      if (
+        !state.options.employee_options.some(
+          (x) => x.value === state.employee,
+        ) ||
+        !state.options.expense_approver_options.some(
+          (x) => x.value === state.approver,
+        )
+      )
+        throw new Error(
+          "Choose an Employee and Expense Approver from the suggestions.",
+        );
+      if (!state.rows.length) throw new Error("Add at least one expense.");
+      if (!state.options.supports_multiple_expenses && state.rows.length > 1)
+        throw new Error("Only one expense is supported by this API version.");
+      const max = Number(state.policy.rules.max_expense_rows) || 0;
+      if (max && state.rows.length > max)
+        throw new Error("The permitted expense row count has been exceeded.");
+      const { minimum, maximum } = bounds();
+      for (let index = 0; index < state.rows.length; index++) {
+        const row = state.rows[index],
+          prefix = `Expense ${index + 1}: `;
+        if (
+          !state.options.expense_types.some((x) => x.value === row.expense_type)
+        )
+          throw new Error(prefix + "Choose an expense type.");
+        if (
+          !validDate(row.expense_date) ||
+          row.expense_date < minimum ||
+          row.expense_date > maximum
+        )
+          throw new Error(
+            prefix + "Choose a date within the existing permitted date range.",
+          );
+        for (const [name, title] of [
+          ["description", "Description"],
+          ["amount", "Amount"],
+          ["expense_type", "Expense Type"],
+        ]) {
+          const value = String(row[name] || "").trim(),
+            rule = field(name);
+          if (required(name) && !value)
+            throw new Error(prefix + title + " is required.");
+          if (
+            Number(rule.max_length) > 0 &&
+            value.length > Number(rule.max_length)
+          )
+            throw new Error(prefix + title + " is too long.");
+          if (
+            Array.isArray(rule.options) &&
+            value &&
+            !rule.options.includes(value)
+          )
+            throw new Error(prefix + "Choose a valid " + title + ".");
+        }
+        const amount = parseAmount(row.amount),
+          rule = field("amount");
+        if (
+          !Number.isFinite(amount) ||
+          (!Object.prototype.hasOwnProperty.call(
+            state.policy.fields,
+            "amount",
+          ) &&
+            amount <= 0) ||
+          (typeof rule.min_exclusive === "number" &&
+            amount <= rule.min_exclusive) ||
+          (typeof rule.max_value === "number" && amount > rule.max_value)
+        )
+          throw new Error(
+            prefix + "Enter an amount within the permitted limits.",
+          );
+      }
+      validateBills(state.bills);
+    }
+    function makeBody(token) {
+      const rows = state.rows.map((row) => ({
+          expense_type: row.expense_type.trim(),
+          amount: String(row.amount).trim().replace(/,/g, ""),
+          expense_date: row.expense_date,
+          description: row.description.trim(),
+        })),
+        body = new FormData();
+      for (const [key, value] of Object.entries({
+        employee: state.employee.trim(),
+        expense_approver: state.approver.trim(),
+        ...rows[0],
+        ...(state.options.supports_multiple_expenses
+          ? { expenses: JSON.stringify(rows) }
+          : {}),
+        csrf_token: token,
+      }))
+        body.append(key, value);
+      for (const bill of state.bills)
+        body.append("file", bill.file, bill.file.name);
+      return body;
+    }
+    async function submit() {
+      if (
+        blocked() ||
+        state.loading ||
+        state.loadingApprovers ||
+        !state.options
+      )
+        return;
+      try {
+        validate();
+      } catch (error) {
+        popupError(error);
+        return;
+      }
+      state.busy = true;
+      notifyNative("busy", { value: true });
+      renderForm();
+      const expenseCount = state.rows.length,
+        billCount = state.bills.length;
+      try {
+        const response = await write(API, makeBody),
+          message = response.message;
+        let confirmed =
+          message &&
+          typeof message.name === "string" &&
+          message.name.trim() &&
+          (!billCount ||
+            (typeof message.bill_file_url === "string" &&
+              message.bill_file_url));
+        if (state.options.supports_multiple_expenses)
+          confirmed =
+            confirmed &&
+            Array.isArray(message.expenses) &&
+            message.expenses.length === expenseCount &&
+            Array.isArray(message.bill_files) &&
+            message.bill_files.length === billCount &&
+            message.bill_files.every(
+              (bill) =>
+                bill && typeof bill.file_url === "string" && bill.file_url,
+            );
+        if (!confirmed) {
+          const error = new Error(
+            "ERP did not confirm every expense and bill. Check Expense Claims before retrying.",
+          );
+          error.uncertain = true;
+          throw error;
+        }
+        const type = state.rows[0].expense_type;
+        clearBills();
+        state.rows = [newRow(type)];
+        syncRows();
+        popup(
+          "Success",
+          `Expense Claim ${message.name} was created with ${expenseCount} ${expenseCount === 1 ? "expense" : "expenses"} and ${billCount} ${billCount === 1 ? "bill" : "bills"} attached.`,
+        );
+      } catch (error) {
+        state.uncertain = error.uncertain === true;
+        if (!state.stopped)
+          popup(
+            state.uncertain
+              ? "Check ERPNext before retrying"
+              : "Unable to submit",
+            error.message,
+          );
+      } finally {
+        state.busy = false;
+        notifyNative("busy", { value: false });
+        if (!state.stopped) renderForm();
+      }
+    }
+    function back() {
+      if (state.busy) return;
+      if (modal.open) {
+        modal.close();
+        return;
+      }
+      if (window.GenieExpenseClaim) notifyNative("close");
+      else if (window.history.length > 1) window.history.back();
+    }
+    // EC_BOOTSTRAP
+    $("ec-back").replaceChildren(icon("back"));
+    $("ec-back").addEventListener("click", back);
+    window.addEventListener("genie-expense-back", back);
+    window.addEventListener("pagehide", () => {
+      if (!state.busy) clearBills();
+    });
+    modal.addEventListener("cancel", (event) => {
+      if (state.busy) event.preventDefault();
+    });
+    loadOptions();
+  })();
+</script>

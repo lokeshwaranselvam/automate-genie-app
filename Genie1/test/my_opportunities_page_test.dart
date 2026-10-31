@@ -157,7 +157,7 @@ void main() {
     await http.runWithClient(() async {
       await tester.pumpWidget(const MaterialApp(home: MyOpportunitiesPage()));
       await tester.pumpAndSettle();
-      expect(find.text('My Opportunities'), findsOneWidget);
+      expect(find.text('Opportunities'), findsOneWidget);
       await tester.tap(find.text('Customer One'));
       await tester.pumpAndSettle();
       expect(find.byType(OpportunityDetailsPage), findsOneWidget);

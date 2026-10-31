@@ -1,0 +1,62 @@
+LEAVE APPLICATION - ERP WEB PAGE AND DEDICATED FLUTTER WEBVIEW
+
+Files
+  leave-application.html: combined HTML, internal CSS and JavaScript.
+  No external runtime libraries, API keys, credentials or employee IDs are embedded.
+
+Install the ERP Web Page before using the rebuilt app
+  1. Open Website > Web Page > New.
+  2. Title: Leave Application. Route: genie-leave-application.
+     Content Type: HTML. Published: enabled.
+  3. Paste ALL of leave-application.html into HTML/Main Section, including style
+     and script blocks. Keep separate JavaScript/CSS fields empty to avoid duplication.
+  4. Save and open https://YOUR-ERP-HOST/genie-leave-application while signed in.
+     Use the same ERP origin as the app's SITE_URL. Never put SID/user/token in the URL.
+  5. Exclude this authenticated page from shared proxy/CDN caching if configured.
+  6. Rebuild/install the app. The existing Leave Application entry in More/Attendance
+     now opens this dedicated WebView. Existing Back and Notifications callbacks remain.
+
+Existing APIs - no API or Server Script changes are required
+  GET /api/method/frappe.auth.get_logged_user
+  GET /api/method/create_leave_application_from_mobile
+  POST /api/method/create_leave_application_from_mobile
+  GET /app only when a current CSRF token needs to be initialized/refreshed.
+  The existing server determines the active Employee, eligible Leave Types,
+  approver, company, half_day_date, workflow and final total. Do not create another API.
+
+Preserved form behavior
+  Leave Type, From Date, To Date, Total Days preview, Reason, half-day checkbox,
+  Submit Application, loading/retry, success/error popups and refresh of options.
+  The preview uses inclusive calendar days minus 0.5 for half day, matching the app.
+  ERP remains responsible for the final total including its holiday/allocation rules.
+  Field visibility, required/read-only/default/options/length policy and existing
+  earliest/latest/max-days/half-day restrictions are consumed from the same API.
+  After a confirmed save the form resets and options are refreshed.
+
+Requested date change
+  Custom in-page calendars disable every date before today (device/browser local day,
+  matching the native app's date basis). The earliest selectable day is the later of
+  today and the ERP earliest-date rule. To Date cannot precede From Date.
+  Client submission revalidates dates, including when a form stays open overnight.
+  A conflicting read-only past-date default blocks the form with a clear message.
+  This is a page selection/submission restriction; existing backend APIs are unchanged.
+
+Session and duplicate-submit handling
+  Same-origin SID cookie; session user is checked before/after API calls.
+  POST uses the existing URL-encoded fields and X-Frappe-CSRF-Token.
+  Retry only one explicit CSRF rejection. No timeout, network or uncertain-save retry.
+  An uncertain submission locks repeated submission and retains the entered values;
+  check ERPNext Leave Applications before reopening the form or retrying.
+  Back/Notifications/refresh are blocked while submission is in progress.
+  The WebView accepts navigation and native bridge messages only on the exact ERP page.
+  It sets the existing ERP SID cookie without clearing cookies for other WebViews.
+  No changes were made to shared SessionWebView or the existing leave API service/script.
+
+Verification
+  node test/leave_application_webpage_test.cjs
+  flutter test --no-pub test/leave_application_webview_page_test.dart
+  DOM tests use test-only linkedom outside the repository, as the Opportunities tests.
+  Local checks do not prove deployed ERP, browser layout, WebView cookies or device behavior.
+  On a device verify More/Attendance entry, header/status bar, Back, Notifications,
+  eligible leave types, today/future dates, disabled past days, half day, required
+  reason, overlap/balance/approver errors and one confirmed ERP Leave Application.

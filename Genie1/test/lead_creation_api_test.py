@@ -17,19 +17,25 @@ class LeadCreationApiTest(unittest.TestCase):
 
     recent_leads = ()
 
-    def run_api(self, whatsapp=None, method='POST', view='', user='sales@example.test', has_field=True, has_source=True, roles=('Sales User',), customer_category='', customer_required=False, customer_type='Select', has_customer=True):
+    def run_api(self, whatsapp=None, method='POST', view='', user='sales@example.test', has_field=True, has_source=True, roles=('Sales User',), customer_category='', customer_required=False, customer_type='Select', has_customer=True, city='Chennai', district='Chennai - TN', geography_type='Select', has_geography=True, address='Chennai', search_field='custom_citytown', txt=''):
         self.saved = []
         self.queries = []
         values = {
             'first_name': 'Customer', 'mobile_no': '9876543210',
             'custom_requirement': 'Doors', 'source': 'Website',
-            'custom_product_enquired': 'Doors', 'custom_address': 'Chennai',
+            'custom_product_enquired': 'Doors', 'custom_address': address,
+            'custom_citytown': city, 'custom_district': district,
+            'fieldname': search_field, 'txt': txt,
             'view': view, 'lead': 'LEAD-1', 'custom_customer_category': customer_category,
         }
         if whatsapp is not None:
             values['whatsapp_no'] = whatsapp
 
         def field(name):
+            if name in ['custom_citytown', 'custom_district']:
+                return Field(fieldtype=geography_type, options=(
+                    'City' if name == 'custom_citytown' else 'District') if geography_type == 'Link' else (
+                    'Chennai\nMadurai' if name == 'custom_citytown' else 'Chennai - TN\nMadurai - TN')) if has_geography else None
             if name == 'custom_customer_category':
                 return Field(fieldtype=customer_type, options='B2B\nB2C' if customer_type == 'Select' else 'Customer Category', reqd=customer_required) if has_customer else None
             if name == 'source' and not has_source:
@@ -71,10 +77,22 @@ class LeadCreationApiTest(unittest.TestCase):
         session.user = user
         session.data = SimpleNamespace(csrf_token='csrf-test')
         response = {}
+        def get_list(doctype, **kwargs):
+            if doctype in ['City', 'District']:
+                self.queries.append((doctype, kwargs))
+                allowed = ['Chennai', 'Madurai'] if doctype == 'City' else ['Chennai - TN', 'Madurai - TN']
+                value = kwargs.get('filters', {}).get('name')
+                return [Field(name=value)] if value in allowed else []
+            return [Field(name="B2B"), Field(name="B2C")]
+
+        def call(method, **kwargs):
+            self.search_call = (method, kwargs)
+            return [{'value': 'Chennai', 'description': 'Tamil Nadu'}]
+
         frappe = SimpleNamespace(
             session=session, form_dict=values, request=SimpleNamespace(method=method),
             response=response, get_meta=lambda dt: SimpleNamespace(get_field=field),
-            get_all=get_all, get_list=lambda doctype, **kwargs: [Field(name="B2B"), Field(name="B2C")], db=SimpleNamespace(get_value=get_value, exists=lambda dt, filters: (
+            get_all=get_all, get_list=get_list, call=call, db=SimpleNamespace(get_value=get_value, exists=lambda dt, filters: (
                 dt == 'Has Role' and filters['parent'] == user and
                 filters['parenttype'] == 'User' and filters['parentfield'] == 'roles' and
                 any(role in roles for role in filters['role'][1])
@@ -185,6 +203,44 @@ class LeadCreationApiTest(unittest.TestCase):
     def test_role_gate_preserves_existing_owner_scoped_reads(self):
         self.assertIn('leads', self.run_api(method='GET', view='list', roles=()))
         self.assertIn('lead', self.run_api(method='GET', view='detail', roles=()))
+
+    def test_location_fields_are_required_and_address_is_optional(self):
+        for city, district, label in [('', 'Chennai - TN', 'City/Town'), ('Chennai', '', 'District')]:
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, label + ' is required'):
+                self.run_api('9876543210', city=city, district=district)
+            self.assertEqual(self.saved, [])
+        self.run_api('9876543210', address='')
+        self.assertEqual(self.saved[0].custom_address, '')
+        self.assertEqual(self.saved[0].custom_citytown, 'Chennai')
+        self.assertEqual(self.saved[0].custom_district, 'Chennai - TN')
+
+    def test_location_metadata_and_select_validation(self):
+        response = self.run_api(method='GET')
+        self.assertEqual(response['location_fields']['custom_citytown']['options'], ['Chennai', 'Madurai'])
+        for kwargs in [dict(city='Invalid'), dict(district='Invalid'), dict(has_geography=False), dict(geography_type='Data')]:
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                self.run_api('9876543210', **kwargs)
+            self.assertEqual(self.saved, [])
+
+    def test_location_link_search_and_permission_checked_save(self):
+        response = self.run_api(method='GET', view='location_options', geography_type='Link', txt='chen')
+        self.assertEqual(response['options'][0]['value'], 'Chennai')
+        method, args = self.search_call
+        self.assertEqual(method, 'frappe.desk.search.search_link')
+        self.assertEqual(args['doctype'], 'City')
+        self.assertEqual(args['page_length'], 20)
+        self.assertFalse(args['ignore_user_permissions'])
+        self.run_api('9876543210', geography_type='Link')
+        self.assertEqual(self.saved[0].custom_citytown, 'Chennai')
+        with self.assertRaisesRegex(ValueError, 'accessible'):
+            self.run_api('9876543210', geography_type='Link', city='Forbidden')
+        self.assertEqual(self.saved, [])
+
+    def test_location_search_rejects_other_fields_and_filters_select_choices(self):
+        with self.assertRaisesRegex(ValueError, 'Invalid Lead location field'):
+            self.run_api(method='GET', view='location_options', search_field='source')
+        response = self.run_api(method='GET', view='location_options', txt='mad')
+        self.assertEqual(response['options'], [{'value': 'Madurai'}])
 
     def test_script_uses_no_imports_or_custom_functions(self):
         tree = ast.parse(self.script)

@@ -1,5 +1,5 @@
 # Frappe Server Script (API) - Combined Sales + Production
-# API Method: mobile_pending_work
+# API Method: get_pending_work
 # Allow Guest: Disabled
 # No imports, function definitions, or return statements.
 # Existing sales results and response keys are preserved.
@@ -359,11 +359,27 @@ opportunity_rows = []
 
 if action in ["dashboard", "opportunities"] and can_view_sales:
 
-    opportunities = frappe.get_all(
+    # Highest priority first: only the first non-empty owner controls visibility.
+    visibility_owner_fields = [
+        "custom_field_owner_2",
+        "custom_field_owner_1",
+        "opportunity_owner",
+    ]
+    opportunity_meta = frappe.get_meta("Opportunity")
+    priority_columns = []
+    for fieldname in visibility_owner_fields:
+        owner_field = opportunity_meta.get_field(fieldname)
+        if not owner_field or owner_field.fieldtype not in ["Link", "Data"]:
+            frappe.throw("Invalid Opportunity visibility owner field configuration.")
+        if owner_field.fieldtype == "Link" and owner_field.options != "User":
+            frappe.throw("Opportunity visibility Link fields must link to User.")
+        priority_columns.append("NULLIF(opp.`" + fieldname.replace("`", "``") + "`, '')")
+
+    # Build the normal ERP read/field permission query without loading all records.
+    permitted_opportunities_sql = frappe.get_list(
         "Opportunity",
         filters={
             "status": "Open",
-            "owner": user,
         },
         fields=[
             "name",
@@ -382,6 +398,18 @@ if action in ["dashboard", "opportunities"] and can_view_sales:
         ],
         order_by="creation desc",
         limit_page_length=0,
+        run=False,
+    )
+    # Apply the same first-populated-owner rule as mobile_opportunity_policy.
+    opportunities = frappe.db.sql(
+        "SELECT visible_opportunities.* FROM ("
+        + permitted_opportunities_sql.replace("%", "%%")
+        + ") visible_opportunities INNER JOIN `tabOpportunity` opp"
+        + " ON opp.name = visible_opportunities.name WHERE COALESCE("
+        + ", ".join(priority_columns) + ", '') = %(visibility_user)s"
+        + " ORDER BY opp.creation DESC",
+        {"visibility_user": user},
+        as_dict=True,
     )
 
     for opp in opportunities:

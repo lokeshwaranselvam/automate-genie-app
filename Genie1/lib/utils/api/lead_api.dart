@@ -13,6 +13,7 @@ class LeadFormOptions {
   final List<String> sourceOptions;
   final List<String> productCategoryOptions;
   final List<String> customerCategoryOptions;
+  final Map<String, dynamic> locationFields;
   final String? csrfToken;
   final ApiBusinessPolicy businessPolicy;
 
@@ -22,6 +23,7 @@ class LeadFormOptions {
     required this.sourceOptions,
     required this.productCategoryOptions,
     this.customerCategoryOptions = const [],
+    this.locationFields = const {},
     this.csrfToken,
     this.businessPolicy = ApiBusinessPolicy.empty,
   });
@@ -226,12 +228,26 @@ class LeadApi {
       );
     }
 
+    final locationFields = message['location_fields'];
+    if (locationFields is! Map ||
+        ['custom_citytown', 'custom_district'].any((name) {
+          final field = locationFields[name];
+          return field is! Map ||
+              !['Select', 'Link'].contains(field['fieldtype']) ||
+              field['options'] is! List ||
+              (field['options'] as List).any((value) => value is! String);
+        })) {
+      throw const FormatException(
+        'Update create_lead_from_mobile on ERP to return City/Town and District options.',
+      );
+    }
     _formSession = sid;
     _formEndpoint = endpoint;
     _csrfToken = message['csrf_token']?.toString().trim();
     final policy = ApiBusinessPolicy.fromApi(message['business_policy']);
     return LeadFormOptions(
       businessPolicy: policy,
+      locationFields: Map<String, dynamic>.from(locationFields),
       leadOwner: message['lead_owner']?.toString() ?? '',
       leadOwnerName: message['lead_owner_name']?.toString() ?? '',
       sourceOptions: policy.options('source', sourceOptions),
@@ -250,6 +266,38 @@ class LeadApi {
       ),
       csrfToken: _csrfToken,
     );
+  }
+
+  static Future<List<String>> searchLocationOptions(
+    String field,
+    String query,
+  ) async {
+    if (!['custom_citytown', 'custom_district'].contains(field)) {
+      throw ArgumentError('Invalid Lead location field');
+    }
+    final sid = await _sessionId();
+    if (_formSession != sid || _formEndpoint != _endpoint()) {
+      throw StateError('Your session changed. Reopen the Lead form.');
+    }
+    final response = await http
+        .get(
+          _endpoint().replace(
+            queryParameters: {
+              'view': 'location_options',
+              'fieldname': field,
+              'txt': query,
+            },
+          ),
+          headers: {'Accept': 'application/json', 'Cookie': 'sid=$sid'},
+        )
+        .timeout(const Duration(seconds: 20));
+    await _assertSession(sid);
+    final rows = _message(response)['options'];
+    if (rows is! List ||
+        rows.any((row) => row is! Map || row['value'] is! String)) {
+      throw const FormatException('ERP returned invalid location options.');
+    }
+    return rows.map((row) => row['value'] as String).toSet().toList();
   }
 
   static Future<List<Map<String, dynamic>>> getMyLeads() async {
@@ -310,6 +358,8 @@ class LeadApi {
     required String csrfToken,
     String whatsappNo = '',
     String customerCategory = '',
+    String cityTown = '',
+    String district = '',
     ApiBusinessPolicy businessPolicy = ApiBusinessPolicy.empty,
   }) async {
     final whatsappError =
@@ -350,6 +400,8 @@ class LeadApi {
               if (customerCategory.trim().isNotEmpty)
                 'custom_customer_category': customerCategory.trim(),
               'custom_address': address.trim(),
+              'custom_citytown': cityTown.trim(),
+              'custom_district': district.trim(),
               'csrf_token': currentToken,
             },
           )

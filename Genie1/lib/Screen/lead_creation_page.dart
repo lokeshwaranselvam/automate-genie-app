@@ -26,6 +26,8 @@ class _LeadOptionField extends StatefulWidget {
     required this.decoration,
     required this.onChanged,
     required this.validator,
+    this.searchOptions,
+    this.openUpwards = false,
   });
   final String? value;
   final List<String> options;
@@ -33,6 +35,8 @@ class _LeadOptionField extends StatefulWidget {
   final InputDecoration decoration;
   final ValueChanged<String?> onChanged;
   final FormFieldValidator<String> validator;
+  final Future<List<String>> Function(String)? searchOptions;
+  final bool openUpwards;
 
   @override
   State<_LeadOptionField> createState() => _LeadOptionFieldState();
@@ -41,6 +45,39 @@ class _LeadOptionField extends StatefulWidget {
 class _LeadOptionFieldState extends State<_LeadOptionField> {
   late final _controller = TextEditingController(text: widget.value ?? '');
   final _focus = FocusNode();
+  List<String> _searchChoices = [];
+  int _searchVersion = 0;
+  bool _searching = false;
+  String? _searchError;
+
+  Future<Iterable<String>> _remoteOptions(TextEditingValue value) async {
+    final version = ++_searchVersion;
+    setState(() {
+      _searching = true;
+      _searchError = null;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    if (!mounted || version != _searchVersion) return const [];
+    try {
+      final choices = await widget.searchOptions!(value.text.trim());
+      if (!mounted || version != _searchVersion) return const [];
+      setState(() {
+        _searchChoices = choices;
+        _searching = false;
+        _searchError = choices.isEmpty ? 'No matching options.' : null;
+      });
+      return choices;
+    } catch (error) {
+      if (mounted && version == _searchVersion) {
+        setState(() {
+          _searching = false;
+          _searchChoices = [];
+          _searchError = error.toString().replaceFirst('Bad state: ', '');
+        });
+      }
+      return const [];
+    }
+  }
 
   @override
   void didUpdateWidget(covariant _LeadOptionField oldWidget) {
@@ -49,7 +86,16 @@ class _LeadOptionFieldState extends State<_LeadOptionField> {
         _controller.text != (widget.value ?? '')) {
       // Keep a query while searching; explicit selections/default changes win.
       if (widget.value != null || !_focus.hasFocus) {
-        _controller.text = widget.value ?? '';
+        if (widget.openUpwards) {
+          final expectedValue = widget.value;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && widget.value == expectedValue) {
+              _controller.text = expectedValue ?? '';
+            }
+          });
+        } else {
+          _controller.text = widget.value ?? '';
+        }
       }
     }
   }
@@ -67,33 +113,49 @@ class _LeadOptionFieldState extends State<_LeadOptionField> {
         (context, constraints) => RawAutocomplete<String>(
           textEditingController: _controller,
           focusNode: _focus,
-          optionsBuilder:
-              (value) =>
-                  !widget.enabled
-                      ? const Iterable<String>.empty()
-                      : widget.options.where(
-                        (option) => option.toLowerCase().contains(
-                          value.text.trim().toLowerCase(),
-                        ),
-                      ),
+          optionsViewOpenDirection:
+              widget.openUpwards
+                  ? OptionsViewOpenDirection.up
+                  : OptionsViewOpenDirection.down,
+          optionsBuilder: (value) {
+            if (!widget.enabled) return const Iterable<String>.empty();
+            if (widget.searchOptions != null) return _remoteOptions(value);
+            return widget.options.where(
+              (option) => option.toLowerCase().contains(
+                value.text.trim().toLowerCase(),
+              ),
+            );
+          },
           onSelected: (value) => widget.onChanged(value),
           fieldViewBuilder:
               (context, controller, focus, submit) => TextFormField(
                 controller: controller,
                 focusNode: focus,
                 readOnly: !widget.enabled,
-                decoration: widget.decoration,
+                decoration:
+                    widget.searchOptions == null
+                        ? widget.decoration
+                        : widget.decoration.copyWith(
+                          helperText:
+                              _searching ? 'Searching ERP...' : _searchError,
+                        ),
                 validator: (_) => widget.validator(controller.text.trim()),
                 onChanged:
                     (text) => widget.onChanged(
-                      widget.options.contains(text.trim()) ? text.trim() : null,
+                      (widget.searchOptions == null
+                                  ? widget.options
+                                  : _searchChoices)
+                              .contains(text.trim())
+                          ? text.trim()
+                          : null,
                     ),
                 onFieldSubmitted: (_) => submit(),
               ),
           optionsViewBuilder: (context, select, options) {
             final choices = options.toList();
             return Align(
-              alignment: Alignment.topLeft,
+              alignment:
+                  widget.openUpwards ? Alignment.bottomLeft : Alignment.topLeft,
               child: Material(
                 elevation: 4,
                 borderRadius: BorderRadius.circular(9),
@@ -141,6 +203,8 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
         'WhatsApp Number': 'whatsapp_no',
         'Requirement': 'custom_requirement',
         'Location': 'custom_address',
+        'City/Town': 'custom_citytown',
+        'District': 'custom_district',
         'Lead Source': 'source',
         'Product Enquired': 'custom_product_enquired',
         'Customer Category': 'custom_customer_category',
@@ -157,6 +221,8 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
   String? _selectedCategory;
   String? _selectedSource;
   String? _selectedCustomerCategory;
+  String? _selectedCityTown;
+  String? _selectedDistrict;
   bool _samePhoneAndWhatsApp = false;
   String _separateWhatsApp = '';
   bool _loadingOptions = true;
@@ -271,6 +337,8 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
         productCategory: _selectedCategory ?? '',
         customerCategory: _selectedCustomerCategory ?? '',
         address: _locationController.text,
+        cityTown: _selectedCityTown ?? '',
+        district: _selectedDistrict ?? '',
         csrfToken: _options!.csrfToken ?? '',
         businessPolicy: _policy,
       );
@@ -281,6 +349,8 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
       _whatsappController.clear();
       _separateWhatsApp = '';
       _locationController.clear();
+      _selectedCityTown = null;
+      _selectedDistrict = null;
       _requirementController.clear();
       Warning.show(context, 'Lead created successfully!', 'Success');
     } catch (error) {
@@ -446,6 +516,62 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
               ),
             ],
           );
+
+  Widget _locationChoice(
+    String field,
+    String label,
+    String? value,
+    ValueChanged<String?> onChanged,
+  ) {
+    final definition = _options!.locationFields[field] as Map;
+    final options = List<String>.from(definition['options'] as List);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // These two fields are mandatory for mobile Lead creation.
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Text.rich(
+            TextSpan(
+              text: label,
+              style: const TextStyle(
+                color: _leadInk,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+              children: const [
+                TextSpan(
+                  text: ' *',
+                  style: TextStyle(color: Color(0xFFE34B56)),
+                ),
+              ],
+            ),
+          ),
+        ),
+        _LeadOptionField(
+          key: ValueKey(field),
+          openUpwards: true,
+          value: value,
+          options: options,
+          enabled: !_loadingOptions && !_submitting,
+          decoration: _fieldDecoration(
+            hint: 'Search $label',
+            suffixIcon: const Icon(Icons.search_rounded, size: 20),
+          ),
+          searchOptions:
+              definition['fieldtype'] == 'Link'
+                  ? (query) => LeadApi.searchLocationOptions(field, query)
+                  : null,
+          onChanged: onChanged,
+          validator:
+              (text) =>
+                  value == null || text != value
+                      ? 'Select $label from the configured options.'
+                      : null,
+        ),
+      ],
+    );
+  }
 
   Widget _optionsLoadState() {
     if (_loadingOptions) {
@@ -677,7 +803,21 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
                       validator: (_) => null,
                     ),
                     const SizedBox(height: 15),
-                    _fieldLabel('Location'),
+                    _locationChoice(
+                      'custom_citytown',
+                      'City/Town',
+                      _selectedCityTown,
+                      (value) => setState(() => _selectedCityTown = value),
+                    ),
+                    const SizedBox(height: 15),
+                    _locationChoice(
+                      'custom_district',
+                      'District',
+                      _selectedDistrict,
+                      (value) => setState(() => _selectedDistrict = value),
+                    ),
+                    const SizedBox(height: 15),
+                    _fieldLabel('Location', required: false),
                     BusinessPolicyField(
                       policy: _policy,
                       name: 'custom_address',
@@ -698,7 +838,7 @@ class _LeadCreationPageState extends State<LeadCreationPage> {
                                     (value) => _policy.validate(
                                       'custom_address',
                                       value,
-                                      legacyRequired: true,
+                                      legacyRequired: false,
                                       requiredMessage:
                                           'Enter or get the location.',
                                     ),

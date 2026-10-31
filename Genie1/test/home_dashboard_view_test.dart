@@ -133,7 +133,7 @@ void main() {
           in {
             'Tasks Today': 'tasks',
             'Site Visits': 'visits',
-            'My Leads': 'leads',
+            'My Opportunities': 'leads',
             'Pending': 'pending',
             'View All': 'visits',
             'Attendance': 'attendance',
@@ -155,7 +155,7 @@ void main() {
       expect(find.text('Tasks'), findsNothing);
       expect(find.text('Attendance'), findsNothing);
       expect(find.text('New Task'), findsNothing);
-      expect(find.text('My Leads'), findsOneWidget);
+      expect(find.text('My Opportunities'), findsOneWidget);
       await tester.pumpWidget(
         screen(
           name: 'Another Employee',
@@ -194,10 +194,13 @@ void main() {
           access.$1 ? findsOneWidget : findsNothing,
         );
         expect(
-          find.text('My Leads'),
+          find.text('My Opportunities'),
           access.$1 ? findsOneWidget : findsNothing,
         );
-        expect(find.text('Leads'), access.$1 ? findsOneWidget : findsNothing);
+        expect(
+          find.text('Opportunities'),
+          access.$1 ? findsOneWidget : findsNothing,
+        );
         expect(find.text('Pending'), findsOneWidget);
         expect(
           find.text("Today's Schedule"),
@@ -221,7 +224,7 @@ void main() {
               'Home': 0,
               'Tasks': 1,
               if (access.$2) 'Visits': 2,
-              if (access.$1) 'Leads': 3,
+              if (access.$1) 'Opportunities': 3,
               'More': 4,
             }.entries) {
           await tester.tap(find.text(tab.key));
@@ -235,7 +238,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Pending'), findsOneWidget);
-      expect(find.text('My Leads'), findsNothing);
+      expect(find.text('My Opportunities'), findsNothing);
       expect(find.text('Site Visits'), findsNothing);
       expect(find.text("Today's Schedule"), findsNothing);
       expect(find.text('View All'), findsNothing);

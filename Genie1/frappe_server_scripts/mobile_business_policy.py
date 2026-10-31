@@ -68,7 +68,9 @@ policies = {
             "custom_requirement": {"required": True, "visible": True, "read_only": False},
             "source": {"required": True, "visible": True, "read_only": False},
             "custom_product_enquired": {"required": True, "visible": True, "read_only": False},
-            "custom_address": {"required": True, "visible": True, "read_only": False},
+            "custom_citytown": {"required": True, "visible": True, "read_only": False},
+            "custom_district": {"required": True, "visible": True, "read_only": False},
+            "custom_address": {"required": False, "visible": True, "read_only": False},
         }, "rules": {},
     },
     "expense": {
