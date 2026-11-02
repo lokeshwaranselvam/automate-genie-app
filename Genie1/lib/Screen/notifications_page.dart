@@ -2,12 +2,16 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../utils/api/document_notification.dart';
 import '../utils/api/notification_inbox.dart';
+import '../utils/api/session_auth.dart';
 import '../utils/theme/brand_theme.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import '../utils/widget/home_back_button.dart';
 import '../utils/widget/pull_to_refresh.dart';
+import 'session_webview.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -23,6 +27,7 @@ class _NotificationsPageState extends State<NotificationsPage>
   StreamSubscription<void>? _subscription;
   final Set<String> _viewedIds = {};
   String? _scope;
+  bool _opening = false;
 
   @override
   void initState() {
@@ -113,6 +118,67 @@ class _NotificationsPageState extends State<NotificationsPage>
     'Pending Work' => Icons.work_outline,
     _ => Icons.notifications_outlined,
   };
+
+  Future<void> _openItem(InboxNotification item, {bool call = false}) async {
+    if (_opening) return;
+    setState(() => _opening = true);
+    try {
+      final scope = _scope;
+      if (scope == null || await NotificationInbox.sessionScope() != scope) {
+        throw StateError('Your session changed. Reopen Notifications.');
+      }
+      final user = await SessionAuthApi.getActiveSessionUser();
+      if (!mounted) return;
+      if (user == null ||
+          user == 'Guest' ||
+          await NotificationInbox.sessionScope() != scope) {
+        throw StateError(
+          'Your session changed. Sign in again and reopen Notifications.',
+        );
+      }
+      if (!mounted) return;
+      if (call) {
+        if (!RegExp(r'^\+?[0-9]{7,15}$').hasMatch(item.callPhone)) return;
+        if (!await launchUrl(
+          Uri(scheme: 'tel', path: item.callPhone),
+          mode: LaunchMode.externalApplication,
+        )) {
+          throw StateError('Could not open the assigned customer dialer.');
+        }
+      } else {
+        final document = DocumentNotification.fromData({
+          'type': 'DOCUMENT_NOTIFICATION',
+          'doctype': item.doctype,
+          'docname': item.reference,
+          'for_user': user,
+        });
+        final uri = document?.documentUri;
+        if (uri == null || uri.userInfo.isNotEmpty) {
+          throw StateError('This notification has no valid ERP document link.');
+        }
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder:
+                (_) => SessionWebView(
+                  url: uri.toString(),
+                  title: item.title,
+                  blockSystemBack: false,
+                ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error.toString().replaceFirst('Bad state: ', '')),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -209,6 +275,29 @@ class _NotificationsPageState extends State<NotificationsPage>
             ),
           if (item.body.isEmpty && item.reference.isEmpty)
             const Text('No additional details.'),
+          if ((item.doctype.isNotEmpty && item.reference.isNotEmpty) ||
+              item.callPhone.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Wrap(
+                spacing: 12,
+                children: [
+                  if (item.doctype.isNotEmpty && item.reference.isNotEmpty)
+                    TextButton.icon(
+                      onPressed: _opening ? null : () => _openItem(item),
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('Open in ERP'),
+                    ),
+                  if (item.callPhone.isNotEmpty)
+                    TextButton.icon(
+                      onPressed:
+                          _opening ? null : () => _openItem(item, call: true),
+                      icon: const Icon(Icons.call_outlined),
+                      label: const Text('Call customer'),
+                    ),
+                ],
+              ),
+            ),
         ],
       ),
     );

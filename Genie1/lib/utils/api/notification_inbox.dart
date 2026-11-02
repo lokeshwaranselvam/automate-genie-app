@@ -33,9 +33,12 @@ class InboxNotification {
     required this.created,
     required this.category,
     this.reference = '',
+    this.doctype = '',
+    this.callPhone = '',
     this.read = false,
   });
   final String id, title, body, created, category, reference;
+  final String doctype, callPhone;
   final bool read;
 
   static String categoryFor(String value) {
@@ -61,6 +64,8 @@ class InboxNotification {
         created: row['created']?.toString() ?? '',
         category: row['category']?.toString() ?? 'Other',
         reference: row['reference']?.toString() ?? '',
+        doctype: row['doctype']?.toString() ?? '',
+        callPhone: row['call_phone']?.toString() ?? '',
         read: row['read'] == true || row['read'] == 1,
       );
   Map<String, dynamic> toJson() => {
@@ -70,6 +75,8 @@ class InboxNotification {
     'created': created,
     'category': category,
     'reference': reference,
+    'doctype': doctype,
+    'call_phone': callPhone,
     'read': read,
   };
 }
@@ -230,6 +237,10 @@ class NotificationInbox {
       created: (message.sentTime ?? DateTime.now()).toIso8601String(),
       category: InboxNotification.categoryFor(type),
       reference: reference,
+      doctype:
+          (message.data['document_type'] ?? message.data['doctype'] ?? '')
+              .toString(),
+      callPhone: leadCall?.phone ?? '',
     );
     final write = _queueWrite(() async {
       await prefs.reload();
@@ -326,6 +337,7 @@ class NotificationInbox {
         body: notificationText(row['email_content']),
         created: row['creation']?.toString() ?? '',
         reference: row['document_name']?.toString() ?? '',
+        doctype: row['document_type']?.toString() ?? '',
         category: InboxNotification.categoryFor(
           '${row['document_type']} ${row['type']} ${row['subject']}',
         ),
@@ -343,9 +355,21 @@ class NotificationInbox {
         throw StateError('Your account changed. Reopen Notifications.');
       }
       final dismissed = _dismissed(prefs, key);
+      final cached = {for (final row in _read(prefs, key)) row.id: row};
       final merged = <String, InboxNotification>{
-        for (final row in _read(prefs, key)) row.id: row,
-        ...incoming,
+        ...cached,
+        for (final entry in incoming.entries)
+          entry.key: InboxNotification(
+            id: entry.value.id,
+            title: entry.value.title,
+            body: entry.value.body,
+            created: entry.value.created,
+            category: entry.value.category,
+            reference: entry.value.reference,
+            doctype: entry.value.doctype,
+            read: entry.value.read,
+            callPhone: cached[entry.key]?.callPhone ?? '',
+          ),
       };
       final rows =
           merged.values

@@ -1,10 +1,10 @@
 import 'notification_inbox.dart';
+import 'notification_inbox_taps.dart';
 import 'document_notification.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'lead_call_notification.dart';
 import 'event_assignment_notification.dart';
 import 'package:event_assignment_alarm/event_assignment_alarm.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -219,8 +219,7 @@ class FcmNotificationService {
       await NotificationInbox.capture(message);
       if (LeadCallNotification.fromData(message.data) != null) {
         await showLeadCallNotification(message);
-      } else if (_isPendingWork(message) &&
-          await _isForSignedInUser(message)) {
+      } else if (_isPendingWork(message) && await _isForSignedInUser(message)) {
         final audioUrl = message.data['alarm_audio_url']?.toString().trim();
         await showPendingWorkNotification(message, playChannelSound: false);
         await PendingWorkAlarmPlayer.play(url: audioUrl);
@@ -228,12 +227,7 @@ class FcmNotificationService {
     });
 
     FirebaseMessaging.onMessageOpenedApp.listen((message) async {
-      if (message.data['type'] == 'DOCUMENT_NOTIFICATION') {
-        await DocumentNotificationTaps.open(message.data);
-        return;
-      }
-      await NotificationInbox.capture(message);
-      await _openRemoteLeadCall(message);
+      await NotificationInboxTaps.open(message);
     });
     // Reading a launch notification should not delay opening the app.
     unawaited(() async {
@@ -242,12 +236,7 @@ class FcmNotificationService {
             .getInitialMessage()
             .timeout(const Duration(seconds: 5));
         if (initial != null) {
-          if (initial.data['type'] == 'DOCUMENT_NOTIFICATION') {
-            await DocumentNotificationTaps.open(initial.data);
-          } else {
-            await NotificationInbox.capture(initial);
-            await _openRemoteLeadCall(initial);
-          }
+          await NotificationInboxTaps.open(initial);
         }
         final launch =
             await _localNotifications.getNotificationAppLaunchDetails();
@@ -316,10 +305,7 @@ Future<bool> showDocumentNotification(
           icon: 'ic_notification',
         ),
       ),
-      payload: jsonEncode({
-        ...message.data,
-        '_genie_site': dotenv.env['SITE_URL'],
-      }),
+      payload: jsonEncode(_notificationTapData(message)),
     );
   }
 
@@ -343,14 +329,37 @@ Future<bool> showDocumentNotification(
   );
 }
 
+Map<String, dynamic> _notificationTapData(RemoteMessage message) => {
+  ...message.data,
+  '_genie_site': dotenv.env['SITE_URL'],
+  if (message.messageId != null) '_genie_message_id': message.messageId,
+  if (message.sentTime != null)
+    '_genie_sent_at': message.sentTime!.toIso8601String(),
+  if (message.notification?.title != null)
+    '_genie_title': message.notification!.title,
+  if (message.notification?.body != null)
+    '_genie_body': message.notification!.body,
+};
+
 Future<void> _openNotificationPayload(String payload) async {
   try {
     final decoded = jsonDecode(payload);
-    if (decoded is Map && decoded['type'] == 'DOCUMENT_NOTIFICATION') {
-      await DocumentNotificationTaps.open(Map<String, dynamic>.from(decoded));
-      return;
-    }
-    await _openLeadCallPayload(payload);
+    if (decoded is! Map) return;
+    final data = Map<String, dynamic>.from(decoded);
+    await NotificationInboxTaps.open(
+      RemoteMessage(
+        data: data,
+        messageId: data['_genie_message_id']?.toString(),
+        sentTime: DateTime.tryParse(data['_genie_sent_at']?.toString() ?? ''),
+        notification:
+            data['_genie_title'] != null || data['_genie_body'] != null
+                ? RemoteNotification(
+                  title: data['_genie_title']?.toString(),
+                  body: data['_genie_body']?.toString(),
+                )
+                : null,
+      ),
+    );
   } catch (error) {
     debugPrint('Could not open notification: ${error.runtimeType}');
   }
@@ -430,6 +439,7 @@ Future<void> _showEventAssignmentAlert(
         icon: 'ic_notification',
       ),
     ),
+    payload: jsonEncode(_notificationTapData(message)),
   );
 }
 
@@ -472,7 +482,7 @@ Future<void> showPendingWorkNotification(
     title,
     body,
     NotificationDetails(android: androidDetails),
-    payload: jsonEncode(data),
+    payload: jsonEncode(_notificationTapData(message)),
   );
 
   debugPrint('Displayed pending-work alarm notification: $title');
@@ -518,43 +528,9 @@ Future<void> showLeadCallNotification(RemoteMessage message) async {
         icon: 'ic_notification',
       ),
     ),
-    payload: jsonEncode({...message.data, '_genie_user': user}),
+    payload: jsonEncode({
+      ..._notificationTapData(message),
+      '_genie_user': user,
+    }),
   );
-}
-
-Future<void> _openRemoteLeadCall(RemoteMessage message) async {
-  final recipient = message.data['for_user'] ?? message.data['recipient'];
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.reload();
-  final user = prefs.getString('session_username');
-  if (user == null ||
-      (recipient != null &&
-          recipient.toString().toLowerCase() != user.toLowerCase())) {
-    return;
-  }
-  await _openLeadCallPayload(
-    jsonEncode({...message.data, '_genie_user': user}),
-  );
-}
-
-Future<void> _openLeadCallPayload(String payload) async {
-  try {
-    final decoded = jsonDecode(payload);
-    if (decoded is! Map) return;
-    final data = Map<String, dynamic>.from(decoded);
-    final lead = LeadCallNotification.fromData(data);
-    if (lead == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload();
-    if (prefs.getString('session_sid') == null ||
-        prefs.getString('session_username') != data['_genie_user']) {
-      return;
-    }
-    // Only a notification tap opens the dialer. Push receipt never places a call.
-    if (!await launchUrl(lead.dialUri, mode: LaunchMode.externalApplication)) {
-      debugPrint('Could not open the assigned customer dialer.');
-    }
-  } catch (error) {
-    debugPrint('Could not open lead notification: ${error.runtimeType}');
-  }
 }

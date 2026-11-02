@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/Screen/notifications_page.dart';
+import 'package:homegenie/Screen/session_webview.dart';
 import 'package:homegenie/utils/api/notification_inbox.dart';
 import 'package:homegenie/utils/widget/notification_bell.dart';
 import 'package:http/http.dart' as http;
@@ -420,6 +421,96 @@ void main() {
         expect(find.text('Task assigned'), findsOneWidget);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
+      }, () => client());
+    },
+  );
+
+  testWidgets('ERP opens only after choosing the inbox item action', (
+    tester,
+  ) async {
+    await http.runWithClient(
+      () async {
+        await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
+        await settleInbox(tester);
+        expect(find.byType(SessionWebView), findsNothing);
+        await tester.tap(find.text('Task assigned'));
+        await settleInbox(tester);
+        expect(find.byType(SessionWebView), findsNothing);
+        await tester.tap(find.text('Open in ERP').first);
+        await settleInbox(tester);
+        final web = tester.widget<SessionWebView>(find.byType(SessionWebView));
+        final uri = Uri.parse(web.url);
+        expect(uri.origin, 'https://erp.example.test');
+        expect(uri.pathSegments, ['app', 'task', 'Task-1']);
+        expect(web.blockSystemBack, isFalse);
+        await tester.binding.handlePopRoute();
+        await settleInbox(tester);
+        expect(find.byType(NotificationsPage), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+      () => MockClient(
+        (request) async =>
+            request.url.path.endsWith('get_logged_user')
+                ? http.Response(jsonEncode({'message': user}), 200)
+                : http.Response(jsonEncode({'data': logs()}), 200),
+      ),
+    );
+  });
+
+  testWidgets(
+    'inbox document action refuses navigation after account switching',
+    (tester) async {
+      await http.runWithClient(
+        () async {
+          await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
+          await settleInbox(tester);
+          await tester.tap(find.text('Task assigned'));
+          await settleInbox(tester);
+          await (await SharedPreferences.getInstance()).setString(
+            'session_username',
+            'another@example.test',
+          );
+          await tester.tap(find.text('Open in ERP').first);
+          await settleInbox(tester);
+          expect(find.byType(SessionWebView), findsNothing);
+          expect(
+            find.text('Your session changed. Reopen Notifications.'),
+            findsOneWidget,
+          );
+          await tester.pumpWidget(const SizedBox.shrink());
+        },
+        () => MockClient(
+          (request) async =>
+              request.url.path.endsWith('get_logged_user')
+                  ? http.Response(jsonEncode({'message': user}), 200)
+                  : http.Response(jsonEncode({'data': logs()}), 200),
+        ),
+      );
+    },
+  );
+
+  test(
+    'ERP history merge keeps the lead call action captured from its push',
+    () async {
+      await NotificationInbox.capture(
+        const RemoteMessage(
+          messageId: 'lead',
+          data: {
+            'type': 'NEW_LEAD_CALL',
+            'doctype': 'Lead',
+            'docname': 'Lead-1',
+            'for_user': user,
+            'mobile_no': '9876543210',
+            'notification_log': 'LOG-Lead',
+          },
+        ),
+      );
+      await http.runWithClient(() async {
+        final rows = await NotificationInbox.load();
+        final lead = rows.singleWhere((row) => row.id == 'LOG-Lead');
+        expect(lead.callPhone, '9876543210');
+        expect(lead.doctype, 'Lead');
       }, () => client());
     },
   );

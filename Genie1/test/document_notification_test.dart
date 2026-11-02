@@ -9,6 +9,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/utils/api/document_notification.dart';
 import 'package:homegenie/utils/api/fcm_notification_service.dart';
+import 'package:homegenie/utils/api/notification_inbox.dart';
+import 'package:homegenie/utils/api/notification_inbox_taps.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -61,6 +63,7 @@ void main() {
   });
   tearDown(() {
     DocumentNotificationTaps.unregister(owner);
+    NotificationInboxTaps.unregister(owner);
     debugDefaultTargetPlatformOverride = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
@@ -73,6 +76,37 @@ void main() {
     Map<String, dynamic> changes = const {},
   }) => showDocumentNotification(
     RemoteMessage(messageId: id, data: {...data, ...changes}),
+  );
+
+  test(
+    'local notification tap requests inbox without opening ERP or replaying audio',
+    () async {
+      final opened = Completer<void>();
+      NotificationInboxTaps.register(owner, () {
+        if (!opened.isCompleted) opened.complete();
+      });
+      DocumentNotificationTaps.register(
+        owner,
+        (_) => fail('Push must not open the ERP document'),
+      );
+      expect(await send(), isTrue);
+      final previousAlarms = alarms;
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+            channel.name,
+            const StandardMethodCodec().encodeMethodCall(
+              MethodCall('didReceiveNotificationResponse', {
+                'notificationResponseType': 0,
+                'id': 1,
+                'payload': shows.single['payload'],
+              }),
+            ),
+            (_) {},
+          );
+      await opened.future.timeout(const Duration(seconds: 2));
+      expect(alarms, previousAlarms);
+      expect(await NotificationInbox.cached(), hasLength(1));
+    },
   );
 
   test('displays mapped fields and rings once for repeat deliveries', () async {

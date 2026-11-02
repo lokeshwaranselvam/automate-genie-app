@@ -1,5 +1,5 @@
 import 'notifications_page.dart';
-import '../utils/api/document_notification.dart';
+import '../utils/api/notification_inbox_taps.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import '../utils/widget/load_failed_view.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
@@ -26,7 +26,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:homegenie/Screen/history_list.dart';
 import 'package:homegenie/Screen/session_webview.dart';
 import 'pending_work_page.dart';
-import 'pending_work_overview_page.dart';
+import 'pending_work_webview_page.dart';
 import 'lead_creation_page.dart';
 import 'opportunities_webview_page.dart';
 import 'my_performance_page.dart';
@@ -286,20 +286,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      DocumentNotificationTaps.register(this, (notification) {
+      NotificationInboxTaps.register(this, () {
         if (!mounted) return;
-        final uri = notification.documentUri;
-        if (uri == null) return;
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder:
-                (_) => SessionWebView(
-                  url: uri.toString(),
-                  title: notification.title,
-                  blockSystemBack: false,
-                ),
-          ),
-        );
+        _openNotifications();
       });
     });
   }
@@ -342,7 +331,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     HomeNavigation.unregister(this);
-    DocumentNotificationTaps.unregister(this);
+    NotificationInboxTaps.unregister(this);
     WidgetsBinding.instance.removeObserver(this);
     PendingWorkMonitor.stop();
     _homeScheduleRefreshTimer?.cancel();
@@ -616,10 +605,21 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     }
   }
 
+  Route<void>? _notificationsRoute;
+
   void _openNotifications() {
-    Navigator.of(context).push<void>(MaterialPageRoute<void>(
+    final existing = _notificationsRoute;
+    if (existing != null) {
+      Navigator.of(context).popUntil((route) => identical(route, existing));
+      return;
+    }
+    final route = MaterialPageRoute<void>(
       builder: (_) => const NotificationsPage(),
-    ));
+    );
+    _notificationsRoute = route;
+    Navigator.of(context).push<void>(route).whenComplete(() {
+      if (identical(_notificationsRoute, route)) _notificationsRoute = null;
+    });
   }
 
   Future<void> _openMyOpportunities() async {
@@ -1109,7 +1109,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   Future<void> _openPendingWork() async {
     if (!_showHomePending) return;
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const PendingWorkOverviewPage()),
+      MaterialPageRoute<void>(builder: (_) => const PendingWorkWebViewPage()),
     );
     if (mounted) unawaited(_loadHomePendingCount());
   }
