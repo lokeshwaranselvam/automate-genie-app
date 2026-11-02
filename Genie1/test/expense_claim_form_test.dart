@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:homegenie/Screen/expense_claim_page.dart';
+import 'package:homegenie/Screen/expense_claim_webview_page.dart';
 import 'package:homegenie/utils/api/expense_claim_api.dart';
 // ignore: depend_on_referenced_packages
 import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
@@ -200,7 +200,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     try {
       await http.runWithClient(() async {
-        await tester.pumpWidget(const MaterialApp(home: ExpenseClaimPage()));
+        await tester.pumpWidget(const MaterialApp(home: ExpenseClaimWebViewPage()));
         await tester.pumpAndSettle();
         await check();
       }, () => client(multiple: multiple, onPost: onPost));

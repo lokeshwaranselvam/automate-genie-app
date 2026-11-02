@@ -48,7 +48,7 @@
     align-items: center;
     gap: 14px;
     padding: 8px 16px;
-    background: linear-gradient(110deg, #0755ff, #8b00e8);
+    background: linear-gradient(110deg, #0055ff, #442fef, #8000e5);
     color: #fff;
   }
   #ec-app .ec-header h1 {
@@ -137,7 +137,7 @@
   #ec-app .ec-half input {
     width: 20px;
     height: 20px;
-    accent-color: #344bdb;
+    accent-color: #442fef;
     margin: 0;
   }
   #ec-app .ec-primary {
@@ -145,7 +145,7 @@
     min-height: 48px;
     border: 0;
     border-radius: 28px;
-    background: linear-gradient(110deg, #0755ff, #8b00e8);
+    background: linear-gradient(110deg, #0055ff, #442fef, #8000e5);
     color: #fff;
     padding: 12px 20px;
     font-weight: 600;
@@ -155,7 +155,7 @@
     border-radius: 22px;
     padding: 10px 18px;
     background: #fff;
-    color: #514597;
+    color: #442fef;
   }
   #ec-app .ec-message {
     text-align: center;
@@ -172,7 +172,7 @@
     margin: 16px auto 0;
     border: 0;
     background: transparent;
-    color: #514597;
+    color: #442fef;
   }
   #ec-app .ec-control {
     position: relative;
@@ -202,7 +202,7 @@
   }
   #ec-app .ec-options button[aria-selected="true"] {
     background: #eee6ff;
-    color: #514597;
+    color: #442fef;
     font-weight: 600;
   }
   #ec-app .ec-calendar-head {
@@ -218,7 +218,7 @@
     padding: 8px;
     border: 0;
     background: #f3f1fb;
-    color: #514597;
+    color: #442fef;
     border-radius: 8px;
   }
   #ec-app .ec-grid {
@@ -242,7 +242,7 @@
     padding: 4px;
   }
   #ec-app .ec-day[aria-selected="true"] {
-    background: #5745d6;
+    background: #442fef;
     color: #fff;
   }
   #ec-app .ec-day:disabled {
@@ -303,7 +303,7 @@
   #ec-app .ec-remove {
     border: 0;
     background: transparent;
-    color: #514597;
+    color: #442fef;
     padding: 8px;
   }
   #ec-app .ec-total {
@@ -317,7 +317,7 @@
     margin: 20px 0;
   }
   #ec-app .ec-total strong {
-    color: #344bdb;
+    color: #442fef;
   }
   #ec-app .ec-bills {
     display: flex;
@@ -344,6 +344,9 @@
     border-radius: 50%;
     width: 28px;
     height: 28px;
+    display: grid;
+    place-items: center;
+    padding: 0;
   }
   #ec-app .ec-add-photo {
     width: 140px;
@@ -351,7 +354,7 @@
     border: 1px solid #b9d1f0;
     border-radius: 10px;
     background: #f5f9ff;
-    color: #344bdb;
+    color: #442fef;
     font-weight: 600;
   }
   #ec-app input.ec-input {
@@ -399,9 +402,12 @@
     const $ = (id) => document.getElementById(id),
       content = $("ec-content"),
       modal = $("ec-dialog"),
-      API = "/api/method/create_expense_claim_from_mobile";
+      API = "/api/method/create_expense_claim_from_mobile",
+      nativeMode = typeof window.GenieExpenseClaim?.postMessage === "function";
     const state = {
       user: null,
+      expectedUser: null,
+      initialized: false,
       stopped: false,
       csrf: null,
       options: null,
@@ -444,6 +450,8 @@
         next: "m9 5 7 7-7 7",
         calendar: "M4 5h16v16H4zM4 10h16M8 3v4M16 3v4M8 14h2M14 14h2M8 18h2",
         bell: "M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4",
+        close: "m6 6 12 12M18 6 6 18",
+        delete: "M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7",
       };
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       for (const [key, value] of Object.entries({
@@ -512,7 +520,8 @@
         throw new Error("Invalid ERP request.");
       for (const [k, v] of Object.entries(query || {}))
         url.searchParams.set(k, typeof v === "string" ? v : JSON.stringify(v));
-      const controller = new AbortController(),
+      const followHtmlRedirect = html && !body,
+        controller = new AbortController(),
         timer = setTimeout(() => controller.abort(), body ? 90000 : 25000);
       try {
         const headers = {
@@ -526,18 +535,30 @@
           method: body ? "POST" : "GET",
           credentials: "same-origin",
           cache: "no-store",
-          redirect: "error",
+          redirect: followHtmlRedirect ? "follow" : "error",
           headers,
           signal: controller.signal,
           body: body || undefined,
         });
+        if (followHtmlRedirect) {
+          const destination = new URL(response.url || url.href);
+          if (
+            destination.origin !== window.location.origin ||
+            destination.username ||
+            destination.password
+          )
+            throw new ApiError(
+              "ERP redirected to a different site. Reopen Expense Claim from the app.",
+              response.status,
+            );
+        }
         if (html) {
           if (!response.ok)
             throw new ApiError(
               "Could not initialize your update session.",
               response.status,
             );
-          return response.text();
+          return await response.text();
         }
         let data;
         try {
@@ -605,6 +626,10 @@
     async function session() {
       if (state.stopped)
         throw new Error("Reopen this page after signing in again.");
+      if (nativeMode && !state.expectedUser)
+        throw new Error(
+          "Wait for the app to initialize your Expense Claim session.",
+        );
       let result;
       try {
         result = await raw("/api/method/frappe.auth.get_logged_user");
@@ -620,6 +645,7 @@
         typeof user !== "string" ||
         !user ||
         user === "Guest" ||
+        (state.expectedUser && user !== state.expectedUser) ||
         (state.user && user !== state.user)
       ) {
         stopSession(
@@ -760,7 +786,9 @@
     }
     function parseAmount(value) {
       const text = String(value).trim().replace(/,/g, "");
-      return text ? Number(text) : NaN;
+      return /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(text)
+        ? Number(text)
+        : NaN;
     }
     function totalAmount() {
       return state.rows.reduce((sum, row) => {
@@ -798,13 +826,13 @@
       onSelect,
       disabled = false,
     ) {
-      const selected = options.find((x) => x.value === value),
-        panel = el("div", {
-          class: "ec-panel ec-options",
-          role: "listbox",
-          hidden: "",
-          "aria-label": placeholder,
-        });
+      let selected = options.find((x) => x.value === value);
+      const panel = el("div", {
+        class: "ec-panel ec-options",
+        role: "listbox",
+        hidden: "",
+        "aria-label": placeholder,
+      });
       const input = el("input", {
         id,
         class: "ec-input",
@@ -841,6 +869,9 @@
                 "aria-selected": item.value === value,
                 onclick: () => {
                   if (blocked()) return;
+                  value = item.value;
+                  selected = item;
+                  input.value = item.label;
                   panel.hidden = true;
                   input.setAttribute("aria-expanded", "false");
                   onSelect(item.value);
@@ -862,6 +893,7 @@
       input.addEventListener("input", () => {
         if (value && input.value !== selected?.label) {
           value = "";
+          selected = undefined;
           onSelect("");
         }
         show();
@@ -1140,16 +1172,19 @@
       state.rows = state.rows.filter((row) => row.id !== id);
       renderForm();
     }
-    function validateBills(bills) {
+    function validateBills(bills, { enforceMinimum = true } = {}) {
       const uploads = state.policy.uploads || {},
-        minimum = state.hasPolicy ? Number(uploads.min_count) || 0 : 1;
-      if (bills.length < minimum)
+        minimum = state.hasPolicy ? Number(uploads.min_count) || 0 : 1,
+        count = bills.length + (Number(uploads.current_count) || 0);
+      if (enforceMinimum && bills.length < minimum)
+        throw new Error("Attach a bill photo before submitting.");
+      if (enforceMinimum && count < (Number(uploads.min_count) || 0))
         throw new Error("Attach a bill photo before submitting.");
       if (!state.options.supports_multiple_expenses && bills.length > 1)
         throw new Error("Only one bill is supported by this API version.");
       if (
         Number(uploads.max_count) > 0 &&
-        bills.length > Number(uploads.max_count)
+        count > Number(uploads.max_count)
       )
         throw new Error("The permitted attachment count has been exceeded.");
       for (const bill of bills) {
@@ -1171,7 +1206,7 @@
       }
     }
     function addBills(files) {
-      if (blocked()) return;
+      if (blocked() || !files || !files.length) return;
       try {
         let next = state.options.supports_multiple_expenses
           ? [...state.bills]
@@ -1187,15 +1222,7 @@
             next.push({ file, key, url: "" });
         }
         if (!state.options.supports_multiple_expenses) next = next.slice(0, 1);
-        const uploads = state.policy.uploads || {};
-        const previousMinimum = uploads.min_count;
-        state.policy.uploads = { ...uploads, min_count: 0 };
-        try {
-          validateBills(next);
-        } finally {
-          state.policy.uploads = uploads;
-        }
-        if (!state.hasPolicy && next.length === 0) return;
+        validateBills(next, { enforceMinimum: false });
         for (const bill of state.bills)
           if (!next.includes(bill) && bill.url) URL.revokeObjectURL(bill.url);
         for (const bill of next)
@@ -1301,13 +1328,13 @@
             (value) => {
               state.approver = value;
             },
-            !state.employee || state.loadingApprovers,
+            !state.employee || state.loadingApprovers || !!state.approverError,
           ),
         ),
       );
       if (state.loadingApprovers)
         controls.append(
-          el("p", { class: "ec-hint" }, "Loading employee approvers?"),
+          el("p", { class: "ec-hint" }, "Loading employee approvers…"),
         );
       if (state.approverError)
         controls.append(
@@ -1376,7 +1403,7 @@
                   disabled: state.rows.length === 1,
                   onclick: () => removeExpense(row.id),
                 },
-                "?",
+                icon("delete"),
               ),
             ),
             wrapper(
@@ -1467,7 +1494,7 @@
                 "aria-label": "Remove bill " + bill.file.name,
                 onclick: () => removeBill(bill.key),
               },
-              "?",
+              icon("close"),
             ),
             el("figcaption", { class: "ec-file-name" }, bill.file.name),
           ),
@@ -1491,7 +1518,7 @@
             class: "ec-primary",
             disabled: state.loadingApprovers || !!state.approverError,
           },
-          state.busy ? "Submitting?" : "Submit Claim",
+          state.busy ? "Submitting…" : "Submit Claim",
         ),
       );
       form.append(controls);
@@ -1564,7 +1591,7 @@
       else {
         state.loading = true;
         content.replaceChildren(
-          el("p", { class: "ec-message" }, "Loading expense options?"),
+          el("p", { class: "ec-message" }, "Loading expense options…"),
         );
       }
       try {
@@ -1592,8 +1619,7 @@
           !policy.rules ||
           Array.isArray(policy.rules) ||
           typeof policy.fields !== "object" ||
-          typeof policy.rules !== "object" ||
-          (policy.uploads && typeof policy.uploads !== "object")
+          typeof policy.rules !== "object"
         )
           throw new Error("ERP returned an invalid Expense Claim policy.");
         const employees = optionList(message.employee_options, "Employee"),
@@ -1610,12 +1636,19 @@
           throw new Error(
             "No expense types are configured. Contact your administrator.",
           );
-        const chosen = employee || message.employee;
-        if (!employees.some((x) => x.value === chosen))
+        if (employee && !employees.some((x) => x.value === employee))
           throw new Error("Choose an Employee allowed by ERPNext.");
-        if (employee && message.employee !== employee)
-          throw new Error("ERP returned options for another Employee.");
-        state.policy = { ...policy, uploads: policy.uploads || {} };
+        const preferred = employee || message.employee,
+          chosen = employees.some((x) => x.value === preferred) ? preferred : "";
+        state.policy = {
+          ...policy,
+          uploads:
+            policy.uploads &&
+            typeof policy.uploads === "object" &&
+            !Array.isArray(policy.uploads)
+              ? policy.uploads
+              : {},
+        };
         state.hasPolicy = message.business_policy != null;
         state.options = {
           ...message,
@@ -1743,9 +1776,12 @@
             "amount",
           ) &&
             amount <= 0) ||
-          (typeof rule.min_exclusive === "number" &&
+          (rule.type === "number" &&
+            typeof rule.min_exclusive === "number" &&
             amount <= rule.min_exclusive) ||
-          (typeof rule.max_value === "number" && amount > rule.max_value)
+          (rule.type === "number" &&
+            typeof rule.max_value === "number" &&
+            amount > rule.max_value)
         )
           throw new Error(
             prefix + "Enter an amount within the permitted limits.",
@@ -1858,12 +1894,43 @@
     $("ec-back").replaceChildren(icon("back"));
     $("ec-back").addEventListener("click", back);
     window.addEventListener("genie-expense-back", back);
+    window.addEventListener("genie-expense-session", (event) => {
+      if (!nativeMode || state.stopped) return;
+      const user = event.detail?.user;
+      if (
+        typeof user !== "string" ||
+        !user.trim() ||
+        user === "Guest" ||
+        (state.expectedUser && state.expectedUser !== user)
+      ) {
+        stopSession(
+          "Your app session changed. Sign in again and reopen Expense Claim.",
+        );
+        return;
+      }
+      state.expectedUser = user;
+      if (!state.initialized) {
+        state.initialized = true;
+        loadOptions();
+      }
+    });
+    window.addEventListener("genie-expense-refresh", () => {
+      if (state.initialized && !state.loadingApprovers) loadOptions();
+    });
     window.addEventListener("pagehide", () => {
       if (!state.busy) clearBills();
     });
     modal.addEventListener("cancel", (event) => {
       if (state.busy) event.preventDefault();
     });
-    loadOptions();
+    if (nativeMode) {
+      content.replaceChildren(
+        el("p", { class: "ec-message" }, "Opening your Expense Claim session…"),
+      );
+      notifyNative("ready");
+    } else {
+      state.initialized = true;
+      loadOptions();
+    }
   })();
 </script>
