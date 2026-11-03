@@ -60,9 +60,13 @@ has_visit_operations_role = bool(frappe.db.exists(
     {"parent": current_user, "parenttype": "User", "parentfield": "roles",
      "role": ["in", ["SCM Manager", "Delivery Manager"]]},
 ))
-can_create_visit = has_sales_manager_role or has_accounts_user_role or has_visit_operations_role
+has_existing_visit_creation_role = has_sales_manager_role or has_accounts_user_role or has_visit_operations_role
+has_head_office_creation_role = has_sales_user_role or has_designer_role
+can_create_visit = has_existing_visit_creation_role or has_head_office_creation_role
 if action != "can_create" and not can_create_visit:
-    frappe.throw("Only users with the Sales Manager role, Accounts User role, SCM Manager role, or Delivery Manager role can create site visits.")
+    frappe.throw("Only users with the Sales Manager role, Accounts User role, SCM Manager role, Delivery Manager role, Sales User role, or Designer role can create site visits.")
+if not has_existing_visit_creation_role and action not in ["can_create", "get", "create_event"]:
+    frappe.throw("Your roles only allow direct Head Office CH event creation.")
 
 business_policy = None
 if action in ["get", "save_location", "create_event"]:
@@ -101,6 +105,8 @@ if action in ["get", "get_references", "create_event"]:
             # Existing Sales Manager behavior: all configured categories.
             allowed_category_names = None
     if allowed_category_names is not None:
+        if has_head_office_creation_role:
+            allowed_category_names.append("headofficech")
         if has_accounts_user_role:
             for category_name in ["bank", "collection", "other", "others"]:
                 if category_name not in allowed_category_names:
@@ -476,7 +482,7 @@ if action == "can_create":
     }
 
 elif action == "get":
-    opportunities = get_opportunities()
+    opportunities = get_opportunities() if has_existing_visit_creation_role else []
     user_rows = frappe.get_all(
         "User",
         filters={"enabled": 1, "user_type": "System User"},

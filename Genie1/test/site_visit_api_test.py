@@ -577,7 +577,7 @@ class SiteVisitApiTest(unittest.TestCase):
 
     def test_capability_uses_session_role_and_does_not_load_form_data(self):
         for roles, allowed in [([], False), (["Employee"], False),
-                               (["Sales User"], False), (["Designer"], False),
+                               (["Sales User"], True), (["Designer"], True),
                                (["Sales Manager", "Sales User"], True),
                                (["Sales Manager", "Designer"], True)]:
             self.configure_category_policy(roles, "Other Company")
@@ -593,7 +593,8 @@ class SiteVisitApiTest(unittest.TestCase):
     def test_home_actions_follow_exact_session_sales_roles(self):
         for roles, lead, visit, pending in [([], False, False, False),
                                    (["Employee"], False, False, False),
-                                   (["Sales User"], True, False, True),
+                                   (["Sales User"], True, True, True),
+                                   (["Designer"], False, True, False),
                                    (["Sales Manager"], True, True, True),
                                    (["Accounts User"], False, True, False),
                                    (["SCM Manager"], False, True, False),
@@ -614,21 +615,15 @@ class SiteVisitApiTest(unittest.TestCase):
         self.frappe.get_all.assert_not_called()
         self.frappe.get_doc.assert_not_called()
 
-    def test_designer_can_view_assigned_visits_without_creation_or_other_sales_access(self):
-        roles = ["Designer"]
-        self.frappe.db.exists.side_effect = lambda doctype, filters: (
-            doctype == "Has Role" and filters["parent"] == self.user
-            and (any(role in roles for role in filters["role"][1])
-                 if isinstance(filters["role"], list) else filters["role"] in roles)
-        )
+    def test_designer_creation_does_not_grant_other_sales_access(self):
+        self.configure_category_policy(["Designer"], "Other Company")
         result = self.run_api(action="can_create")
         self.assertTrue(result["can_view_visits"])
-        self.assertFalse(result["can_create"])
+        self.assertTrue(result["can_create"])
+        self.assertTrue(result["feature_visibility"]["new_visit"])
         self.assertFalse(result["can_create_lead"])
         self.assertFalse(result["can_view_pending"])
-        for action in ["get", "get_references", "create_event"]:
-            with self.subTest(action=action), self.assertRaisesRegex(ValueError, "Sales Manager"):
-                self.run_api(action=action)
+        self.assertFalse(result["can_view_opportunities"])
         self.frappe.get_all.assert_not_called()
         self.frappe.new_doc.assert_not_called()
 
@@ -660,6 +655,8 @@ class SiteVisitApiTest(unittest.TestCase):
                     if company in ["Bioman Sewage Solutions Private Limited",
                                    "Homegenie Building Products Private Limited"]:
                         expected.update(["Installation", "Complaint Visit"])
+                    if "Sales User" in roles or "Designer" in roles:
+                        expected.add("Head Office CH")
                     self.assertEqual(set(result["event_categories"]), expected)
                     employee_queries = [call for call in self.frappe.db.get_value.call_args_list
                                         if call.args[0] == "Employee"]
@@ -715,8 +712,10 @@ class SiteVisitApiTest(unittest.TestCase):
                     self.configure_category_policy(roles, company)
                     self.metas["Event"].get_field("event_category").options += "\nOthers"
                     result = self.run_api(action="get", user="other@example.test")
-                    self.assertEqual(set(result["event_categories"]),
-                                     {"Bank", "Collection", "Other", "Others"})
+                    expected = {"Bank", "Collection", "Other", "Others"}
+                    if "Sales User" in roles or "Designer" in roles:
+                        expected.add("Head Office CH")
+                    self.assertEqual(set(result["event_categories"]), expected)
 
     def test_accounts_can_create_allowed_categories_and_cannot_submit_other_categories(self):
         self.configure_category_policy(["Accounts User"], "Timbe Windows Private Limited")
@@ -745,8 +744,10 @@ class SiteVisitApiTest(unittest.TestCase):
                             "Other Company", None]:
                 with self.subTest(roles=roles, company=company):
                     self.configure_category_policy(roles, company)
-                    self.assertEqual(set(self.run_api(action="get")["event_categories"]),
-                                     {"Installation", "Complaint Visit", "Site Visit", "Maintenance", "Other"})
+                    expected = {"Installation", "Complaint Visit", "Site Visit", "Maintenance", "Other"}
+                    if "Sales User" in roles:
+                        expected.add("Head Office CH")
+                    self.assertEqual(set(self.run_api(action="get")["event_categories"]), expected)
         for role in ["SCM Manager", "Delivery Manager"]:
             self.configure_category_policy([role], "Timbe Windows Private Limited")
             for category in ["Bank", "Collection", "Measurement", "Training"]:
@@ -909,12 +910,44 @@ class SiteVisitApiTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no configured categories allowed"):
             self.run_api(action="get")
 
-    def test_sales_user_without_manager_still_cannot_create_or_load_creation_categories(self):
-        self.configure_category_policy(["Sales User"], "Timbe Windows Private Limited")
-        self.assertFalse(self.run_api(action="can_create")["can_create"])
-        for action in ["get", "get_references", "create_event"]:
-            with self.subTest(action=action), self.assertRaisesRegex(ValueError, "Sales Manager"):
-                self.run_api(action=action)
+    def test_sales_and_designer_only_get_head_office_and_create_direct_events(self):
+        for roles in [["Sales User"], ["Designer"], ["Sales User", "Designer"],
+                      ["Sales User", "Employee"], ["Designer", "Production User"]]:
+            for company in ["Timbe Windows Private Limited", "Other Company", None]:
+                with self.subTest(roles=roles, company=company):
+                    self.configure_category_policy(roles, company)
+                    self.frappe.get_all.reset_mock()
+                    result = self.run_api(action="get", roles=["Sales Manager"])
+                    self.assertEqual(result["event_categories"], ["Head Office CH"])
+                    self.assertEqual(result["opportunities"], [])
+                    self.assertFalse(any(c.args[0] == "Opportunity" for c in self.frappe.get_all.call_args_list))
+                    self.assertEqual(result["event_category_rules"]["Head Office CH"], {
+                        "reference_mode": "none", "reference_doctype": "",
+                        "required_fields": ["category", "summary", "starts_on", "ends_on", "assigned_to"],
+                    })
+                    result = self.run_api(category="Head Office CH", opportunity="", location_row="", product_enquired="")
+                    self.assertEqual(result["event"], "EVENT-TEST")
+                    self.assertEqual(result["reference_name"], "")
+                    self.assertEqual(result["location_row"], "")
+                    self.assertEqual(self.event.event_category, "Head Office CH")
+                    self.assertNotIn("custom_validate", self.event)
+                    self.assertNotIn("location", self.event)
+                    self.assertEqual(self.event.event_participants[-1].reference_doctype, "User")
+                    self.assertEqual(self.created[-1].allocated_to, self.user)
+                    self.assertTrue(all(doc.doctype == "ToDo" for doc in self.created))
+
+    def test_head_office_only_roles_cannot_submit_other_categories_or_location_actions(self):
+        for roles in [["Sales User"], ["Designer"], ["Sales User", "Designer"]]:
+            self.configure_category_policy(roles, "Other Company")
+            self.metas["Event"].get_field("event_category").options += "\nOthers"
+            for category in ["Other", "Others", "Bank", "Site Visit", "Measurement", "Installation", "Training"]:
+                with self.subTest(roles=roles, category=category), self.assertRaisesRegex(ValueError, "valid event category"):
+                    self.run_api(category=category, roles=["Sales Manager"], company="Other Company")
+            for action in ["get_references", "search_by_mobile", "search_opportunities", "save_location"]:
+                with self.subTest(roles=roles, action=action), self.assertRaisesRegex(ValueError, "only allow direct Head Office CH"):
+                    self.run_api(action=action)
+            with self.assertRaisesRegex(ValueError, "does not use an Opportunity"):
+                self.run_api(category="Head Office CH")
         self.frappe.new_doc.assert_not_called()
 
     def test_other_companies_and_missing_employee_company_keep_existing_categories(self):
@@ -924,8 +957,7 @@ class SiteVisitApiTest(unittest.TestCase):
 
     def test_restricted_roles_cannot_bypass_button_with_direct_api_requests(self):
         for roles in [[], ["Employee"], ["Production User"], ["Production Manager"],
-                      ["System Manager"], ["Sales User"], ["Designer"], ["Sales User", "Designer"],
-                      ["Sales User", "Employee"], ["Designer", "Production User"]]:
+                      ["System Manager"]]:
             self.configure_category_policy(roles, "Other Company")
             for action in ["get", "get_references", "search_by_mobile", "save_location", "create_event"]:
                 with self.subTest(roles=roles, action=action):

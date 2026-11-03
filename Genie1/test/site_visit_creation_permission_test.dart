@@ -227,7 +227,7 @@ void main() {
   );
 
   testWidgets(
-    'Designer opens assigned Visits from navigation without New Visit',
+    'Designer sees New Visit while retaining assigned Visits navigation',
     (tester) async {
       SharedPreferences.setMockInitialValues({
         'email': 'designer@example.test',
@@ -257,7 +257,7 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          expect(find.text('New Visit'), findsNothing);
+          expect(find.text('New Visit'), findsOneWidget);
           expect(find.text('Assigned designer visit'), findsOneWidget);
           expect(find.text('Leads'), findsNothing);
           await tester.tap(find.text('Visits'));
@@ -271,7 +271,7 @@ void main() {
               jsonEncode({
                 'message': {
                   'current_user': 'designer@example.test',
-                  'can_create': false,
+                  'can_create': true,
                   'can_view_visits': true,
                 },
               }),
