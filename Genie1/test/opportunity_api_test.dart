@@ -8,9 +8,13 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const opportunityUser = 'creator@example.test';
-Map<String, dynamic> opportunity({String owner = opportunityUser}) => {
+Map<String, dynamic> opportunity({
+  String owner = 'other.creator@example.test',
+  String? opportunityOwner = opportunityUser,
+}) => {
   'name': 'OPP-1',
   'owner': owner,
+  'opportunity_owner': opportunityOwner,
   'customer_name': 'Customer One',
   'status': 'Open',
   'custom_requirement': 'Office doors',
@@ -40,7 +44,28 @@ void main() {
       });
 
   test(
-    'list filters by creator and paginates without full documents',
+    'Home count uses the centralized permitted Opportunity visibility without a page cap',
+    () async {
+      await http.runWithClient(
+        () async {
+          expect(await OpportunityApi.getMyOpportunityCount(), 1251);
+        },
+        () => client((request) async {
+          expect(request.url.path, '/api/method/mobile_opportunity_policy');
+          expect(request.url.queryParameters['action'], 'count');
+          return http.Response(
+            jsonEncode({
+              'message': {'current_user': opportunityUser, 'count': 1251},
+            }),
+            200,
+          );
+        }),
+      );
+    },
+  );
+
+  test(
+    'list filters by Opportunity Owner and includes records created by others',
     () async {
       await http.runWithClient(
         () async {
@@ -52,7 +77,7 @@ void main() {
         () => client((request) async {
           expect(request.url.path, '/api/resource/Opportunity');
           expect(jsonDecode(request.url.queryParameters['filters']!), [
-            ['owner', '=', opportunityUser],
+            ['opportunity_owner', '=', opportunityUser],
           ]);
           expect(request.url.queryParameters['limit_start'], '50');
           expect(request.url.queryParameters['limit_page_length'], '50');
@@ -77,6 +102,8 @@ void main() {
         final result = await OpportunityApi.getDetails('OPP-1');
         expect(result['custom_requirement'], 'Office doors');
         expect(result['items'][0]['qty'], 2);
+        expect(result['owner'], 'other.creator@example.test');
+        expect(result['opportunity_owner'], opportunityUser);
       },
       () => client((request) async {
         expect(request.url.path, '/api/resource/Opportunity/OPP-1');
@@ -85,31 +112,91 @@ void main() {
     );
   });
 
+  test(
+    'Lead link lookup uses exact relation and retains owner and pagination',
+    () async {
+      await http.runWithClient(
+        () async => expect(
+          await OpportunityApi.getForLead('LEAD-1', offset: 50),
+          hasLength(1),
+        ),
+        () => client((request) async {
+          expect(jsonDecode(request.url.queryParameters['filters']!), [
+            ['opportunity_owner', '=', opportunityUser],
+            ['opportunity_from', '=', 'Lead'],
+            ['party_name', '=', 'LEAD-1'],
+          ]);
+          expect(request.url.queryParameters['limit_start'], '50');
+          expect(request.url.queryParameters['limit_page_length'], '50');
+          return http.Response(
+            jsonEncode({
+              'data': [
+                {
+                  ...opportunity(),
+                  'opportunity_from': 'Lead',
+                  'party_name': 'LEAD-1',
+                },
+              ],
+            }),
+            200,
+          );
+        }),
+      );
+    },
+  );
+
+  for (final relation in [
+    {'opportunity_from': 'Lead', 'party_name': 'OTHER-LEAD'},
+    {'opportunity_from': 'Customer', 'party_name': 'LEAD-1'},
+  ]) {
+    test('Lead lookup rejects mismatched relation $relation', () async {
+      await http.runWithClient(
+        () async =>
+            expectLater(OpportunityApi.getForLead('LEAD-1'), throwsStateError),
+        () => client(
+          (_) async => http.Response(
+            jsonEncode({
+              'data': [
+                {...opportunity(), ...relation},
+              ],
+            }),
+            200,
+          ),
+        ),
+      );
+    });
+  }
+
   for (final details in [false, true]) {
-    test(
-      'rejects another creator in ${details ? 'details' : 'list'}',
-      () async {
-        await http.runWithClient(
-          () async {
-            await expectLater(
-              details
-                  ? OpportunityApi.getDetails('OPP-1')
-                  : OpportunityApi.getMyOpportunities(),
-              throwsStateError,
-            );
-          },
-          () => client((request) async {
-            final row = opportunity(owner: 'other@example.test');
-            return http.Response(
-              jsonEncode({
-                'data': details ? row : [row],
-              }),
-              200,
-            );
-          }),
-        );
-      },
-    );
+    for (final assignedUser in ['other@example.test', '', null]) {
+      test(
+        'rejects Opportunity Owner $assignedUser in ${details ? 'details' : 'list'} even for the creator',
+        () async {
+          await http.runWithClient(
+            () async {
+              await expectLater(
+                details
+                    ? OpportunityApi.getDetails('OPP-1')
+                    : OpportunityApi.getMyOpportunities(),
+                throwsStateError,
+              );
+            },
+            () => client((request) async {
+              final row = opportunity(
+                owner: opportunityUser,
+                opportunityOwner: assignedUser,
+              );
+              return http.Response(
+                jsonEncode({
+                  'data': details ? row : [row],
+                }),
+                200,
+              );
+            }),
+          );
+        },
+      );
+    }
   }
 
   test('account switch during request discards response', () async {

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'dart:async';
 
 import 'package:flutter/services.dart';
@@ -10,7 +13,38 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final calls = <MethodCall>[];
   var active = false;
+  var session = 0;
+  void trackingTest(String name, Future<void> Function() body) {
+    test(
+      name,
+      () => http.runWithClient(
+        body,
+        () => MockClient((request) async {
+          if (request.url.path.endsWith('frappe.auth.get_logged_user')) {
+            return http.Response(
+              jsonEncode({'message': 'staff@example.test'}),
+              200,
+            );
+          }
+          if (request.url.path.endsWith('mobile_site_visit')) {
+            return http.Response(
+              jsonEncode({
+                'message': {
+                  'current_user': 'staff@example.test',
+                  'can_track': true,
+                },
+              }),
+              200,
+            );
+          }
+          throw StateError('Unexpected request: ${request.url.path}');
+        }),
+      ),
+    );
+  }
+
   setUp(() {
+    session++;
     calls.clear();
     active = false;
     dotenv.testLoad(
@@ -19,7 +53,7 @@ void main() {
     );
     SharedPreferences.setMockInitialValues({
       'email': 'staff@example.test',
-      'session_sid': 'test-session',
+      'session_sid': 'test-session-$session',
       'token': 'token test-key:test-secret',
       'is_employee_checked_in': true,
     });
@@ -46,7 +80,7 @@ void main() {
         .setMockMethodCallHandler(LiveLocationService.platform, null);
   });
 
-  test(
+  trackingTest(
     'check-in starts native tracking with API authorization, not the session cookie',
     () async {
       await LiveLocationService().startTracking();
@@ -57,13 +91,14 @@ void main() {
         'userId': 'staff@example.test',
         'authToken': 'token test-key:test-secret',
         'siteUrl': 'https://erp.example.test/',
+        'trackingAllowed': true,
       });
       expect(calls.any((call) => call.method == 'isLocationTracking'), isTrue);
       expect(LiveLocationService().isTracking, isTrue);
     },
   );
 
-  test(
+  trackingTest(
     'missing native service is restored even when Dart thinks it is tracking',
     () async {
       await LiveLocationService().startTracking();
@@ -82,25 +117,34 @@ void main() {
     },
   );
 
-  test('checked-out attendance never restores tracking', () async {
+  trackingTest('checked-out attendance never restores tracking', () async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_employee_checked_in', false);
     await LiveLocationService().ensureTracking();
-    expect(calls, isEmpty);
+    expect(calls.map((call) => call.method), ['stopLocationTracking']);
   });
 
-  test('logout or missing API credentials cannot start a service', () async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('session_sid');
-    await expectLater(LiveLocationService().startTracking(), throwsStateError);
-    expect(calls, isEmpty);
-    await prefs.setString('session_sid', 'test-session');
-    await prefs.remove('token');
-    await expectLater(LiveLocationService().startTracking(), throwsStateError);
-    expect(calls, isEmpty);
-  });
+  trackingTest(
+    'logout or missing API credentials cannot start a service',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('session_sid');
+      await expectLater(
+        LiveLocationService().startTracking(),
+        throwsStateError,
+      );
+      expect(calls, isEmpty);
+      await prefs.setString('session_sid', 'test-session');
+      await prefs.remove('token');
+      await expectLater(
+        LiveLocationService().startTracking(),
+        throwsStateError,
+      );
+      expect(calls, isEmpty);
+    },
+  );
 
-  test(
+  trackingTest(
     'checkout waits for an in-flight start and leaves tracking stopped',
     () async {
       final launched = Completer<void>();
@@ -132,7 +176,7 @@ void main() {
     },
   );
 
-  test(
+  trackingTest(
     'native startup failure clears tracking and still permits a retry',
     () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

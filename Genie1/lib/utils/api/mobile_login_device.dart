@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
@@ -13,8 +14,36 @@ class MobileLoginDevice {
   static const _activeName = 'genie_active_mobile_binding';
   static Future<String>? _keyRequest;
   static Future<void>? _logoutRequest;
+  // Shared synthetic identifiers for temporary PWA testing only.
+  // Every browser using this build represents the same test installation.
+  static const _webTestAndroidId = '7ac19e04b582d63f';
+  static const _webTestDeviceKey = 'DbM8AIkO9kFeY3RGTZPK4BIb5ZM9kJ-Sc9ilxAJZj_8';
+
+  static const _deviceChannel = MethodChannel(
+    'ai.automategenie.app/mobile_device',
+  );
+
+  /// A recognition signal, never a replacement for the private logout key.
+  /// Web uses a shared synthetic ID for testing the existing Android API.
+  /// Null means native iOS or Android below 8.
+  static Future<String?> androidId() async {
+    if (kIsWeb) return _webTestAndroidId;
+    if (defaultTargetPlatform != TargetPlatform.android) return null;
+    final value = await _deviceChannel.invokeMethod<String>('androidId');
+    if (value == null) return null;
+    final id = value.trim().toLowerCase();
+    if (!RegExp(r'^[0-9a-f]{1,16}$').hasMatch(id) ||
+        RegExp(r'^0+$').hasMatch(id) ||
+        id == '9774d56d682e549c') {
+      throw StateError(
+        'Unable to identify this Android device. Contact your administrator.',
+      );
+    }
+    return id;
+  }
 
   static Future<String> key() async {
+    if (kIsWeb) return _webTestDeviceKey;
     final request = _keyRequest ??= _loadKey();
     try {
       return await request;
@@ -144,6 +173,17 @@ class MobileLoginDevice {
     }
   }
 
+  static bool isCsrfFailure(http.Response response) => _isCsrfFailure(response);
+
+  static Future<String> browserCsrfToken(Uri endpoint) async {
+    final client = http.Client();
+    try {
+      return await _logoutCsrf(client, endpoint);
+    } finally {
+      client.close();
+    }
+  }
+
   static bool _isCsrfFailure(http.Response response) {
     final body = _decode(response);
     return response.statusCode != 200 &&
@@ -168,7 +208,7 @@ class MobileLoginDevice {
       ) when url.origin != endpoint.origin) {
         await stream.stream.listen(null).cancel();
         throw StateError(
-          'ERP redirected sign-out to another site. Check the ERP site configuration.',
+          'ERP redirected the security request to another site. Check the ERP site configuration.',
         );
       }
       return http.Response.fromStream(stream);
@@ -181,7 +221,7 @@ class MobileLoginDevice {
             : null;
     if (token == null || token.isEmpty) {
       throw StateError(
-        'Could not initialize ERP sign-out security. Reload the web app and retry.',
+        'Could not initialize ERP session security. Reload the web app and retry.',
       );
     }
     return token;

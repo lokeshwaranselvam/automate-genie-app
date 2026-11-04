@@ -2,12 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../utils/api/document_notification.dart';
 import '../utils/api/notification_inbox.dart';
+import '../utils/api/session_auth.dart';
 import '../utils/theme/brand_theme.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import '../utils/widget/home_back_button.dart';
 import '../utils/widget/pull_to_refresh.dart';
+import 'session_webview.dart';
+import 'sales_summary_webview_page.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -21,8 +26,9 @@ class _NotificationsPageState extends State<NotificationsPage>
   bool _loading = false;
   String? _error;
   StreamSubscription<void>? _subscription;
-  final Set<String> _viewedIds = {};
   String? _scope;
+  bool _opening = false;
+  bool _clearing = false;
 
   @override
   void initState() {
@@ -36,11 +42,6 @@ class _NotificationsPageState extends State<NotificationsPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _subscription?.cancel();
-    if (_scope != null) {
-      unawaited(
-        NotificationInbox.dismissViewed(Set.of(_viewedIds), scope: _scope!),
-      );
-    }
     super.dispose();
   }
 
@@ -49,15 +50,30 @@ class _NotificationsPageState extends State<NotificationsPage>
     if (state == AppLifecycleState.resumed) unawaited(_reloadCached());
   }
 
-  void _recordRenderedItems() {
+  void _recordSeenItems() {
+    final scope = _scope;
+    if (scope == null) return;
     final ids = _items.map((item) => item.id).toSet();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
       final lifecycle = WidgetsBinding.instance.lifecycleState;
       if (lifecycle == null || lifecycle == AppLifecycleState.resumed) {
-        _viewedIds.addAll(ids);
+        unawaited(NotificationInbox.markSeen(ids, scope: scope));
       }
     });
+  }
+
+  Future<void> _clearNotifications() async {
+    final scope = _scope;
+    if (_clearing || scope == null || _items.isEmpty) return;
+    final ids = _items.map((item) => item.id).toSet();
+    setState(() => _clearing = true);
+    try {
+      await NotificationInbox.dismissViewed(ids, scope: scope);
+      await _reloadCached();
+    } finally {
+      if (mounted) setState(() => _clearing = false);
+    }
   }
 
   Future<void> _reloadCached() async {
@@ -70,7 +86,7 @@ class _NotificationsPageState extends State<NotificationsPage>
     }
     if (!mounted) return;
     setState(() => _items = items);
-    _recordRenderedItems();
+    _recordSeenItems();
   }
 
   Future<void> _load() async {
@@ -88,12 +104,12 @@ class _NotificationsPageState extends State<NotificationsPage>
       if (await NotificationInbox.sessionScope() != scope) return;
       if (!mounted) return;
       setState(() => _items = cached);
-      _recordRenderedItems();
+      _recordSeenItems();
       final items = await NotificationInbox.load();
       if (await NotificationInbox.sessionScope() != scope) return;
       if (mounted) {
         setState(() => _items = items);
-        _recordRenderedItems();
+        _recordSeenItems();
       }
     } catch (error) {
       if (mounted) {
@@ -114,6 +130,71 @@ class _NotificationsPageState extends State<NotificationsPage>
     _ => Icons.notifications_outlined,
   };
 
+  Future<void> _openItem(InboxNotification item, {bool call = false}) async {
+    if (_opening) return;
+    setState(() => _opening = true);
+    try {
+      final scope = _scope;
+      if (scope == null || await NotificationInbox.sessionScope() != scope) {
+        throw StateError('Your session changed. Reopen Notifications.');
+      }
+      final user = await SessionAuthApi.getActiveSessionUser();
+      if (!mounted) return;
+      if (user == null ||
+          user == 'Guest' ||
+          await NotificationInbox.sessionScope() != scope) {
+        throw StateError(
+          'Your session changed. Sign in again and reopen Notifications.',
+        );
+      }
+      if (!mounted) return;
+      if (call) {
+        if (!RegExp(r'^\+?[0-9]{7,15}$').hasMatch(item.callPhone)) return;
+        if (!await launchUrl(
+          Uri(scheme: 'tel', path: item.callPhone),
+          mode: LaunchMode.externalApplication,
+        )) {
+          throw StateError('Could not open the assigned customer dialer.');
+        }
+      } else if (item.isSalesSummary) {
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute(builder: (_) => const SalesSummaryWebViewPage()),
+        );
+      } else {
+        final document = DocumentNotification.fromData({
+          'type': 'DOCUMENT_NOTIFICATION',
+          'doctype': item.doctype,
+          'docname': item.reference,
+          'for_user': user,
+        });
+        final uri = document?.documentUri;
+        if (uri == null || uri.userInfo.isNotEmpty) {
+          throw StateError('This notification has no valid ERP document link.');
+        }
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder:
+                (_) => SessionWebView(
+                  url: uri.toString(),
+                  title: item.title,
+                  blockSystemBack: false,
+                ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error.toString().replaceFirst('Bad state: ', '')),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -121,6 +202,13 @@ class _NotificationsPageState extends State<NotificationsPage>
       appBar: brandAppBar(
         leading: const HomeBackButton(color: Colors.white),
         title: const Text('Notifications'),
+        actions: [
+          IconButton(
+            tooltip: 'Clear notifications',
+            onPressed: _items.isEmpty || _clearing ? null : _clearNotifications,
+            icon: const Icon(Icons.delete_outline),
+          ),
+        ],
       ),
       body: PullToRefresh(
         enabled: !_loading,
@@ -209,6 +297,36 @@ class _NotificationsPageState extends State<NotificationsPage>
             ),
           if (item.body.isEmpty && item.reference.isEmpty)
             const Text('No additional details.'),
+          if (item.isSalesSummary ||
+              (item.doctype.isNotEmpty && item.reference.isNotEmpty) ||
+              item.callPhone.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Wrap(
+                spacing: 12,
+                children: [
+                  if (item.isSalesSummary)
+                    TextButton.icon(
+                      onPressed: _opening ? null : () => _openItem(item),
+                      icon: const Icon(Icons.bar_chart_rounded),
+                      label: const Text('View sales summary'),
+                    )
+                  else if (item.doctype.isNotEmpty && item.reference.isNotEmpty)
+                    TextButton.icon(
+                      onPressed: _opening ? null : () => _openItem(item),
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('Open in ERP'),
+                    ),
+                  if (item.callPhone.isNotEmpty)
+                    TextButton.icon(
+                      onPressed:
+                          _opening ? null : () => _openItem(item, call: true),
+                      icon: const Icon(Icons.call_outlined),
+                      label: const Text('Call customer'),
+                    ),
+                ],
+              ),
+            ),
         ],
       ),
     );

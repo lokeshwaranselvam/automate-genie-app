@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
@@ -77,7 +78,7 @@ class FaceAuthApi {
       user: user,
       headers: {
         'Accept': 'application/json',
-        'Cookie': 'sid=$sid',
+        if (!kIsWeb) 'Cookie': 'sid=$sid',
         'Cache-Control': 'no-cache, no-store',
       },
     );
@@ -190,10 +191,12 @@ class FaceAuthApi {
       'GET',
       site
           .resolve('api/method/mobile_face_auth')
-          .replace(queryParameters: {
-            'action': 'status',
-            'model_version': modelVersion,
-          }),
+          .replace(
+            queryParameters: {
+              'action': 'status',
+              'model_version': modelVersion,
+            },
+          ),
     )..headers.addAll(auth.headers);
     final response = await _send(request);
     await assertSessionUser(auth.user);
@@ -303,7 +306,10 @@ class FaceAuthApi {
     String? timingStage,
   }) {
     // Explicit cookies must never follow a redirect to another origin.
-    request.followRedirects = false;
+    // Fetch cannot expose intermediate redirects. Only the browser Desk GET
+    // may follow them; its final origin is validated before reading CSRF.
+    request.followRedirects =
+        kIsWeb && request.method == 'GET' && request.url.path == '/app';
     if (timingStage != null) {
       return FacePerformanceTrace.send(
         _client,
@@ -313,6 +319,15 @@ class FaceAuthApi {
     }
     return (() async {
       final response = await _client.send(request);
+      if (kIsWeb) {
+        if (response case http.BaseResponseWithUrl(:final url)) {
+          if (url.origin != site.origin || url.userInfo.isNotEmpty) {
+            throw StateError(
+              'ERP redirected the face request to another site. Sign in again.',
+            );
+          }
+        }
+      }
       return http.Response.fromStream(response);
     })().timeout(timeout);
   }

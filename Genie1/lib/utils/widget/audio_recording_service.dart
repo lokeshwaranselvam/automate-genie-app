@@ -18,10 +18,14 @@ class AudioRecordingService {
   bool isPaused = false;
   String? lastRecordingPath;
   String _extension = 'm4a';
+  bool _isStarting = false;
   final List<String> _recordingPaths = [];
   final TimerService timerService = TimerService();
 
   Future<void> startRecording() async {
+    if (isRecording || _isStarting) return;
+    _isStarting = true;
+    try {
     await record.create(recorderId);
     var encoder = AudioEncoder.aacLc;
     if (kIsWeb && !await record.isEncoderSupported(recorderId, encoder)) {
@@ -34,7 +38,8 @@ class AudioRecordingService {
     _extension = encoder == AudioEncoder.opus ? 'webm' : 'm4a';
     final config = RecordConfig(encoder: encoder);
 
-    final dir = kIsWeb ? null : await getExternalStorageDirectory();
+    var dir = !kIsWeb && Platform.isAndroid ? await getExternalStorageDirectory() : null;
+    if (!kIsWeb) dir ??= await getApplicationDocumentsDirectory();
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final path =
         kIsWeb
@@ -56,6 +61,9 @@ class AudioRecordingService {
     const platform = MethodChannel('com.example.audioapp/record');
     if (Platform.isAndroid) {
       await platform.invokeMethod('startService');
+    }
+    } finally {
+      _isStarting = false;
     }
   }
 

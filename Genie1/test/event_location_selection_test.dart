@@ -412,4 +412,17 @@ void main() {
       [invalid],
     );
   });
+  test('a direct Event resolves custom_validate without Opportunity rows', () {
+    final event = {
+      'event_category': 'Bank',
+      'location': 'Others',
+      'custom_validate':
+          'https://www.google.com/maps/search/?api=1&query=13.085,80.21',
+    };
+    final selected = eventSelectedLocations(event, []);
+    expect(selected.single['latitude'], 13.085);
+    expect(selected.single['longitude'], 80.21);
+    expect(eventHasCheckInLocation(event, selected), isTrue);
+    expect(eventLocationLabel(event, selected), 'Others');
+  });
 }

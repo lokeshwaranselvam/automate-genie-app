@@ -11,6 +11,7 @@ import '../utils/api/session_auth.dart';
 import '../utils/widget/pending_work_alarm_player.dart';
 import '../utils/widget/glass_card.dart';
 import '../utils/widget/home_back_button.dart';
+import 'opportunities_webview_page.dart';
 
 const Color _primary = BrandColors.ink;
 const Color _primaryDark = BrandColors.indigo;
@@ -192,7 +193,30 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
     super.dispose();
   }
 
+  // Overlapping loads are coalesced: a request during an in-flight load runs
+  // one more load afterwards, so responses apply in order and recordSnapshot
+  // (which counts new entries for the alarm) runs once per completed load.
+  bool _loadInFlight = false;
+  bool _reloadRequested = false;
+
   Future<void> _load() async {
+    if (!mounted) return;
+    if (_loadInFlight) {
+      _reloadRequested = true;
+      return;
+    }
+    _loadInFlight = true;
+    try {
+      do {
+        _reloadRequested = false;
+        await _loadOnce();
+      } while (_reloadRequested && mounted);
+    } finally {
+      _loadInFlight = false;
+    }
+  }
+
+  Future<void> _loadOnce() async {
     if (!mounted) return;
 
     setState(() {
@@ -250,6 +274,17 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
       });
     }
   }
+
+  /// Identifies a pending row the same way for the list item and the
+  /// refreshed rows, so detail refresh finds the same record.
+  static Object? _pendingItemId(Map<String, dynamic> row) =>
+      row['name'] ??
+      row['id'] ??
+      row['stock_entry'] ??
+      row['job_card'] ??
+      row['project'] ??
+      row['opportunity'] ??
+      row['delivery_note'];
 
   bool _isUserField(String field) {
     final key = field.toLowerCase();
@@ -419,6 +454,21 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
   }
 
   void _openDetails(Map<String, dynamic> item) {
+    if (widget.section == 'opportunities') {
+      final opportunityId = item['opportunity_id']?.toString().trim() ?? '';
+      final name = item['name']?.toString().trim() ?? '';
+      final id = opportunityId.isNotEmpty ? opportunityId : name;
+      if (id.isNotEmpty) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => OpportunitiesWebViewPage(initialOpportunityId: id),
+          ),
+        );
+        return;
+      }
+    }
+
     final summary = _summaryFor(item);
     final displayItem = Map<String, dynamic>.from(item);
     for (final entry in item.entries) {
@@ -443,20 +493,9 @@ class _PendingSectionPageState extends State<PendingSectionPage> {
                 final latest = await PendingWorkApi.getPendingSectionItems(
                   widget.section,
                 );
-                final id =
-                    item['name'] ??
-                    item['id'] ??
-                    item['stock_entry'] ??
-                    item['job_card'] ??
-                    item['project'] ??
-                    item['opportunity'] ??
-                    item['delivery_note'];
+                final id = _pendingItemId(item);
                 final matches = latest.where(
-                  (row) =>
-                      (row['name'] ??
-                          row['stock_entry'] ??
-                          row['opportunity']) ==
-                      id,
+                  (row) => _pendingItemId(row) == id,
                 );
                 if (id == null || matches.isEmpty) {
                   throw StateError(

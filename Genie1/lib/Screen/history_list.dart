@@ -1,3 +1,4 @@
+import '../utils/api/notification_inbox.dart';
 import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
@@ -12,6 +13,7 @@ import 'package:homegenie/utils/api/check_in_out.dart';
 import 'package:homegenie/Screen/history_overview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/widget/home_back_button.dart';
+import '../utils/widget/load_failed_view.dart';
 
 class HistoryList extends StatefulWidget {
   const HistoryList({super.key});
@@ -38,6 +40,23 @@ class _HistoryListState extends State<HistoryList> {
     _checkPing();
   }
 
+  void _showLoadError(String message) {
+    if (!mounted) return;
+    setState(() {
+      isLoading = false;
+      errorMessage = message;
+    });
+    Warning.show(context, message, 'Error');
+  }
+
+  void _retryLoad() {
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
+    _checkPing();
+  }
+
   Future<void> _checkPing() async {
     try {
       var connectivity = await Connectivity().checkConnectivity();
@@ -53,19 +72,14 @@ class _HistoryListState extends State<HistoryList> {
       }
 
       if (noInternet) {
-        Warning.show(
-          context,
-          'No Internet Connection! Please check your network.',
-          'Error',
-        );
+        _showLoadError('No Internet Connection! Please check your network.');
         return;
       }
       var pingResult = await Check.pingpong();
+      if (!mounted) return;
       if (pingResult == false) {
-        Warning.show(
-          context,
+        _showLoadError(
           'ERP Site is not in working condition! Please try again later.',
-          'Error',
         );
       } else {
         final prefs = await SharedPreferences.getInstance();
@@ -73,6 +87,7 @@ class _HistoryListState extends State<HistoryList> {
         final email = prefs.getString('email') ?? "";
 
         final sessionValid = await Check.sessionActive(token, email);
+        if (!mounted) return;
 
         if (!sessionValid) {
           Warning.show(
@@ -81,21 +96,24 @@ class _HistoryListState extends State<HistoryList> {
             'Error',
           );
           await LiveLocationService.stopForSignOut();
-          await prefs.clear();
+          await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
+          if (!mounted) return;
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
             (route) => false,
           );
           return;
         }
+        // Keep a filter the user picked across pull-to-refresh and retry.
         DateTime now = DateTime.now();
-        fromDate = now.subtract(const Duration(days: 1));
-        toDate = now;
+        fromDate ??= now.subtract(const Duration(days: 1));
+        toDate ??= now;
 
-        fetchHistoryData();
+        await fetchHistoryData();
       }
     } catch (e) {
       print('Error during ping: $e');
+      _showLoadError('Could not reach ERP. Please try again.');
     }
   }
 
@@ -113,6 +131,7 @@ class _HistoryListState extends State<HistoryList> {
         to,
         context,
       );
+      if (!mounted) return;
 
       for (var entry in response) {
         final missing = _getMissingField(entry);
@@ -131,6 +150,7 @@ class _HistoryListState extends State<HistoryList> {
 
           setState(() {
             isLoading = false;
+            errorMessage = null;
           });
           return;
         }
@@ -139,19 +159,22 @@ class _HistoryListState extends State<HistoryList> {
       setState(() {
         historyData =
             response.map<Map<String, dynamic>>((entry) {
+              // ERP may send numbers; keep display fields as strings.
               return {
-                'remarks': entry['subject'],
-                'from_time': DateTime.parse(entry['starts_on']),
-                'to_time': DateTime.parse(entry['ends_on']),
-                'total_hours': entry['custom_duration'] ?? '',
-                'custom_distance': entry['custom_distance'] ?? '',
-                'name': entry['name'],
+                'remarks': entry['subject'].toString(),
+                'from_time': DateTime.parse(entry['starts_on'].toString()),
+                'to_time': DateTime.parse(entry['ends_on'].toString()),
+                'total_hours': (entry['custom_duration'] ?? '').toString(),
+                'custom_distance': (entry['custom_distance'] ?? '').toString(),
+                'name': entry['name'].toString(),
               };
             }).toList();
 
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         errorMessage = e.toString();
         isLoading = false;
@@ -177,7 +200,8 @@ class _HistoryListState extends State<HistoryList> {
     double totalMeters = 0.0;
 
     for (var entry in data) {
-      String raw = (entry['custom_distance'] ?? '').toLowerCase().trim();
+      String raw =
+          (entry['custom_distance'] ?? '').toString().toLowerCase().trim();
 
       if (raw.endsWith('km')) {
         final value = raw.replaceAll('km', '').trim();
@@ -220,7 +244,10 @@ class _HistoryListState extends State<HistoryList> {
           leading: const HomeBackButton(),
           title: const Text("History"),
         ),
-        body: Center(child: Text("Error: $errorMessage")),
+        body: LoadFailedView(
+          message: errorMessage!,
+          onRetry: _retryLoad,
+        ),
       );
     }
 
@@ -401,10 +428,8 @@ class _HistoryListState extends State<HistoryList> {
 
           Expanded(
             child: PullToRefresh(
-              onRefresh: () async {
-                await _checkPing();
-                await fetchHistoryData();
-              },
+              // _checkPing fetches once after its checks pass.
+              onRefresh: _checkPing,
               child:
                   filteredHistory.isEmpty
                       ? Center(
@@ -460,7 +485,7 @@ class HistoryItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    String remarks = history['remarks'];
+    String remarks = '${history['remarks'] ?? ''}';
     String displayRemarks =
         remarks.length > 20 ? '${remarks.substring(0, 20)}...' : remarks;
 
@@ -477,13 +502,18 @@ class HistoryItem extends StatelessWidget {
           ),
         );
       },
-      leading: CircleAvatar(child: Text(remarks[0].toUpperCase())),
+      leading: CircleAvatar(
+        child: Text(remarks.isEmpty ? '' : remarks[0].toUpperCase()),
+      ),
       title: Text(displayRemarks),
       subtitle: Text(timeRange),
       trailing: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.end,
-        children: [Text(history['total_hours']), const Text('Working Hours')],
+        children: [
+          Text('${history['total_hours'] ?? ''}'),
+          const Text('Working Hours'),
+        ],
       ),
     );
   }

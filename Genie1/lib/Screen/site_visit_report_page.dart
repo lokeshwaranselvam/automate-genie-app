@@ -1,4 +1,5 @@
 import '../utils/widget/pull_to_refresh.dart';
+import '../utils/api_business_policy.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
@@ -12,7 +13,11 @@ import '../utils/widget/home_back_button.dart';
 const _reportBlue = BrandColors.ink;
 const _reportInk = Color(0xFF202B3C);
 const _reportMuted = Color(0xFF7B8492);
-const _reportOutcomes = ['Interested', 'Not Interested', 'Follow-up Required'];
+const _legacyReportOutcomes = [
+  'Interested',
+  'Not Interested',
+  'Follow-up Required',
+];
 
 class SiteVisitReportPage extends StatefulWidget {
   const SiteVisitReportPage({super.key, required this.visit});
@@ -37,6 +42,9 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
   bool _loading = true;
   bool _saving = false;
   bool _isSubmitted = false;
+  bool _canEditReport = false;
+  ApiBusinessPolicy _reportPolicy = ApiBusinessPolicy.empty;
+  List<String> _reportOutcomes = List.of(_legacyReportOutcomes);
 
   @override
   void initState() {
@@ -60,7 +68,7 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
     final observation = _observationController.text;
     final outcome = _selectedOutcome;
     await _loadReport();
-    if (!mounted || _isSubmitted) return;
+    if (!mounted || !_canEditReport) return;
     setState(() {
       _observationController.text = observation;
       _selectedOutcome = outcome;
@@ -107,7 +115,19 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
     if (reportFuture != null) {
       try {
         report = await reportFuture;
+        final outcomes = report['outcomes'];
+        if (outcomes != null &&
+            (outcomes is! List ||
+                outcomes.isEmpty ||
+                outcomes.any(
+                  (value) => value is! String || value.trim().isEmpty,
+                ))) {
+          throw const FormatException(
+            'ERP returned invalid visit report outcomes.',
+          );
+        }
       } catch (error) {
+        report = null;
         reportError = error.toString().replaceFirst('Bad state: ', '');
         debugPrint('Could not load saved visit report: $error');
       }
@@ -141,10 +161,21 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
       _profileImageUrl = profileImageUrl;
       _userFullName = userName;
       if (report != null) {
+        _reportPolicy = ApiBusinessPolicy.fromApi(report['business_policy']);
+        _reportOutcomes =
+            report['outcomes'] is List
+                ? List<String>.from(report['outcomes']).toSet().toList()
+                : List.of(_legacyReportOutcomes);
         _observationController.text = report['observation']?.toString() ?? '';
+        _reportPolicy.applyDefault('observation', _observationController);
         final savedOutcome = report['outcome']?.toString();
         _selectedOutcome =
-            _reportOutcomes.contains(savedOutcome) ? savedOutcome : null;
+            savedOutcome?.isNotEmpty == true ? savedOutcome : null;
+        final outcomeDefault =
+            _reportPolicy.field('outcome')['default']?.toString();
+        if ((_selectedOutcome == null || _reportPolicy.readOnly('outcome')) &&
+            _reportOutcomes.contains(outcomeDefault))
+          _selectedOutcome = outcomeDefault;
       }
       final reportFlag = report?['is_submitted'];
       final description =
@@ -152,12 +183,19 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
           merged['description']?.toString() ??
           '';
       _isSubmitted =
-          reportFlag == true ||
-          (description.startsWith('observation : ') &&
-              description.contains('\nOutcome: ') &&
-              _reportOutcomes.any(
-                (outcome) => description.trimRight().endsWith(outcome),
-              ));
+          reportFlag is bool
+              ? reportFlag
+              : (description.startsWith('observation : ') &&
+                  description.contains('\nOutcome: ') &&
+                  _reportOutcomes.any(
+                    (outcome) => description.trimRight().endsWith(outcome),
+                  ));
+      _canEditReport =
+          reportError == null &&
+          report != null &&
+          (report['can_edit_report'] is bool
+              ? report['can_edit_report'] == true
+              : !_isSubmitted);
       _reportError = reportError;
       _loading = false;
     });
@@ -205,6 +243,7 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
   }
 
   Future<void> _submitReport() async {
+    if (_loading || _saving || !_canEditReport) return;
     if (_eventId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('This visit has no Event ID.')),
@@ -213,13 +252,18 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
     }
     final observation = _observationController.text.trim();
     final outcome = _selectedOutcome;
-    if (observation.isEmpty) {
+    if (_reportPolicy.validate(
+          'observation',
+          observation,
+          legacyRequired: true,
+        ) !=
+        null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter the visit observations.')),
       );
       return;
     }
-    if (outcome == null) {
+    if (outcome == null && _reportPolicy.required('outcome', true)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Select the visit outcome.')),
       );
@@ -234,13 +278,16 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
       final result = await Event.saveVisitReport(
         eventId: _eventId,
         observation: observation,
-        outcome: outcome,
+        outcome: outcome ?? '',
       );
       if (!mounted) return;
       setState(() {
-        _selectedOutcome = result['outcome']?.toString() ?? outcome;
+        final savedOutcome = result['outcome']?.toString() ?? outcome;
+        _selectedOutcome =
+            savedOutcome?.isNotEmpty == true ? savedOutcome : null;
         _visit['description'] = result['description'];
         _isSubmitted = true;
+        _canEditReport = result['can_edit_report'] == true;
       });
       await showDialog<void>(
         context: context,
@@ -253,8 +300,10 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
                 size: 42,
               ),
               title: const Text('Report submitted'),
-              content: const Text(
-                'Your visit report was submitted successfully. It can no longer be edited.',
+              content: Text(
+                _canEditReport
+                    ? 'Your visit report was submitted successfully.'
+                    : 'Your visit report was submitted successfully. It can no longer be edited.',
                 textAlign: TextAlign.center,
               ),
               actions: [
@@ -336,32 +385,38 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
                     const SizedBox(height: 18),
                     _reportSection(
                       title: 'Observations',
-                      child: TextField(
-                        controller: _observationController,
-                        enabled: !_loading && !_saving && !_isSubmitted,
-                        minLines: 3,
-                        maxLines: 5,
-                        textCapitalization: TextCapitalization.sentences,
-                        decoration: InputDecoration(
-                          hintText: 'Enter visit observations...',
-                          filled: true,
-                          fillColor: const Color(0xFFF8F9FB),
-                          contentPadding: const EdgeInsets.all(11),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(9),
-                            borderSide: const BorderSide(
-                              color: Color(0xFFE8EBEF),
+                      child: BusinessPolicyField(
+                        policy: _reportPolicy,
+                        name: 'observation',
+                        child: TextField(
+                          controller: _observationController,
+                          maxLength: _reportPolicy.maxLength('observation'),
+                          readOnly: _reportPolicy.readOnly('observation'),
+                          enabled: !_loading && !_saving && _canEditReport,
+                          minLines: 3,
+                          maxLines: 5,
+                          textCapitalization: TextCapitalization.sentences,
+                          decoration: InputDecoration(
+                            hintText: 'Enter visit observations...',
+                            filled: true,
+                            fillColor: const Color(0xFFF8F9FB),
+                            contentPadding: const EdgeInsets.all(11),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(9),
+                              borderSide: const BorderSide(
+                                color: Color(0xFFE8EBEF),
+                              ),
                             ),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(9),
-                            borderSide: const BorderSide(
-                              color: Color(0xFFE8EBEF),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(9),
+                              borderSide: const BorderSide(
+                                color: Color(0xFFE8EBEF),
+                              ),
                             ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(9),
-                            borderSide: const BorderSide(color: _reportBlue),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(9),
+                              borderSide: const BorderSide(color: _reportBlue),
+                            ),
                           ),
                         ),
                       ),
@@ -372,14 +427,20 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
                       child: DropdownButtonFormField<String>(
                         value: _selectedOutcome,
                         items: [
-                          for (final outcome in _reportOutcomes)
+                          for (final outcome in {
+                            ..._reportOutcomes,
+                            if (_selectedOutcome != null) _selectedOutcome!,
+                          })
                             DropdownMenuItem(
                               value: outcome,
                               child: Text(outcome),
                             ),
                         ],
                         onChanged:
-                            _loading || _saving || _isSubmitted
+                            _loading ||
+                                    _saving ||
+                                    !_canEditReport ||
+                                    _reportPolicy.readOnly('outcome')
                                 ? null
                                 : (value) =>
                                     setState(() => _selectedOutcome = value),
@@ -413,7 +474,16 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
                         style: const TextStyle(color: Colors.red, fontSize: 12),
                       ),
                     ],
-                    if (_isSubmitted) ...[
+                    if (!_canEditReport &&
+                        !_isSubmitted &&
+                        _reportPolicy.data['actions'] is Map)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: Text(
+                          _reportPolicy.actionBlockReason('submit') ?? '',
+                        ),
+                      ),
+                    if (_isSubmitted && !_canEditReport) ...[
                       const SizedBox(height: 12),
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -454,7 +524,7 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
                       height: 48,
                       child: FilledButton.icon(
                         onPressed:
-                            _loading || _saving || _isSubmitted
+                            _loading || _saving || !_canEditReport
                                 ? null
                                 : _submitReport,
                         style: FilledButton.styleFrom(
@@ -478,7 +548,7 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
                         label: Text(
                           _saving
                               ? 'Submitting...'
-                              : _isSubmitted
+                              : _isSubmitted && !_canEditReport
                               ? 'Report Submitted'
                               : 'Submit Report',
                           style: const TextStyle(fontWeight: FontWeight.w700),
@@ -720,6 +790,13 @@ class _SiteVisitReportPageState extends State<SiteVisitReportPage> {
   }
 
   Widget _reportSection({required String title, required Widget child}) {
+    final name =
+        title == 'Observations'
+            ? 'observation'
+            : title == 'Outcome'
+            ? 'outcome'
+            : title;
+    if (!_reportPolicy.visible(name)) return const SizedBox.shrink();
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(

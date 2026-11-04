@@ -121,6 +121,21 @@ void main() {
       }),
     );
   });
+  for (final reply in [
+    (body: '<html>502 Bad Gateway</html>', code: 502),
+    (body: '{"message":"Not permitted"}', code: 403),
+  ]) {
+    test('HTTP ${reply.code} becomes an error result, not an exception', () async {
+      await http.runWithClient(() async {
+        final result = await checkout();
+        expect(result['message']['status'], 'error');
+        expect(result['message']['message'], isA<String>());
+        if (reply.code == 403) {
+          expect(result['message']['message'], 'Not permitted');
+        }
+      }, () => MockClient((_) async => http.Response(reply.body, reply.code)));
+    });
+  }
   test('legacy optional OTP is ignored and never sent', () async {
     await http.runWithClient(
       () => checkout(legacyOtp: 'wrong'),

@@ -11,6 +11,10 @@ enum FaceBlinkStage {
 }
 
 class FaceBlinkConfig {
+  // MediaPipe's inverted expression scores are not ML Kit probabilities.
+  // Phone measurements show closed eyes around 0.35-0.46 on this scale.
+  const FaceBlinkConfig.browser() : this(closedProbability: 0.50);
+
   const FaceBlinkConfig({
     this.openProbability = 0.75,
     this.closedProbability = 0.30,

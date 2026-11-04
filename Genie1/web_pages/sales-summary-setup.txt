@@ -1,0 +1,143 @@
+SALES SUMMARY - DEPLOYMENT AND TEST SETUP
+=======================================
+
+Scope
+-----
+No new DocType, no document-triggered Notification rule, no generated files.
+FCM recipients: enabled users with Sales Manager, Sales User or Designer.
+Summary access: every logged-in, enabled user with the required Opportunity read
+permissions. The three FCM roles do not restrict webpage/API access.
+Counts: Opportunity.status equals Prospect or Pipeline, and any of
+opportunity_owner, custom_field_owner_1, custom_field_owner_2 equals
+frappe.session.user, with docstatus != 2 and normal Frappe read/User Permissions.
+An Opportunity matching more than one owner field is counted once.
+Counts are live when opened, not a historical snapshot at notification time.
+
+1. Deploy the combined fcm_utils.py
+----------------------------------
+The sales-summary functions are now included at the end of:
+  backend_patches/automategenie_fcm/fcm_utils.py
+Deploy to:
+  apps/itgenie/itgenie/fcm/fcm_utils.py
+Preserve any site-specific changes when updating the deployed file; the existing
+document Notification functions in this source file were left unchanged.
+No separate sales_summary.py module is required. If the previous separate module
+was deployed, let its already queued jobs finish before removing that old module.
+The added functions reuse get_firebase_app() and the existing FCM Device table.
+Keep all Firebase credentials private and unchanged.
+Restart the relevant bench web/worker processes after deploying Python code.
+
+fcm_utils.py is unrestricted custom-app Python, NOT Server Script editor content.
+The scheduler invokes only itgenie.fcm.fcm_utils.send_daily_sales_summary;
+that function queues only itgenie.fcm.fcm_utils.deliver_sales_summary_reminder.
+Importing the module defines functions; it does not execute its other senders.
+The whitelisted scheduler entry rejects every HTTP request and requires the
+Administrator worker session. Ordinary users cannot trigger a broadcast.
+
+2. Create the API Server Script
+-------------------------------
+Name: Mobile Sales Summary
+Script Type: API
+API Method: mobile_sales_summary
+Allow Guest: OFF
+Disabled: OFF
+Script: paste frappe_server_scripts/mobile_sales_summary.py
+
+This is restricted Safe Exec code: no imports, custom functions or SQL.
+It uses get_list (not get_all/count SQL) for Opportunity counts so permissions
+apply. It validates the expected fields/status options and enabled session first.
+Endpoint: GET /api/method/mobile_sales_summary
+Do not supply a target username: the session is authoritative.
+
+Expected message:
+  {"user":"signed-in-user", "scope":"own_opportunities",
+   "prospect_count":3, "pipeline_count":2, "total_count":5,
+   "as_of":"site timestamp"}
+
+3. Publish the Web Page
+-----------------------
+Title: Sales summary
+Route: genie-sales-summary
+Content Type: HTML
+Published: ON
+Main Section (HTML): paste the complete web_pages/sales-summary.html
+Leave separate CSS and JavaScript fields empty. Do not use Markdown processing.
+The file contains internal CSS/JS and no external dependency.
+URL: https://YOUR_ERP_SITE/genie-sales-summary
+Use an existing ERP login when opening directly in a browser.
+Exclude the API and authenticated page responses from proxy/browser caching.
+
+4. Rebuild/install Flutter
+--------------------------
+Deploy this app revision to receive the View sales summary action.
+Push tap still opens Notifications. Expanding a summary item shows the new
+action, which opens only /genie-sales-summary on SITE_URL's HTTPS origin.
+It uses the existing SID cookie without clearing other cookies. No SID/user
+parameter is placed in the URL. The webpage checks the API's session identity.
+The existing document links, lead Call customer action, alarm and sound policies
+remain in place. Sales-summary reminders use normal/default sound, no alarm.
+
+5. Create the Scheduler Event Server Script
+-------------------------------------------
+First deploy items 1-4. Then create:
+Name: Daily Sales Summary Reminder
+Script Type: Scheduler Event
+Event Frequency: Cron
+Cron Format: 0 13 * * *
+Script: paste frappe_server_scripts/sales_summary_daily_scheduler.py
+Disabled: OFF when ready to send
+
+This is daily at 1:00 PM in ERP site time. Set/verify System Settings timezone
+Asia/Kolkata (Asia/Calcutta is accepted). The sender refuses other timezones.
+Ensure Server Scripts, the scheduler and default/long workers are enabled.
+Check Scheduled Job Type next execution and Scheduled Job Log after saving.
+No operating-system cron configuration is needed.
+
+6. Delivery and retry behavior
+------------------------------
+The scheduler queues one worker per enabled role recipient, grouping multi-role
+users before paging. Each worker rechecks current enabled status/roles.
+It creates one deterministic Notification Log per site/date/user with type Alert
+and link /genie-sales-summary. No private counts are stored in push or log.
+No token: the inbox item still exists (inbox_only). Failed push: log an error
+without secrets; rerun the scheduler on the same date to retry failed recipients.
+Firebase acceptance is recorded as an Info Comment on the Notification Log, so
+same-day reruns skip accepted reminders. Keep these logs/comments for dedup.
+A provider/network crash can be ambiguous: the Flutter receipt uses the stable
+reminder ID to suppress repeated display/sound. Acceptance is not phone proof.
+Jobs delayed until a different site date skip stale reminders.
+The existing sender's active-device/latest-token policy is reused; no tokens,
+device binding records or unrelated notifications are reset.
+
+7. Manual verification
+-----------------------
+Test API with users both inside and outside the FCM roles, Guest, and users
+without Opportunity read permission. Compare counts to permitted Opportunity
+rows matching any of the three owner fields, exact status and docstatus != 2.
+Another user's parameter must be rejected. Check overlapping owner fields count
+once, zero counts, expired/switched sessions and offline/retry. Separately verify
+that removing FCM roles stops reminders, without removing permitted API access.
+Receive a real push with app foreground/background/terminated. Confirm:
+  push tap -> Notifications -> View sales summary -> own live counts.
+Verify inbox history still has the summary action after app restart (link field).
+Run the scheduler twice that date: one inbox item and one accepted push per user.
+
+For a deliberate live manual send, bench console (not a Server Script editor):
+  frappe.set_user("Administrator")
+  from itgenie.fcm.fcm_utils import send_daily_sales_summary
+  send_daily_sales_summary()
+  frappe.db.commit()
+This queues REAL reminders for all eligible enabled users. It does not bypass
+same-day dedup. No live send/deployment was performed by the local tests.
+
+Local checks
+------------
+python -m unittest test.sales_summary_test
+node --test test/sales_summary_webpage_test.cjs
+flutter test --no-pub test/sales_summary_notification_test.dart
+The DOM tests use the same external test-only linkedom location as the existing
+webpage tests: %TEMP%/genie-opportunities-qa/node_modules/linkedom.
+
+Version checks used: Frappe v15.69.3 safe_exec exposes frappe.enqueue through a
+whitelisted-function wrapper; Notification Log has the standard link field.
+Verify those on the deployed site before enabling the scheduled script.

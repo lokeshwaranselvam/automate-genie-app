@@ -56,26 +56,33 @@ class SessionAuthApi {
     await MobileLoginDevice.completePendingLogout();
     final apiBase = dotenv.env['URL']?.trim() ?? '';
     if (apiBase.isEmpty) throw StateError('URL is not configured in .env');
-    final response = await http
-        .post(
-          Uri.parse('$apiBase.login'),
-          headers: const {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode({
-            'usr': username,
-            'pwd': password,
-            'device_key': await MobileLoginDevice.key(),
-            if (kIsWeb)
-              'platform': 'web'
-            else if (defaultTargetPlatform == TargetPlatform.android)
-              'platform': 'android'
-            else if (defaultTargetPlatform == TargetPlatform.iOS)
-              'platform': 'ios',
-          }),
-        )
-        .timeout(const Duration(seconds: 30));
+    final androidId = await MobileLoginDevice.androidId();
+    final endpoint = Uri.parse('$apiBase.login');
+    final fields = {
+      'usr': username,
+      'pwd': password,
+      'device_key': await MobileLoginDevice.key(),
+      if (androidId != null) 'android_id': androidId,
+      if (kIsWeb || defaultTargetPlatform == TargetPlatform.android)
+        'platform': 'android'
+      else if (defaultTargetPlatform == TargetPlatform.iOS)
+        'platform': 'ios',
+    };
+    Future<http.Response> post([String? csrf]) => http.post(
+      endpoint,
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        if (csrf != null) 'X-Frappe-CSRF-Token': csrf,
+      },
+      body: jsonEncode(fields),
+    ).timeout(const Duration(seconds: 30));
+    var response = await post();
+    if (kIsWeb && MobileLoginDevice.isCsrfFailure(response)) {
+      // CSRF rejects the request before login runs; retry only this rejection.
+      final csrf = await MobileLoginDevice.browserCsrfToken(endpoint);
+      response = await post(csrf);
+    }
     final data = _decode(response);
     final rawMessage = data is Map ? data['message'] : null;
     String? message =
@@ -109,6 +116,11 @@ class SessionAuthApi {
     if (data is! Map || data['single_device_login'] != true) {
       throw StateError(
         'The ERP mobile login update is required. Contact your administrator.',
+      );
+    }
+    if (androidId != null && data['android_device_binding'] != true) {
+      throw StateError(
+        'The ERP Android device-binding update is required. Contact your administrator.',
       );
     }
     final token = data['token']?.toString().trim() ?? '';

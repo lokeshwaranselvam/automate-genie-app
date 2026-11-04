@@ -1,0 +1,19 @@
+Frappe Web Page settings
+Title: Create Lead
+Route: create_lead_from_mobile
+Published: enabled
+Content Type: HTML
+Dynamic Route: disabled
+
+Paste the complete contents of lead-creation.html into Main Section (HTML).
+Keep the combined style, markup and script together. Do not use the obsolete local asset HTML.
+Save and clear this Web Page cache, then hard-refresh /create_lead_from_mobile.
+
+The page loads automatically in an authenticated browser and in the app WebView.
+The app opens SITE_URL/create_lead_from_mobile after setting its ERP session cookie.
+The existing API remains /api/method/create_lead_from_mobile; do not change its Server Script.
+The combined webpage has no external CSS/JavaScript dependencies or API credentials.
+In the app, Get Location retains the existing native address helper. In a standalone
+browser, it uses browser GPS to fill a Google Maps location link; manual entry stays available.
+
+Rebuild/reinstall the app to replace the former bundled-asset WebView with this ERP route.

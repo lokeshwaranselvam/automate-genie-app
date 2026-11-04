@@ -1,3 +1,9 @@
+# Current feature port
+
+The 4 November port packages the six ERP HTML interfaces under `build/web/pages/` with a browser channel adapter.
+Use `tool/build_pwa.py` so these files and the early bridge are included. The PWA uses its existing browser session and local test identifiers.
+The working face capture/enrollment/matching files were preserved. See [PWA_PORT_REPORT.md](PWA_PORT_REPORT.md) for the exact scope, validation and backend prerequisites.
+
 # Genie1 PWA build and deployment
 
 This checkout now has conditional browser adapters. Existing Flutter screens,
@@ -162,7 +168,7 @@ location ^~ /genie/ {
 }
 ```
 
-Ensure the existing MIME configuration serves `.js` as JavaScript, `.wasm` as
+Ensure the existing MIME configuration serves `.js` and `.mjs` as JavaScript, `.wasm` as
 `application/wasm`, and `.json` as JSON. Run `nginx -t` before a normal nginx
 reload. Keep HTTPS and all Frappe authentication/CSRF checks enabled. Hosting
 on another origin needs deliberate Frappe CORS and cookie configuration and
@@ -265,15 +271,76 @@ the optional Static Maps image thumbnail is omitted in browser stamps.
 | Bills, event images, GPS photo stamps | Browser camera/blob previews and byte uploads; original native file streaming retained |
 | Visit audio | Browser microphone recording, pause/resume and upload while the PWA runs; no phone-call detection |
 | GPS and event geofence | Existing radii and installation exception retained; monitors while the browser executes; may stop/suspend when hidden, locked or closed |
-| Face enrollment and face-protected attendance | Mobile app required; browser ML Kit/blink verification is not available. No selfie-only bypass or reduced thresholds |
-| Employees without an enrolled face | Original enrollment gate remains; complete enrollment in the mobile app before accessing the dashboard through the PWA |
+| Face enrollment and face-protected attendance | Browser camera, one-face/pose/light/blur checks, open-close-open blink challenge and SFace matching; requires camera permission, WebAssembly and HTTPS or localhost |
+| Employees without an enrolled face | Original enrollment gate opens browser selfie capture and uses the existing private ERP enrollment API |
 | ERP web pages | Embedded iframe with app navigation; retry stays inside the app; server framing policy still applies |
 | Push | Requires web Firebase/VAPID and backend platform update; browser permissions and OS limits apply |
 | Offline | Public app shell can load after the first complete installation. ERP reads/writes require connectivity; no offline attendance or queued submissions |
 
-The current face detector is Android/iOS ML Kit. Its browser replacement would
-require separate landmark/blink implementation and equivalence validation.
-The existing SFace model, thresholds and native face pipeline are preserved.
+The browser uses locally hosted MediaPipe 0.10.21 in a worker for landmarks,
+pose and eye-blink expression scores. These scores are an adapter for browser
+blink checks, not ML Kit probabilities. Native ML Kit files are unchanged.
+ONNX Runtime Web 1.23.2 runs the existing SFace model with the shared five-point
+alignment, RGB float32 NCHW 0..255 input, 128-dimensional normalized output and
+the ERP-provided threshold (currently 0.5). The model file is unchanged.
+
+Browser enrollment and verification use the existing `mobile_face_auth` status,
+enroll and record_verification contract. Verification requires receipt version 2;
+GPS/geofence and attendance writes retain their existing order and checks.
+No Python endpoint, Server Script, DocType or ERP permission changes were made.
+Existing private enrollment photos are reused. Cross-device landmark/matching
+acceptance must still be tested with real employees before broad deployment.
+
+Camera streams stop on capture, cancellation, errors, hidden pages and disposal.
+Returning to a hidden page requires Retry and a new blink. Candidate images and
+browser reference templates remain in memory, with logout/cache invalidation;
+attendance verification does not upload the candidate selfie. Enrollment still
+uploads the private reference through the existing API. Public model/runtime
+assets load on demand and are excluded from service-worker shell preloading.
+
+This is the selected client-side verification design. ERP authenticates the
+user and controls attendance/receipts, but its current contract does not
+independently recompute the biometric match or prove liveness. A blink challenge
+alone is not strong spoof/replay protection.
+
+### Build and test browser face support
+
+`python tool/build_pwa.py` automatically prepares checksum-pinned browser assets
+from `tool/face_assets.json`. For a direct Flutter debug run, first run:
+
+```powershell
+python tool/prepare_face_assets.py
+```
+
+The generated `web/face/vendor/` directory is ignored by Git and included in the
+web build. A fresh build machine needs network access to download these public
+assets. Runtime inference needs no CDN requests. Retain the vendor licenses.
+Keep `.mjs` served with a JavaScript MIME type and `.wasm` with application/wasm;
+HTML fallback responses for these paths will break startup. Where a CSP is
+configured, allow this origin's worker/scripts/models and WebAssembly compilation
+in the existing policy. Do not disable authentication, CSRF or framing policies.
+If Permissions-Policy restricts cameras, allow camera access for this app origin.
+
+The actual Chrome inference/camera smoke test uses a dedicated video-backed fake camera,
+checksum-pinned public sample portraits, and a local CPU runtime comparison.
+It never accesses ERP or writes employee attendance:
+
+```powershell
+npm install --prefix build/face_native_probe onnxruntime-node@1.23.2 --no-audit --no-fund
+node tool/test_browser_face.mjs
+node tool/test_face_metrics.mjs
+flutter test --platform chrome test/face_pipeline_web_test.dart test/pwa_browser_test.dart test/face_blink_controller_test.dart
+```
+
+Current focused results: 36 Chrome tests and 95 native face regression tests
+passed. Eight synthetic tensors agreed between WASM and CPU inference to a
+maximum absolute error of 0.000026, with identical decisions at 0.5 for all
+64 pairs. Public sample recompression matched at approximately 0.9999; two
+different sample people scored approximately 0.1506 and were rejected. These
+checks establish runtime/flow behavior, not a measured employee false-accept or
+false-reject rate. Real webcam blink capture, existing mobile enrollments,
+check-in/out, geofence failures and mobile browser compatibility still require
+an authenticated on-device acceptance test. No live attendance was submitted.
 
 ## Validation
 

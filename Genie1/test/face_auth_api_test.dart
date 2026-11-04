@@ -85,8 +85,9 @@ class MemoryFaceStorage extends FlutterSecureStorage {
   }) async {
     final result = values[key];
     events.add('read');
-    if (readStarted != null && !readStarted!.isCompleted)
+    if (readStarted != null && !readStarted!.isCompleted) {
       readStarted!.complete();
+    }
     if (holdRead != null) await holdRead!.future;
     return result;
   }
@@ -103,8 +104,9 @@ class MemoryFaceStorage extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     events.add('write-start');
-    if (writeStarted != null && !writeStarted!.isCompleted)
+    if (writeStarted != null && !writeStarted!.isCompleted) {
       writeStarted!.complete();
+    }
     if (holdWrite != null) await holdWrite!.future;
     if (value != null) values[key] = value;
     events.add('write-finish');

@@ -6,7 +6,43 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'session_auth.dart';
 import '../face/face_performance_trace.dart';
 
+class AttendanceAuthenticationException implements Exception {
+  const AttendanceAuthenticationException();
+
+  static void checkResponse(http.Response response) {
+    if (response.statusCode == 401) {
+      throw const AttendanceAuthenticationException();
+    }
+    // A plain 403 is often a document/field permission denial, not expiry.
+    if (response.statusCode < 400 || response.statusCode >= 500) return;
+    dynamic body;
+    try {
+      body = jsonDecode(response.body);
+    } catch (_) {
+      return;
+    }
+    if (body is! Map) return;
+    final type = body['exc_type']?.toString().split('.').last;
+    final exception = body['exception']?.toString() ?? '';
+    if (type == 'AuthenticationError' ||
+        type == 'SessionExpired' ||
+        exception.startsWith('frappe.exceptions.AuthenticationError:') ||
+        exception.startsWith('frappe.exceptions.SessionExpired:')) {
+      throw const AttendanceAuthenticationException();
+    }
+  }
+
+  @override
+  String toString() =>
+      'Your login credentials are no longer valid. Please sign in again.';
+}
+
 class Check {
+  /// Upper bound for one attendance request. On timeout the client is closed,
+  /// the spinner clears and the user can retry; checkout retries reconcile
+  /// through the server's "already checked out" reply.
+  static const attendanceRequestTimeout = Duration(seconds: 45);
+
   static Future<http.Response> _sendAttendance(
     Uri uri,
     Map<String, String> headers,
@@ -18,7 +54,7 @@ class Check {
         client,
         http.Request('GET', uri)..headers.addAll(headers),
         stage,
-      );
+      ).timeout(attendanceRequestTimeout);
     } finally {
       client.close();
     }
@@ -28,10 +64,10 @@ class Check {
     try {
       final baseUrl = dotenv.env['SITE_URL'];
       final uri = Uri.parse('$baseUrl/api/method/ping');
-      // Browser cookies are automatic; a read-only ping must not need CSRF.
-      final response = kIsWeb
-          ? await http.get(uri, headers: {'Accept': 'application/json'})
-          : await http.post(uri, headers: {'Accept': 'application/json'});
+      final response = await (kIsWeb
+          ? http.get(uri, headers: {'Accept': 'application/json'})
+          : http.post(uri, headers: {'Accept': 'application/json'}))
+          .timeout(const Duration(seconds: 10));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
 
@@ -66,13 +102,23 @@ class Check {
     final String? token = prefs.getString('token');
 
     try {
+      // Encode every value: user emails ('+') and office names ('&', '#')
+      // broke the hand-built query string.
+      final uri = Uri.parse('$methodapiUrl.checkin').replace(
+        queryParameters: {
+          'user': '$id',
+          'lat': '$lat',
+          'lng': '$lng',
+          'address': address,
+          'office_type': type,
+          if (photoUrl != null) 'photo_url': photoUrl,
+          if (faceVerification != null) 'face_verification': faceVerification,
+          if (faceVerification != null && FacePerformanceTrace.enabled)
+            'include_timings': '1',
+        },
+      );
       var response = await _sendAttendance(
-        Uri.parse(
-          '$methodapiUrl.checkin?user=$id&lat=$lat&lng=$lng&address=${Uri.encodeComponent(address)}&office_type=$type'
-          '${photoUrl == null ? '' : '&photo_url=${Uri.encodeComponent(photoUrl)}'}'
-          '${faceVerification == null ? '' : '&face_verification=${Uri.encodeComponent(faceVerification)}'}'
-          '${faceVerification != null && FacePerformanceTrace.enabled ? '&include_timings=1' : ''}',
-        ),
+        uri,
         {"Authorization": token ?? ""},
         'check-in',
       );
@@ -81,13 +127,21 @@ class Check {
       FacePerformanceTrace.logServerTimings(data);
 
       if (response.statusCode == 200) {
-        return {
-          "message": data['message'] ?? "No message",
-          "status":
-              data['message'] == "Check-In Created Successfully"
-                  ? "Success"
-                  : "Error",
-        };
+        final message = data['message'] ?? "No message";
+        if (message == "Check-In Created Successfully") {
+          return {"message": message, "status": "Success"};
+        }
+        // A retry after a lost response finds the IN already saved. Treat it
+        // as success only when today's records really show an open check-in,
+        // not when the employee has already checked out for the day.
+        if (RegExp(
+              r'already\s+checked\s*in',
+              caseSensitive: false,
+            ).hasMatch('$message') &&
+            await _hasOpenCheckInToday('$id')) {
+          return {"message": "You are already checked in.", "status": "Success"};
+        }
+        return {"message": message, "status": "Error"};
       } else {
         return {
           "message": "Server error: ${response.statusCode}",
@@ -103,7 +157,77 @@ class Check {
     }
   }
 
+  static Future<bool> _hasOpenCheckInToday(String email) async {
+    try {
+      final status = await getStatus(
+        email,
+        recordsFirst: true,
+      ).timeout(const Duration(seconds: 15));
+      return status['attendance_records_verified'] == true &&
+          status['checked_in'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<Map<String, dynamic>> getStatus(
+    String email, {
+    bool recordsFirst = false,
+    bool includeShift = false,
+  }) async {
+    if (!includeShift) return _getStatus(email, recordsFirst: recordsFirst);
+    return _readAttendanceShift();
+  }
+
+  static Future<Map<String, dynamic>> _readAttendanceShift() async {
+    try {
+      final site = dotenv.env['SITE_URL']?.trim() ?? '';
+      if (site.isEmpty) return {'attendance_records_verified': false};
+      final prefs = await SharedPreferences.getInstance();
+      final base = Uri.parse(site.endsWith('/') ? site : '$site/');
+      final response = await http
+          .get(
+            base
+                .resolve('api/method/mobile_business_policy')
+                .replace(
+                  queryParameters: {'feature': 'attendance', 'action': 'get'},
+                ),
+            headers: {
+              'Authorization': prefs.getString('token') ?? '',
+              'Cache-Control': 'no-cache, no-store',
+            },
+          )
+          .timeout(const Duration(seconds: 12));
+      AttendanceAuthenticationException.checkResponse(response);
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        // Frappe wraps the API Server Script's flags in message.
+        final message = body is Map ? body['message'] : null;
+        final policy = message is Map ? message['policy'] : null;
+        final attendance = policy is Map ? policy['attendance'] : null;
+        if (attendance is Map && attendance['shift'] is String) {
+          final location = attendance['checkin_location'];
+          final status = attendance['status'];
+          if (status is! Map ||
+              status['attendance_records_verified'] is! bool) {
+            return {'attendance_records_verified': false};
+          }
+          return {
+            ...Map<String, dynamic>.from(status),
+            'attendance_shift': attendance['shift'],
+            if (location is String) 'office_type': location.trim(),
+          };
+        }
+      }
+    } on AttendanceAuthenticationException {
+      rethrow;
+    } catch (_) {
+      // Unavailable status must leave the existing attendance retry flow active.
+    }
+    return {'attendance_records_verified': false};
+  }
+
+  static Future<Map<String, dynamic>> _getStatus(
     String email, {
     bool recordsFirst = false,
   }) async {
@@ -151,6 +275,7 @@ class Check {
           ),
     ]);
     final response = results[0] as http.Response;
+    AttendanceAuthenticationException.checkResponse(response);
     Map<String, dynamic> status = {};
     if (response.statusCode == 200) {
       try {
@@ -206,6 +331,7 @@ class Check {
             headers: headers,
           )
           .timeout(const Duration(seconds: 12));
+      AttendanceAuthenticationException.checkResponse(response);
       if (doctype == 'Employee' &&
           (response.statusCode == 403 || response.statusCode == 417)) {
         // Optional profile metadata must not break attendance record lookup.
@@ -223,6 +349,24 @@ class Check {
             )
             .timeout(const Duration(seconds: 12));
       }
+      if (doctype == 'Employee Checkin' &&
+          (response.statusCode == 403 || response.statusCode == 417)) {
+        // Optional location metadata must not block attendance verification.
+        response = await http
+            .get(
+              base
+                  .resolve('api/resource/Employee%20Checkin')
+                  .replace(
+                    queryParameters: {
+                      ...query,
+                      'fields': jsonEncode(['name', 'log_type', 'time']),
+                    },
+                  ),
+              headers: headers,
+            )
+            .timeout(const Duration(seconds: 12));
+      }
+      AttendanceAuthenticationException.checkResponse(response);
       if (response.statusCode != 200) {
         throw StateError('Attendance records unavailable.');
       }
@@ -253,7 +397,12 @@ class Check {
       String day(DateTime value) =>
           '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')} 00:00:00';
       final common = {
-        'fields': jsonEncode(['name', 'log_type', 'time']),
+        'fields': jsonEncode([
+          'name',
+          'log_type',
+          'time',
+          'custom_office_type',
+        ]),
         'order_by': 'time desc, creation desc',
       };
       final results = await Future.wait([
@@ -291,6 +440,12 @@ class Check {
           logs.isEmpty &&
           results[1].isNotEmpty &&
           results[1].first['log_type'] == 'IN';
+      final checkin =
+          hasIn
+              ? ins.first
+              : previousPending
+              ? results[1].first
+              : null;
       return {
         'checked_in': active,
         'checked_out': completed,
@@ -298,10 +453,14 @@ class Check {
         'check_in_exists_today': hasIn,
         'check_out_exists_today': hasOut,
         'previous_checkout_pending': previousPending,
+        if (checkin == null || checkin.containsKey('custom_office_type'))
+          'office_type': checkin?['custom_office_type'] ?? '',
         if (previousPending) 'check_in_time': results[1].first['time'],
         if (hasIn) 'check_in_time': ins.first['time'],
         if (completed) 'check_out_time': outs.first['time'],
       };
+    } on AttendanceAuthenticationException {
+      rethrow;
     } catch (_) {
       return null;
     }
@@ -368,7 +527,10 @@ class Check {
           'lng': '$lng',
           'address': address,
           'lastCheckoutAddress': '${lastCheckoutAddress ?? ''}',
-          'distance': '$distance',
+          // The server derives distance from last_lat_lng; only forward a
+          // caller-supplied value.
+          if (distance != null && '$distance'.isNotEmpty)
+            'distance': '$distance',
           'office_type': type,
           'with_event': '$withEvent',
           'last_lat_lng': '$lastLatLng',

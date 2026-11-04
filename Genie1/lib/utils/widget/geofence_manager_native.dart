@@ -88,7 +88,15 @@ class GeofenceManager {
     _service.addGeofenceStatusChangeListener(_onStatusChange);
     _service.addStreamErrorListener(_onError);
 
-    await _service.start([geofence]);
+    try {
+      await _service.start([geofence]);
+    } catch (_) {
+      // stopMonitoring() skips cleanup while not running; remove the
+      // listeners here so the next start does not register duplicates.
+      _service.removeGeofenceStatusChangeListener(_onStatusChange);
+      _service.removeStreamErrorListener(_onError);
+      rethrow;
+    }
     _isRunning = true;
 
     debugPrint(

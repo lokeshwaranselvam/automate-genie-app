@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/Screen/pending_work_page.dart';
 import 'package:homegenie/Screen/session_webview.dart';
@@ -20,12 +19,7 @@ void main() {
           final webview = tester.widget<SessionWebView>(
             find.byType(SessionWebView),
           );
-          expect(
-            webview.url,
-            kIsWeb
-                ? 'https://erp.homegeniegroup.in/TG'
-                : 'https://16.itgenie.online/TGC',
-          );
+          expect(webview.url, 'https://erp.homegeniegroup.in/TG');
           expect(webview.embedded, isTrue);
           expect(find.text('My Tasks'), findsOneWidget);
           expect(find.byType(TextField), findsNothing);
@@ -56,4 +50,39 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('Tasks ignores phone Back while its visible Back returns Home', (
+    tester,
+  ) async {
+    var tasksOpen = true;
+    var visibleBackCalls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder:
+              (context, update) =>
+                  tasksOpen
+                      ? PendingWorkPage(
+                        onBack: () {
+                          visibleBackCalls++;
+                          update(() => tasksOpen = false);
+                        },
+                      )
+                      : const Scaffold(body: Text('Home')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final webviewState = tester.state(find.byType(SessionWebView));
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('My Tasks'), findsOneWidget);
+    expect(tester.state(find.byType(SessionWebView)), same(webviewState));
+    expect(visibleBackCalls, 0);
+    await tester.tap(find.byTooltip('Back'));
+    await tester.pumpAndSettle();
+    expect(find.text('Home'), findsOneWidget);
+    expect(find.byType(PendingWorkPage), findsNothing);
+    expect(visibleBackCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
 }

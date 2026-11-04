@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../theme/brand_theme.dart';
 import '../opportunity_contact.dart';
@@ -14,7 +15,10 @@ class CrmDocumentDetails extends StatelessWidget {
     this.onCallContact,
     this.callInProgress = false,
     this.onEditOpportunity,
+    this.onEditOpportunityOwner,
     this.creatorFullName,
+    this.onOpenOpportunity,
+    this.openingOpportunity = false,
   });
 
   final Map<String, dynamic> document;
@@ -24,7 +28,10 @@ class CrmDocumentDetails extends StatelessWidget {
   final ValueChanged<String>? onCallContact;
   final bool callInProgress;
   final VoidCallback? onEditOpportunity;
+  final VoidCallback? onEditOpportunityOwner;
   final String? creatorFullName;
+  final VoidCallback? onOpenOpportunity;
+  final bool openingOpportunity;
 
   static const background = Color(0xFFF3F7FC);
   static const _ink = Color(0xFF101A36);
@@ -265,6 +272,35 @@ class CrmDocumentDetails extends StatelessWidget {
                   color: _ink,
                 ),
               ),
+              if (status.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                RawChip(
+                  avatar:
+                      openingOpportunity
+                          ? SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: statusColor,
+                            ),
+                          )
+                          : Icon(Icons.circle, size: 8, color: statusColor),
+                  label: Text(
+                    status,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  backgroundColor: statusColor.withValues(alpha: 0.09),
+                  disabledColor: statusColor.withValues(alpha: 0.09),
+                  side: BorderSide.none,
+                  shape: const StadiumBorder(),
+                  onPressed: openingOpportunity ? null : onOpenOpportunity,
+                ),
+              ],
               if (source.isNotEmpty) ...[
                 const SizedBox(height: 7),
                 Container(
@@ -291,72 +327,8 @@ class CrmDocumentDetails extends StatelessWidget {
         ),
       ],
     );
-    final statusWidget = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Text(
-          'STATUS',
-          style: TextStyle(
-            fontSize: 10,
-            color: _muted,
-            letterSpacing: 1.1,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        const SizedBox(height: 7),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: statusColor.withValues(alpha: 0.09),
-            borderRadius: BorderRadius.circular(22),
-          ),
-          child: Text(
-            '●  $status',
-            softWrap: true,
-            style: TextStyle(
-              color: statusColor,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ],
-    );
     return _surface(
-      Padding(
-        padding: const EdgeInsets.all(12),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            if (status.isEmpty) return identity;
-            if (constraints.maxWidth < 280 ||
-                MediaQuery.textScalerOf(context).scale(1) > 1.35) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [identity, const SizedBox(height: 14), statusWidget],
-              );
-            }
-            return Row(
-              children: [
-                Expanded(child: identity),
-                Container(
-                  width: 1,
-                  height: 58,
-                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                  color: const Color(0xFFE1E7F0),
-                ),
-                Flexible(
-                  flex: 0,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 100),
-                    child: statusWidget,
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
+      Padding(padding: const EdgeInsets.all(12), child: identity),
     );
   }
 
@@ -413,47 +385,155 @@ class CrmDocumentDetails extends StatelessWidget {
     );
   }
 
-  Widget _field(String key, dynamic value) => Padding(
-    key: PageStorageKey('crm_field_$key'),
-    padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _iconBadge(_icon(key), _accent(key)),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                _label(key),
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: _muted,
-                  height: 1.3,
+  dynamic _visibleValue(String key, dynamic value) {
+    if (documentType != 'Opportunity' || key != 'notes' || value is! List) {
+      return value;
+    }
+    // Sort a separate view; editing must still receive the complete notes list.
+    final notes =
+        value.indexed.map((entry) {
+          final row = entry.$2;
+          final created =
+              row is Map
+                  ? DateTime.tryParse(row['added_on']?.toString() ?? '') ??
+                      DateTime.tryParse(row['creation']?.toString() ?? '')
+                  : null;
+          return (row: row, created: created, index: entry.$1);
+        }).toList();
+    notes.sort((a, b) {
+      if (a.created != null && b.created != null) {
+        final order = b.created!.compareTo(a.created!);
+        if (order != 0) return order;
+      } else if (a.created != null || b.created != null) {
+        return a.created != null ? -1 : 1;
+      }
+      return b.index.compareTo(a.index);
+    });
+    return notes.take(3).map((entry) => entry.row).toList();
+  }
+
+  String _noteTimestamp(dynamic row) {
+    final raw = row is Map ? row['added_on']?.toString().trim() ?? '' : '';
+    if (raw.isEmpty) return 'Time unavailable';
+    final timestamp = DateTime.tryParse(raw);
+    return timestamp == null
+        ? raw
+        : DateFormat('dd MMM yyyy, hh:mm a').format(timestamp);
+  }
+
+  Widget _field(String key, dynamic value) {
+    if (documentType == 'Opportunity' && key == 'notes' && value is List) {
+      final notes = _visibleValue(key, value) as List;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < notes.length; i++) ...[
+            if (i > 0) const Divider(height: 1, color: Color(0xFFE1E7F0)),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: _field(
+                    'note_${i + 1}',
+                    notes[i] is Map ? notes[i]['note'] ?? '' : notes[i],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 3),
-              _renderValue(value),
-            ],
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          notes[i] is Map &&
+                                  (notes[i]['added_by']
+                                          ?.toString()
+                                          .trim()
+                                          .isNotEmpty ??
+                                      false)
+                              ? notes[i]['added_by'].toString()
+                              : 'Author unavailable',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: _ink,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _noteTimestamp(notes[i]),
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: _muted,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      );
+    }
+    return Padding(
+      key: PageStorageKey('crm_field_$key'),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _iconBadge(_icon(key), _accent(key)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  _label(key),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: _muted,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                _renderValue(_visibleValue(key, value)),
+              ],
+            ),
           ),
-        ),
-        if (documentType == 'Opportunity' &&
-            onCallContact != null &&
-            OpportunityContact.isPhoneField(key) &&
-            OpportunityContact.number(value).isNotEmpty)
-          IconButton(
-            tooltip: 'Call ${OpportunityContact.number(value)}',
-            onPressed:
-                callInProgress
-                    ? null
-                    : () => onCallContact!(OpportunityContact.number(value)),
-            color: BrandColors.ink,
-            icon: const Icon(Icons.call_rounded),
-          ),
-      ],
-    ),
-  );
+          if (documentType == 'Opportunity' &&
+              key == 'opportunity_owner' &&
+              onEditOpportunityOwner != null)
+            IconButton(
+              tooltip: 'Edit Opportunity Owner',
+              icon: const Icon(Icons.edit_outlined),
+              color: BrandColors.ink,
+              onPressed: refreshing ? null : onEditOpportunityOwner,
+            ),
+          if (documentType == 'Opportunity' &&
+              onCallContact != null &&
+              OpportunityContact.isPhoneField(key) &&
+              OpportunityContact.number(value).isNotEmpty)
+            IconButton(
+              tooltip: 'Call ${OpportunityContact.number(value)}',
+              onPressed:
+                  callInProgress
+                      ? null
+                      : () => onCallContact!(OpportunityContact.number(value)),
+              color: BrandColors.ink,
+              icon: const Icon(Icons.call_rounded),
+            ),
+        ],
+      ),
+    );
+  }
 
   Widget _section(String title, IconData icon, List<String> keys) => _surface(
     ExpansionTile(
@@ -504,6 +584,7 @@ class CrmDocumentDetails extends StatelessWidget {
             .toSet();
     final sections = <Widget>[];
     if (documentType == 'Opportunity') {
+      remaining.removeAll(['opportunity_type', 'probability']);
       remaining.removeAll(_document);
       remaining.removeAll(_valueFields.skip(2));
       remaining.removeAll(_audit.skip(1));

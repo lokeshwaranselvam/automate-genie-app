@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -12,6 +13,7 @@ class FaceTemplateCache {
   final FlutterSecureStorage _storage;
   Future<void> _operations = Future<void>.value();
   int _generation = 0;
+  String? _browserTemplate;
 
   /// Capture before async template derivation; logout invalidates that work.
   int get generation => _generation;
@@ -19,7 +21,7 @@ class FaceTemplateCache {
   Future<List<double>?> read(String identity) => _serialized(() async {
     final generation = _generation;
     try {
-      final raw = await _storage.read(key: _key);
+      final raw = kIsWeb ? _browserTemplate : await _storage.read(key: _key);
       if (generation != _generation) return null;
       if (raw == null) return null;
       final data = jsonDecode(raw);
@@ -54,10 +56,12 @@ class FaceTemplateCache {
   }) => _serialized(() async {
     if (expectedGeneration != null && expectedGeneration != _generation) return;
     try {
-      await _storage.write(
-        key: _key,
-        value: jsonEncode({'identity': identity, 'embedding': embedding}),
-      );
+      final value = jsonEncode({'identity': identity, 'embedding': embedding});
+      if (kIsWeb) {
+        _browserTemplate = value;
+      } else {
+        await _storage.write(key: _key, value: value);
+      }
     } catch (_) {
       // Recognition still works by deriving from the private ERP reference.
     }
@@ -73,6 +77,7 @@ class FaceTemplateCache {
   Future<void> _deleteLocked({bool invalidate = true}) async {
     if (invalidate) _generation++;
     try {
+      _browserTemplate = null;
       await _storage.delete(key: _key);
     } catch (_) {}
   }

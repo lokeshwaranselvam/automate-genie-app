@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/Screen/session_webview.dart';
 import 'package:homegenie/utils/short_visit_checkout_notice.dart';
@@ -43,7 +44,10 @@ Future<void> showWarning(
 }
 
 void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test/');
+  });
 
   test('only pending short visit checkout restrictions are recognized', () {
     final notice = ShortVisitCheckoutNotice.fromMessage(serverMessage)!;
@@ -98,7 +102,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(Dialog), findsNothing);
     final webview = tester.widget<SessionWebView>(find.byType(SessionWebView));
-    expect(webview.url, 'https://16.itgenie.online/SVR');
+    expect(webview.url, 'https://erp.example.test/SVR');
     expect(webview.title, 'SVR');
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();

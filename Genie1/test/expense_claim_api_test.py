@@ -1,3 +1,4 @@
+from test.business_policy_stub import install as install_business_policy
 """Run with: python -m unittest discover -s test -p expense_claim_api_test.py"""
 from datetime import date
 from io import BytesIO
@@ -46,6 +47,7 @@ class ExpenseClaimApiTest(unittest.TestCase):
                            expense_type="Travel", description="Taxi", expense_date="2026-10-13",
                            amount="125.50")
         self.uploads = [self.upload("bill.png")]
+        self.recent_claims = []
         self.frappe = SimpleNamespace(
             session=Row(user=self.employee.user_id, data=Row(csrf_token="csrf")),
             request=SimpleNamespace(method="POST", files=SimpleNamespace(
@@ -55,7 +57,9 @@ class ExpenseClaimApiTest(unittest.TestCase):
             new_doc=Mock(side_effect=self.new_doc),
             db=SimpleNamespace(get_value=Mock(side_effect=self.get_value),
                                exists=Mock(side_effect=self.exists)),
-            utils=SimpleNamespace(getdate=date.fromisoformat, today=lambda: "2026-10-13"),
+            utils=SimpleNamespace(getdate=date.fromisoformat, today=lambda: "2026-10-13", flt=float,
+                                  now_datetime=lambda: 1000,
+                                  time_diff_in_seconds=lambda end, start: end - start),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
 
@@ -92,10 +96,15 @@ class ExpenseClaimApiTest(unittest.TestCase):
             return [Row(name="Travel", expense_type="Travel"), Row(name="Meals", expense_type="Meals")]
         if doctype in ["Has Role", "Department Approver"]:
             return []
+        if doctype == "Expense Claim":
+            return self.recent_claims
+        if doctype == "File":
+            return [Row(name="FILE-bill.png", file_name="bill.png", file_url="/private/files/bill.png")]
         self.fail("Unexpected options lookup: " + doctype)
 
     def run_api(self, **overrides):
         self.frappe.form_dict = dict(self.params, **overrides)
+        install_business_policy(self.frappe)
         exec(compile(self.script, "create_expense_claim_from_mobile.py", "exec"),
              {"frappe": self.frappe, "json": json})
         return self.frappe.response["message"]
@@ -103,6 +112,32 @@ class ExpenseClaimApiTest(unittest.TestCase):
     def rows(self):
         return [dict(expense_type="Travel", description="Taxi", expense_date="2026-10-12", amount="125.50"),
                 dict(expense_type="Meals", description="Lunch", expense_date="2026-10-13", amount="80")]
+
+    def test_api_can_make_descriptions_and_bills_optional(self):
+        bridge = install_business_policy(self.frappe)
+        bridge.overrides['policy_by_user = {}'] = 'policy_by_user = ' + repr({self.employee.user_id: {'expense': {
+            'fields': {'description': {'required': False}}, 'uploads': {'min_count': 0}}}})
+        self.uploads = []
+        result = self.run_api(description='')
+        self.assertEqual(result['description'], '')
+        self.assertEqual(result['bill_files'], [])
+        self.assertEqual(result['bill_file_url'], '')
+        self.assertEqual(len(self.created), 1)
+
+    def test_client_cannot_spoof_original_values_to_bypass_read_only_fields(self):
+        bridge = install_business_policy(self.frappe)
+        bridge.overrides['policy_by_user = {}'] = 'policy_by_user = ' + repr({self.employee.user_id: {'expense': {
+            'fields': {'description': {'read_only': True, 'default': 'Fixed'}}}}})
+        with self.assertRaisesRegex(ValueError, 'read-only'):
+            self.run_api(description='Changed', original_values={'description': 'Changed'})
+        self.assertEqual(self.created, [])
+
+    def test_upload_limits_fail_before_any_claim_is_inserted(self):
+        bridge = install_business_policy(self.frappe)
+        bridge.overrides['policy_by_user = {}'] = 'policy_by_user = ' + repr({self.employee.user_id: {'expense': {
+            'uploads': {'max_bytes': 2}}}})
+        with self.assertRaisesRegex(ValueError, 'file size'): self.run_api()
+        self.assertEqual(self.created, [])
 
     def test_multiple_rows_and_bills_create_one_claim_with_correct_totals(self):
         self.uploads.append(self.upload("lunch.png", b"second image"))
@@ -126,6 +161,31 @@ class ExpenseClaimApiTest(unittest.TestCase):
         self.assertEqual(len(result["bill_files"]), 2)
         self.assertEqual(result["expense_row"], "EXP-1")
         self.assertEqual(result["bill_file_url"], bill1.file_url)
+
+    def test_identical_retry_within_two_minutes_returns_existing_claim(self):
+        existing = Document(doctype="Expense Claim", name="HR-EXP-OLD", employee="EMP-1",
+                            expense_approver="approver@example.test", currency="INR",
+                            total_claimed_amount=125.5, total_sanctioned_amount=125.5,
+                            approval_status="Draft", expenses=[Row(
+                                name="EXP-OLD", expense_type="Travel", description="Taxi",
+                                expense_date=date(2026, 10, 13), amount=125.5, sanctioned_amount=125.5)])
+        self.frappe.get_doc = Mock(return_value=existing)
+        self.recent_claims = [Row(name="HR-EXP-OLD", creation=950)]
+        result = self.run_api()
+        self.assertEqual(result["name"], "HR-EXP-OLD")
+        self.assertEqual(self.created, [])
+        self.assertEqual(result["bill_files"][0]["name"], "FILE-bill.png")
+        filters = [c.kwargs["filters"] for c in self.frappe.get_all.call_args_list if c.args[0] == "Expense Claim"][0]
+        self.assertEqual((filters["owner"], filters["employee"], filters["docstatus"]),
+                         ("staff@example.test", "EMP-1", 0))
+        # A different amount, or the same rows after the window, is a new claim.
+        for amount, creation in [("99", 950), ("125.50", 800)]:
+            with self.subTest(amount=amount, creation=creation):
+                self.created = []
+                self.uploads = [self.upload("bill.png")]
+                self.recent_claims = [Row(name="HR-EXP-OLD", creation=creation)]
+                self.assertEqual(self.run_api(amount=amount)["name"], "HR-EXP-TEST")
+                self.assertEqual([doc.doctype for doc in self.created], ["Expense Claim", "File"])
 
     def test_legacy_single_row_request_and_response_remain_supported(self):
         result = self.run_api()
@@ -186,6 +246,56 @@ class ExpenseClaimApiTest(unittest.TestCase):
         self.assertEqual(result["expense_approver"], "approver@example.test")
         self.assertEqual(result["csrf_token"], "csrf")
         self.assertEqual(len(result["expense_types"]), 2)
+        self.assertEqual(self.created, [])
+
+    def test_employee_approver_loads_and_submits_without_department_lookups(self):
+        self.frappe.request.method = "GET"
+        self.assertEqual(self.run_api()["expense_approver"], self.employee.expense_approver)
+        self.frappe.request.method = "POST"
+        self.assertEqual(self.run_api()["status"], "success")
+        calls = (self.frappe.get_all.call_args_list
+                 + self.frappe.db.exists.call_args_list
+                 + self.frappe.db.get_value.call_args_list)
+        self.assertFalse(any(call.args[0] in ["Department", "Department Approver"]
+                             for call in calls))
+
+    def test_only_employee_assigned_approver_is_returned(self):
+        self.frappe.request.method = "GET"
+        result = self.run_api()
+        self.assertEqual(result["expense_approver_options"], [
+            {"value": self.employee.expense_approver,
+             "label": "Approver (approver@example.test)"}])
+
+    def test_missing_employee_approver_never_falls_back_to_role_holder(self):
+        self.employee.expense_approver = ""
+        original_get_all = self.get_all
+        self.frappe.get_all.side_effect = lambda doctype, **kwargs: (
+            [Row(parent="approver@example.test")] if doctype == "Has Role"
+            else original_get_all(doctype, **kwargs))
+        original_exists = self.exists
+        self.frappe.db.exists.side_effect = lambda doctype, filters: (
+            True if doctype == "Has Role" else original_exists(doctype, filters))
+        self.frappe.request.method = "GET"
+        with self.assertRaisesRegex(ValueError, "expense_approver field"):
+            self.run_api()
+        self.frappe.request.method = "POST"
+        with self.assertRaisesRegex(ValueError, "assigned to the selected Employee"):
+            self.run_api()
+        self.assertEqual(self.created, [])
+
+    def test_disabled_employee_approver_is_rejected_on_get_and_post(self):
+        original_get_all = self.get_all
+        self.frappe.get_all.side_effect = lambda doctype, **kwargs: (
+            [] if doctype == "User" else original_get_all(doctype, **kwargs))
+        original_exists = self.exists
+        self.frappe.db.exists.side_effect = lambda doctype, filters: (
+            False if doctype == "User" else original_exists(doctype, filters))
+        self.frappe.request.method = "GET"
+        with self.assertRaisesRegex(ValueError, "expense_approver field"):
+            self.run_api()
+        self.frappe.request.method = "POST"
+        with self.assertRaisesRegex(ValueError, "assigned to the selected Employee"):
+            self.run_api()
         self.assertEqual(self.created, [])
 
 

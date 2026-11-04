@@ -2,6 +2,8 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'geofence_manager.dart';
+import '../live_tracking_access.dart';
+import 'location_permission_helper.dart';
 
 class LiveLocationService {
   static final LiveLocationService _instance = LiveLocationService._internal();
@@ -28,7 +30,19 @@ class LiveLocationService {
       await _stopTracking();
       return;
     }
-    final active = await platform.invokeMethod<bool>('isLocationTracking');
+    final decision = await LiveTrackingAccess.trackingDecision();
+    // Only a definitive deny stops tracking; an unverifiable check (timeout,
+    // 5xx) keeps the current native state until the next reconcile.
+    if (decision == null) return;
+    if (!decision) {
+      await _stopTracking();
+      return;
+    }
+    final active = await platform.invokeMethod<bool>('isLocationTracking', {
+      'userId': saved.getString('email')?.trim(),
+      'authToken': saved.getString('token')?.trim(),
+      'siteUrl': dotenv.env['SITE_URL']?.trim(),
+    });
     if (active == true) {
       _isTracking = true;
       return;
@@ -72,8 +86,25 @@ class LiveLocationService {
         'Cannot start live tracking: SITE_URL is not configured.',
       );
     }
+    final decision = await LiveTrackingAccess.trackingDecision();
+    if (decision == null) return; // Unknown: keep the current state.
+    if (!decision) {
+      await _stopTracking();
+      return;
+    }
 
     try {
+      await LocationPermissionHelper.requestBackgroundOnce();
+      final confirmed = await LiveTrackingAccess.trackingDecision();
+      if (confirmed == null) return; // Unknown: keep the current state.
+      if (!confirmed ||
+          prefs.getString('email')?.trim() != userEmail ||
+          prefs.getString('session_sid')?.trim() != sid ||
+          prefs.getString('token')?.trim() != token ||
+          dotenv.env['SITE_URL']?.trim() != siteUrl) {
+        await _stopTracking();
+        return;
+      }
       await _startAndroidBackgroundService(userEmail, token, siteUrl);
       _isTracking = true;
       print('Live Location Tracking Started');
@@ -118,7 +149,12 @@ class LiveLocationService {
     try {
       final result = await platform.invokeMethod<String>(
         'startLocationTracking',
-        {'userId': userId, 'authToken': authToken, 'siteUrl': siteUrl},
+        {
+          'userId': userId,
+          'authToken': authToken,
+          'siteUrl': siteUrl,
+          'trackingAllowed': true,
+        },
       );
       // The method-channel call only launches a service. Confirm that GPS
       // registration succeeded rather than reporting a silently stopped service.

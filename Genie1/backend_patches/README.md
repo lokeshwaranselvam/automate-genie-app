@@ -1,5 +1,31 @@
 # Attendance API update
 
+## Security fixes: deployment checklist
+
+These changes only take effect once deployed. Back up the live files first.
+
+1. **Google Maps key in site config.** The server no longer contains the key.
+   Before deploying `api_utils.py` / `attendance_api.py`, run
+   `bench --site YOUR_SITE set-config google_maps_api_key <SERVER_KEY>`.
+   Without it, checkout and event checkout return "Google Maps is not
+   configured on the server". The old key is in git history: create new keys
+   in Google Cloud Console and delete the old one. Use a server key restricted
+   by server IP, and a separate app key restricted to Android app
+   `ai.automategenie.app` plus your release signing SHA-1 (the app now sends
+   `X-Android-Package` / `X-Android-Cert`). Limit each key to the APIs it uses
+   and set quotas. Ship a new APK with the new app key in `location_api.dart`
+   and `AndroidManifest.xml`.
+2. **Per-user API checks** (`api_utils.py`). Methods that take `user` now
+   require it to be the signed-in user; HR Manager and System Manager may read
+   other users' data but never check in or out for them. `event_details`
+   requires the event owner, an assignee (non-cancelled ToDo) or those roles.
+   `generate_keys` is System Manager only.
+3. **Bound phone session** (`mobile_auth.py` + `hooks.py` `auth_hooks`), see
+   [SINGLE_DEVICE_LOGIN.md](SINGLE_DEVICE_LOGIN.md) step 4.
+4. **Tsg task board** (`frappe_server_scripts/tsg_task_api.py`). Editing an
+   existing task requires being its creator, a current assignee, or Task write
+   permission. The board's task list is unchanged.
+
 For the subsequent single-phone login changes, see
 [SINGLE_DEVICE_LOGIN.md](SINGLE_DEVICE_LOGIN.md). Install that backend update
 before distributing the new Flutter login flow.

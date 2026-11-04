@@ -1,0 +1,136 @@
+GENIE OPPORTUNITIES WEB PAGE — LISTING AND DETAILS ONLY
+
+Files
+  opportunities.html: complete combined HTML, internal CSS and internal JavaScript.
+  mobile_opportunity_policy.py: existing API with added read visibility actions.
+  No external libraries, credentials, API keys, Lead form, or GPS code are included.
+
+ERPNext installation (deploy this before installing the rebuilt APK)
+  1. Open Website > Web Page > New.
+  2. Title: Opportunities
+     Route: genie-opportunities
+     Content Type: HTML
+     Published: checked
+  3. Paste the ENTIRE contents of opportunities.html into the HTML/Main Section.
+     Keep its <style> and <script> blocks. Do not paste it into a Server Script.
+     If the editor has separate JavaScript/CSS fields, leave those empty when
+     using the combined file, so the code is not executed twice.
+  4. Save. Use the page's full-width option if available. The page has a scoped,
+     full-window root and does not modify the styles of other ERP pages.
+  5. Sign in as a normal Opportunity Owner and open:
+       https://YOUR-ERP-HOST/genie-opportunities
+     The page verifies frappe.auth.get_logged_user without displaying the user email.
+     Do not pass a user, SID, token, or password in the URL.
+     The API requests use this same ERP origin and its existing session cookie.
+  6. If your deployment caches authenticated HTML, exclude this route from shared
+     proxy/CDN caching. No Opportunity/user data is stored in this HTML file.
+
+API dependencies - update the existing policy script with this update
+  GET /api/method/frappe.auth.get_logged_user
+  GET /api/method/mobile_opportunity_policy?action=list
+  GET /api/method/mobile_opportunity_policy?action=detail&name=OPPORTUNITY-ID
+  GET /api/method/mobile_opportunity_policy?action=count
+  GET /api/resource/Opportunity/{name}
+  GET /api/method/frappe.desk.form.load.getdoctype?doctype=Opportunity
+  GET /api/method/frappe.client.get_value (creator's name, if permitted)
+  GET /api/method/mobile_opportunity_policy?action=get
+  GET /api/method/mobile_opportunity_policy?action=owner_options
+  POST /api/method/mobile_opportunity_policy action=save
+  POST /api/method/mobile_opportunity_policy action=change_owner
+  POST /api/method/smartflo.api.initiate_call
+  GET /app (same-session CSRF bootstrap when the website has no CSRF token)
+
+The existing mobile_opportunity_policy must already contain the previously
+implemented note audit and owner_options/change_owner actions. Its business
+policy dependency is mobile_business_policy. Keep these scripts separate:
+  Genie One Opportunity Status Edit API -> API Method mobile_opportunity_policy
+  Genie One Mobile Business Policy API -> API Method mobile_business_policy
+Do not replace mobile_business_policy with the Opportunity script.
+
+Presentation update
+  - Compact 56px header with explicitly white title text.
+  - Inline SVG icons; no icon-font or external icon-library dependency.
+  - Custom in-page status choices and calendar with month/year choices.
+  - Create Event and missing-note warnings appear in an OK popup above the edit
+    form. Dismissing the popup keeps the draft, selected status and date intact.
+    The calendar keeps the same ISO YYYY-MM-DD payload and ERP minimum-date rule.
+
+
+Preserved behavior
+  - Phone filtering, ERP status options, refresh and 50-record pagination.
+  - Read visibility uses the first populated owner field, in priority order:
+    custom_field_owner_2, then custom_field_owner_1, then opportunity_owner.
+    Only that selected user can see the record, subject to normal ERP read permissions.
+    Its visibility_owner_fields setting lists the priority order, highest first.
+    These fields must store ERP User IDs (Link to User or Data), not Employee IDs.
+    Existing primary-owner write/call rules remain unchanged.
+    Field-owner-only readers have no edit, reassign or call controls.
+  - Existing status, follow-up, note-required, related-document and history rules.
+  - Latest three notes, with the saved author/time on the right.
+  - No Opportunity Type or Probability in Opportunity Information.
+  - Owner search and reassignment; full document is not requested after transfer.
+  - Calls retain the existing app's creator/phone-field check and Smartflo API.
+  - Writes use CSRF, reject redirects, check the session before/after, and retry
+    only one explicit CSRF rejection. Timeouts/ambiguous writes are not retried.
+  - New Lead remains a NATIVE Flutter button and opens LeadCreationPage unchanged.
+    There is no Lead creation form/button/API in the standalone webpage.
+    Its visibility still uses the existing Flutter access flag.
+
+Flutter integration
+  opportunities_webview_page.dart is dedicated to this page. It sets the ERP SID
+  cookie on the configured SITE_URL host without clearing other WebView cookies.
+  It blocks navigation away from this exact ERP route. No shared SessionWebView
+  behavior was changed. Home's two Opportunity entry points use this new widget.
+  List/detail routing messages only control the native New Lead button and Back.
+  All requests and writes stay in the webpage. Native New Lead returns to it and
+  refreshes the Opportunity view.
+
+Verification before rollout
+  - Use an actual session: guest/expired/wrong-user sessions must show no records.
+  - Compare list owner/filter results to ERP, then test next-page loading.
+  - Test all three owner fields separately; an unrelated user must not see the record.
+  - A populated higher-priority field assigned to someone else must block fallback.
+  - NULL/empty higher-priority fields must fall back to the next populated field.
+  - Field-owner-only readers must not gain edit, reassignment or calling access.
+  - Edit status with/without the required new note; verify note author/server time.
+  - Check follow-up dates and existing Demo/related-document validation.
+  - After reassignment, only the first populated owner in the configured priority
+    order determines visibility; lower-priority matching fields do not grant access.
+  - Use a controlled phone number to verify Smartflo; never retry an uncertain call.
+  - In the app, New Lead must open the existing Flutter form, including its existing
+    City/Town, District, Location and GPS behavior. No WebView geolocation is used.
+  - Verify Android WebView cookies, Back, keyboard, and native return on a device.
+
+Local checks
+  node test/opportunities_webpage_test.cjs
+  The DOM test uses test-only linkedom installed outside the repository:
+    npm install --prefix "$env:TEMP\genie-opportunities-qa" linkedom --no-audit --no-fund
+  This dependency is not loaded by the shipped webpage.
+  DOM/mock checks do not prove browser layout, deployed ERP, WebView session,
+  Smartflo delivery, or physical-device behavior.
+
+OWNER VISIBILITY UPDATE - update the EXISTING script
+  Open Genie One Opportunity Status Edit API, API Method mobile_opportunity_policy.
+  Replace its code with frappe_server_scripts/mobile_opportunity_policy.py.
+  Keep Allow Guest disabled. No additional API Server Script is needed.
+  Do NOT replace mobile_business_policy.
+  The existing get/save/owner_options/change_owner code is retained unchanged.
+  Added list/detail/count actions share the visibility_owner_fields setting.
+  Replace the Web Page HTML and reload. Rebuild/install the app for the Home count.
+  Test all three owner fields and normal ERP permissions. Editing rights are unchanged.
+  Local backend checks: python test/mobile_opportunity_visibility_test.py
+
+PRIORITY-ONLY UPDATE
+  Replace the code in the EXISTING mobile_opportunity_policy Server Script and save.
+  The visibility_owner_fields order is Field Owner 2, Field Owner 1, Opportunity Owner.
+  All three read actions (list/detail/count) use the same priority rule.
+  No HTML change or APK rebuild is needed for this priority-only update when the
+  previous policy-backed webpage and Home count are already installed.
+  The priority-only update preserves Pending Work filtering and existing write actions.
+
+PENDING WORK OPPORTUNITY WEBVIEW ROUTE
+  Pending Work > Open Opportunities now opens the existing Opportunities WebView
+  with #opportunity=SELECTED-ID. opportunity_id is preferred; name is the fallback.
+  Rebuild/install the app for this navigation change. No API or HTML update is needed.
+  Reads use the same mobile_opportunity_policy visibility and ERP permissions.
+  Pending Work listing/filtering and all other section destinations are unchanged.

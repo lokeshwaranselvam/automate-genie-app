@@ -22,9 +22,10 @@ const _visitMuted = Color(0xFF7B8492);
 enum _VisitTab { scheduled, completed, overdue }
 
 class SiteVisitsPage extends StatefulWidget {
-  const SiteVisitsPage({super.key, this.onVisitsUpdated});
+  const SiteVisitsPage({super.key, this.onVisitsUpdated, this.initialEventId});
 
   final ValueChanged<List<Map<String, dynamic>>>? onVisitsUpdated;
+  final String? initialEventId;
 
   @override
   State<SiteVisitsPage> createState() => _SiteVisitsPageState();
@@ -36,9 +37,12 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
   String? _error;
   String _query = '';
   _VisitTab _tab = _VisitTab.scheduled;
-  String? _eventTypeFilter;
+  final Map<_VisitTab, DateTimeRange> _dateRanges = {};
+
+  DateTimeRange? get _dateRange => _dateRanges[_tab];
   bool _canCreateVisit = false;
   int _permissionRequestId = 0;
+  bool _initialVisitOpened = false;
 
   @override
   void initState() {
@@ -107,6 +111,7 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
         _loading = false;
       });
       widget.onVisitsUpdated?.call(visits);
+      _openInitialVisit();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -116,12 +121,51 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     }
   }
 
+  void _openInitialVisit() {
+    final id = widget.initialEventId?.trim() ?? '';
+    if (_initialVisitOpened || id.isEmpty) return;
+    Map<String, dynamic>? target;
+    for (final visit in _visits) {
+      if (_id(visit) == id) {
+        target = visit;
+        break;
+      }
+    }
+    final visit = target;
+    // Attempt the initial open only once, so a missing visit does not show
+    // the "Could not find" message again on every refresh.
+    _initialVisitOpened = true;
+    if (visit != null) {
+      setState(() {
+        _tab =
+            _isCompleted(visit)
+                ? _VisitTab.completed
+                : _isOverdue(visit)
+                ? _VisitTab.overdue
+                : _VisitTab.scheduled;
+      });
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (visit == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not find this visit. Refresh and try again.'),
+          ),
+        );
+        return;
+      }
+      unawaited(_openVisit(visit));
+    });
+  }
+
   Future<void> _loadCreationPermission() async {
     final requestId = ++_permissionRequestId;
     setState(() => _canCreateVisit = false);
     var allowed = false;
     try {
-      allowed = await SiteVisitCreationApi.canCreateVisit();
+      final access = await SiteVisitCreationApi.homeQuickActionAccess();
+      allowed = access.canCreateVisit && access.featureVisibility['new_visit'] != false;
     } catch (error) {
       debugPrint('Could not check site visit creation permission: $error');
     }
@@ -165,8 +209,15 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
           if (!tabMatches) return false;
 
           final type = _eventType(visit);
-          if (_eventTypeFilter != null && type != _eventTypeFilter)
-            return false;
+          final range = _dateRange;
+          if (range != null) {
+            final date = _filterDate(visit, _tab);
+            if (date == null) return false;
+            final day = DateUtils.dateOnly(date);
+            if (day.isBefore(range.start) || day.isAfter(range.end)) {
+              return false;
+            }
+          }
           if (query.isEmpty) return true;
           return [
             _customer(visit),
@@ -248,7 +299,12 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     final id = _id(visit);
     if (id.isEmpty) return;
     await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => EventDetails(eventid: id)),
+      MaterialPageRoute<void>(
+        builder: (_) => EventDetails(
+          eventid: id,
+          hideVisitActions: _isCompleted(visit),
+        ),
+      ),
     );
     if (mounted) await _refresh();
   }
@@ -290,57 +346,109 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     if (mounted && created == true) await _refresh();
   }
 
-  Future<void> _showTypeFilter() async {
-    final types =
-        _visits
-            .map(_eventType)
-            .where((type) => type.isNotEmpty)
-            .toSet()
-            .toList()
-          ..sort();
-    final selected = await showModalBottomSheet<String?>(
+  DateTime? _filterDate(Map<String, dynamic> visit, _VisitTab tab) =>
+      tab == _VisitTab.completed ? _completedAt(visit) : _startsAt(visit);
+
+  Future<void> _showDateFilter() async {
+    final tab = _tab;
+    final action = await showModalBottomSheet<String>(
       context: context,
       builder:
           (context) => SafeArea(
-            child: ListView(
-              shrinkWrap: true,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                const ListTile(
-                  title: Text(
-                    'Filter visits',
+                ListTile(
+                  title: const Text(
+                    'Filter visits by date',
                     style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text(
+                    tab == _VisitTab.completed
+                        ? 'Completion date'
+                        : 'Scheduled visit date',
                   ),
                 ),
                 ListTile(
-                  title: const Text('All visit types'),
-                  trailing:
-                      _eventTypeFilter == null
-                          ? const Icon(Icons.check, color: _visitBlue)
-                          : null,
-                  onTap: () => Navigator.pop(context, ''),
+                  leading: const Icon(Icons.today),
+                  title: const Text('Today'),
+                  onTap: () => Navigator.pop(context, 'today'),
                 ),
-                for (final type in types)
-                  ListTile(
-                    title: Text(type),
-                    trailing:
-                        type == _eventTypeFilter
-                            ? const Icon(Icons.check, color: _visitBlue)
-                            : null,
-                    onTap: () => Navigator.pop(context, type),
-                  ),
+                ListTile(
+                  leading: const Icon(Icons.date_range),
+                  title: const Text('Choose date range'),
+                  onTap: () => Navigator.pop(context, 'range'),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.clear),
+                  title: const Text('Clear date filter'),
+                  subtitle: const Text('Distance returns to the current month'),
+                  onTap: () => Navigator.pop(context, 'all'),
+                ),
               ],
             ),
           ),
     );
+    if (action == null || !mounted) return;
+    if (action == 'all') {
+      setState(() => _dateRanges.remove(tab));
+      return;
+    }
+    final today = DateUtils.dateOnly(DateTime.now());
+    if (action == 'today') {
+      setState(() {
+        _dateRanges[tab] = DateTimeRange(start: today, end: today);
+      });
+      return;
+    }
+    var firstDate = DateTime(2000);
+    var lastDate = DateTime(today.year + 10, 12, 31);
+    for (final visit in _visits) {
+      final date = _filterDate(visit, tab);
+      if (date == null) continue;
+      final day = DateUtils.dateOnly(date);
+      if (day.isBefore(firstDate)) firstDate = day;
+      if (day.isAfter(lastDate)) lastDate = day;
+    }
+    final currentRange = _dateRanges[tab];
+    if (currentRange != null) {
+      if (currentRange.start.isBefore(firstDate)) {
+        firstDate = currentRange.start;
+      }
+      if (currentRange.end.isAfter(lastDate)) lastDate = currentRange.end;
+    }
+    final selected = await showDateRangePicker(
+      context: context,
+      firstDate: firstDate,
+      lastDate: lastDate,
+      initialDateRange: currentRange,
+      helpText:
+          tab == _VisitTab.completed
+              ? 'Filter by completion date'
+              : 'Filter by scheduled visit date',
+    );
     if (selected == null || !mounted) return;
-    setState(() => _eventTypeFilter = selected.isEmpty ? null : selected);
+    setState(() => _dateRanges[tab] = selected);
   }
 
   @override
   Widget build(BuildContext context) {
     final visits = _visibleVisits;
+    final now = DateTime.now();
+    final distanceVisits =
+        _dateRange != null
+            ? visits
+            : _visits.where((visit) {
+              final date = _filterDate(
+                visit,
+                _isCompleted(visit) ? _VisitTab.completed : _VisitTab.scheduled,
+              );
+              return date != null &&
+                  date.year == now.year &&
+                  date.month == now.month;
+            }).toList();
     final distances =
-        _visits
+        distanceVisits
             .map((visit) => SiteVisitDistance.meters(visit['custom_distance']))
             .whereType<double>()
             .toList();
@@ -351,7 +459,7 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     final distanceLabel =
         _loading && _visits.isEmpty
             ? 'Loading…'
-            : distances.isEmpty && (_visits.isNotEmpty || _error != null)
+            : distances.isEmpty && (distanceVisits.isNotEmpty || _error != null)
             ? 'Not recorded'
             : '${(totalDistance / 1000).toStringAsFixed(2)} km';
     return Scaffold(
@@ -368,18 +476,22 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
             padding: const EdgeInsets.only(right: 12),
             child: Tooltip(
               message:
-                  'Recorded distance for ${distances.length} of ${_visits.length} loaded visits. Includes all tabs; search and type filters do not change this total.',
+                  _dateRange == null
+                      ? 'Recorded distance for ${distances.length} of ${distanceVisits.length} visits across all tabs in the current month.'
+                      : 'Recorded distance for ${distances.length} of ${distanceVisits.length} visits in the selected date range. Updates with the selected tab and search.',
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 110),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    const Text(
-                      'Total travelled',
+                    Text(
+                      _dateRange == null
+                          ? 'This month travelled'
+                          : 'Total travelled',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Colors.white, fontSize: 10),
+                      style: const TextStyle(color: Colors.white, fontSize: 10),
                     ),
                     Text(
                       distanceLabel,
@@ -440,13 +552,29 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
                   ),
                   const SizedBox(width: 10),
                   IconButton.filledTonal(
-                    tooltip: 'Filter visit type',
-                    onPressed: _showTypeFilter,
+                    tooltip: 'Filter visit date',
+                    onPressed: _showDateFilter,
                     icon: const Icon(Icons.filter_list_rounded),
                   ),
                 ],
               ),
             ),
+            if (_dateRange != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: InputChip(
+                    avatar: const Icon(Icons.date_range, size: 18),
+                    label: Text(
+                      '${DateFormat('d MMM yyyy').format(_dateRange!.start)} – ${DateFormat('d MMM yyyy').format(_dateRange!.end)}',
+                    ),
+                    onPressed: _showDateFilter,
+                    onDeleted: () => setState(() => _dateRanges.remove(_tab)),
+                    deleteButtonTooltipMessage: 'Clear date filter',
+                  ),
+                ),
+              ),
             Expanded(
               child:
                   _loading && _visits.isEmpty
@@ -497,9 +625,18 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
   }
 
   String get _emptyMessage => switch (_tab) {
-    _VisitTab.scheduled => 'No scheduled visits.',
-    _VisitTab.completed => 'No completed visit history.',
-    _VisitTab.overdue => 'No overdue visits.',
+    _VisitTab.scheduled =>
+      _dateRange != null
+          ? 'No scheduled visits in the selected date range.'
+          : 'No scheduled visits.',
+    _VisitTab.completed =>
+      _dateRange != null
+          ? 'No completed visits in the selected date range.'
+          : 'No completed visit history.',
+    _VisitTab.overdue =>
+      _dateRange != null
+          ? 'No overdue visits in the selected date range.'
+          : 'No overdue visits.',
   };
 
   Widget _errorView() => Center(
@@ -678,9 +815,9 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
                         padding: const EdgeInsets.symmetric(horizontal: 10),
                         minimumSize: const Size(0, 34),
                       ),
-                      child: const Text(
-                        'Navigate',
-                        style: TextStyle(fontSize: 11),
+                      child: Text(
+                        completed ? 'View report' : 'Navigate',
+                        style: const TextStyle(fontSize: 11),
                       ),
                     ),
                   const SizedBox(height: 4),
@@ -719,12 +856,16 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     );
   }
 
-  String _completedLabel(Map<String, dynamic> visit) {
+  DateTime? _completedAt(Map<String, dynamic> visit) {
     final checkOut =
         DateTime.tryParse(
           (visit['custom_check_out'] ?? visit['ends_on'])?.toString() ?? '',
         )?.toLocal();
-    final completedAt = checkOut ?? _startsAt(visit);
+    return checkOut ?? _startsAt(visit);
+  }
+
+  String _completedLabel(Map<String, dynamic> visit) {
+    final completedAt = _completedAt(visit);
     if (completedAt == null) return 'Visit completed';
     return 'Completed • ${DateFormat('d MMM, hh:mm a').format(completedAt)}';
   }

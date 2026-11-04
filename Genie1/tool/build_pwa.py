@@ -44,8 +44,8 @@ def prepare_release(output, values):
         if not path.is_file():
             continue
         name = path.relative_to(output).as_posix()
-        # Never preload native-only face models, source maps, or push workers.
-        if name.endswith(".map") or name.startswith(("assets/assets/face_recognition/", "push/")) or name in {"pwa-assets.js", "pwa-sw.js", "flutter_service_worker.js"}:
+        # Face runtimes/models load on demand, outside the app-shell installation.
+        if name.endswith(".map") or name.startswith(("assets/assets/face_recognition/", "face/vendor/", "push/")) or name in {"pwa-assets.js", "pwa-sw.js", "flutter_service_worker.js"}:
             continue
         assets.append(name)
         digest.update(name.encode())
@@ -60,12 +60,25 @@ def main():
     args = parser.parse_args()
     if not re.fullmatch(r"/(?:[A-Za-z0-9_-]+/)*", args.base_href):
         parser.error("Use an absolute directory path such as /genie/ or /.")
+    from prepare_face_assets import prepare as prepare_face_assets
     values = public_environment(ROOT / ".env")
+    prepare_face_assets()
     flutter = shutil.which("flutter")
     if not flutter:
         raise SystemExit("Flutter is not on PATH.")
     subprocess.run([flutter, "build", "web", "--release", "--no-wasm-dry-run", "--no-web-resources-cdn", "--base-href", args.base_href], cwd=ROOT, check=True)
     output = ROOT / "build" / "web"
+    # These are complete HTML/CSS/JS ERP interfaces, sharing browser session cookies.
+    pages = output / "pages"
+    pages.mkdir(exist_ok=True)
+    for old_setup in pages.glob("*.txt"):
+        old_setup.unlink()
+    for source_page in (ROOT / "web_pages").glob("*.html"):
+        page = pages / source_page.name
+        content = source_page.read_text(encoding="utf-8")
+        page.write_text('<!doctype html><html><head><meta charset="utf-8">'
+                        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                        '<script src="../erp_page_bridge.js"></script></head><body>' + content + '</body></html>', encoding="utf-8")
     version, count = prepare_release(output, values)
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)

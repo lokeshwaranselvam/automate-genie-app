@@ -1,25 +1,18 @@
+import 'package:flutter/foundation.dart';
+import '../platform/erp_web_page_uri.dart';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 
 import 'session_auth.dart';
+import '../api_business_policy.dart';
 
 /// Opportunity access using Frappe's normal document permissions.
 class OpportunityApi {
   static Uri _configuredSite(String site) {
     final base = Uri.tryParse(site);
-    final localBrowserProxy =
-        kIsWeb &&
-        base != null &&
-        base.scheme == 'http' &&
-        base.host == 'localhost' &&
-        base.origin == Uri.base.origin;
-    if (base == null ||
-        base.host.isEmpty ||
-        base.userInfo.isNotEmpty ||
-        (base.scheme != 'https' && !localBrowserProxy)) {
+    if (base == null || !isTrustedErpPageUri(base)) {
       throw StateError('The ERP site URL is not configured.');
     }
     return base;
@@ -40,7 +33,7 @@ class OpportunityApi {
 
   static DateTime get earliestFollowUpDate {
     final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day + 1);
+    return DateTime(now.year, now.month, now.day);
   }
 
   static bool isFutureFollowUpDate(Object? value) {
@@ -57,6 +50,7 @@ class OpportunityApi {
 
   static Future<dynamic> _read({
     String? name,
+    String? lead,
     int offset = 0,
     String phone = '',
     String status = '',
@@ -85,13 +79,19 @@ class OpportunityApi {
                 'fields': jsonEncode([
                   'name',
                   'owner',
+                  'opportunity_owner',
                   'customer_name',
                   'party_name',
                   'status',
                   'creation',
+                  if (lead != null) 'opportunity_from',
                 ]),
                 'filters': jsonEncode([
-                  ['owner', '=', user],
+                  ['opportunity_owner', '=', user],
+                  if (lead != null) ...[
+                    ['opportunity_from', '=', 'Lead'],
+                    ['party_name', '=', lead],
+                  ],
                   if (status.isNotEmpty) ['status', '=', status],
                 ]),
                 if (phone.isNotEmpty)
@@ -146,9 +146,13 @@ class OpportunityApi {
       );
     }
     for (final row in rows) {
-      if (row['owner'] != user || (name != null && row['name'] != name)) {
+      if (row['opportunity_owner'] != user ||
+          (lead != null &&
+              (row['opportunity_from'] != 'Lead' ||
+                  row['party_name'] != lead)) ||
+          (name != null && row['name'] != name)) {
         throw StateError(
-          'Only opportunities created by your user can be displayed here.',
+          'Only opportunities where you are the Opportunity Owner can be displayed here.',
         );
       }
     }
@@ -171,12 +175,45 @@ class OpportunityApi {
     return rows.map((row) => Map<String, dynamic>.from(row as Map)).toList();
   }
 
+  static Future<int> getMyOpportunityCount() async {
+    final user = await SessionAuthApi.getActiveSessionUser();
+    if (user == null || user == 'Guest') {
+      throw StateError('Your session expired. Please sign in again.');
+    }
+    final body = await _request(
+      '/api/method/mobile_opportunity_policy',
+      query: {'action': 'count'},
+    );
+    if (await SessionAuthApi.getSavedSessionUser() != user) {
+      throw StateError('Your account changed. Reopen Opportunities.');
+    }
+    final message = body['message'];
+    final count =
+        message is Map && message['current_user'] == user
+            ? int.tryParse(message['count'].toString())
+            : null;
+    if (count == null || count < 0) {
+      throw const FormatException('ERP did not return the Opportunity count.');
+    }
+    return count;
+  }
+
   static Future<Map<String, dynamic>> getDetails(String name) async {
     if (name.trim().isEmpty) throw ArgumentError('Opportunity ID is required.');
     return Map<String, dynamic>.from(await _read(name: name));
   }
 
-  static Future<OpportunityEditOptions> getEditOptions() async {
+  static Future<List<Map<String, dynamic>>> getForLead(
+    String leadId, {
+    int offset = 0,
+  }) async {
+    if (leadId.trim().isEmpty) throw ArgumentError('Lead ID is required.');
+    if (offset < 0) throw ArgumentError('Invalid page offset.');
+    final rows = await _read(lead: leadId.trim(), offset: offset) as List;
+    return rows.map((row) => Map<String, dynamic>.from(row as Map)).toList();
+  }
+
+  static Future<OpportunityEditOptions> getEditOptions({String? name}) async {
     final body = await _request(
       '/api/method/frappe.desk.form.load.getdoctype',
       query: {'doctype': 'Opportunity'},
@@ -235,6 +272,46 @@ class OpportunityApi {
         'ERP did not return Opportunity status options.',
       );
     }
+    final policyBody = await _request(
+      '/api/method/mobile_opportunity_policy',
+      query: {'action': 'get', if (name != null) 'name': name},
+    );
+    final policy = policyBody['message'];
+    final expectedUser = await SessionAuthApi.getSavedSessionUser();
+    if (policy is! Map ||
+        policy['current_user'] != expectedUser ||
+        policy['editable_statuses'] is! List ||
+        (policy['editable_statuses'] as List).isEmpty ||
+        (policy['editable_statuses'] as List).any(
+          (value) => value is! String || !statuses.contains(value),
+        ) ||
+        policy['status_transitions'] is! Map ||
+        policy['followup_policy'] is! Map) {
+      throw const FormatException('ERP returned invalid Opportunity policy.');
+    }
+    final transitions = <String, List<String>>{};
+    for (final entry in (policy['status_transitions'] as Map).entries) {
+      if (entry.key is! String ||
+          entry.value is! List ||
+          (entry.value as List).any((value) => value is! String)) {
+        throw const FormatException(
+          'ERP returned invalid Opportunity transitions.',
+        );
+      }
+      transitions[entry.key] = List<String>.from(entry.value);
+    }
+    final datePolicy = policy['followup_policy'] as Map;
+    final earliestText = datePolicy['earliest_date']?.toString() ?? '';
+    final earliest =
+        earliestText.isEmpty ? null : DateTime.tryParse(earliestText);
+    if (datePolicy['allow_past'] is! bool ||
+        (earliestText.isNotEmpty &&
+            (earliest == null ||
+                earliest.toIso8601String().substring(0, 10) != earliestText))) {
+      throw const FormatException(
+        'ERP returned invalid Opportunity date rules.',
+      );
+    }
     return OpportunityEditOptions(
       statuses: statuses,
       followUpField:
@@ -242,17 +319,22 @@ class OpportunityApi {
               ? followUp.single['fieldname']?.toString()
               : null,
       notesType: hasNote ? (notes?['options']?.toString()) : null,
+      allowedStatuses: List<String>.from(policy['editable_statuses']),
+      statusTransitions: transitions,
+      allowPastFollowup: datePolicy['allow_past'],
+      earliestDate: earliest,
+      businessPolicy: ApiBusinessPolicy.fromApi(policy['business_policy']),
     );
   }
 
-  /// Sends only the three requested fields. Frappe enforces write permissions,
+  /// Synchronizes sales stage when status changes. Frappe enforces write permissions,
   /// field permissions, workflow rules and document validation on PUT.
   static Future<Map<String, dynamic>> updateDetails({
     required Map<String, dynamic> original,
     required Map<String, dynamic> changes,
   }) async {
     if (changes.isEmpty) return original;
-    final options = await getEditOptions();
+    final options = await getEditOptions(name: original['name']?.toString());
     final allowed = {
       'status',
       if (options.notesType != null) 'notes',
@@ -264,15 +346,25 @@ class OpportunityApi {
       );
     }
     if (changes.containsKey('status') &&
-        (!editableStatuses.contains(changes['status']) ||
+        (!options
+                .statusesFor(original['status']?.toString() ?? '')
+                .contains(changes['status']) ||
             !options.statuses.contains(changes['status']))) {
       throw ArgumentError('Select a valid Opportunity status.');
     }
     final dateField = options.followUpField;
-    if (dateField != null &&
-        changes.containsKey(dateField) &&
-        !isFutureFollowUpDate(changes[dateField])) {
-      throw ArgumentError('Select a next follow-up date from tomorrow onward.');
+    if (dateField != null) {
+      final date =
+          changes.containsKey(dateField)
+              ? changes[dateField]
+              : original[dateField];
+      if ((changes.containsKey(dateField) ||
+              (date?.toString().isNotEmpty ?? false)) &&
+          !options.isAllowedFollowupDate(date)) {
+        throw ArgumentError(
+          'Select a valid next follow-up date on or after ${options.firstFollowupDate.toIso8601String().substring(0, 10)}.',
+        );
+      }
     }
     final name = original['name']?.toString() ?? '';
     final fresh = await getDetails(name);
@@ -283,14 +375,20 @@ class OpportunityApi {
       );
     }
     final body = await _request(
-      '/api/resource/Opportunity/${Uri.encodeComponent(name)}',
-      changes: {...changes, 'modified': original['modified']},
-      expectedOwner: original['owner']?.toString(),
+      '/api/method/mobile_opportunity_policy',
+      changes: {
+        'action': 'save',
+        'name': name,
+        'changes': changes,
+        'modified': original['modified'],
+      },
+      expectedOpportunityOwner: original['opportunity_owner']?.toString(),
     );
     final data = body['data'];
     if (data is! Map ||
         data['name'] != name ||
-        data['owner'] != original['owner']) {
+        data['owner'] != original['owner'] ||
+        data['opportunity_owner'] != original['opportunity_owner']) {
       throw const FormatException(
         'ERP did not confirm the Opportunity update. Refresh before retrying.',
       );
@@ -298,11 +396,69 @@ class OpportunityApi {
     return Map<String, dynamic>.from(data);
   }
 
+  static Future<List<Map<String, dynamic>>> searchOwners(
+    String name,
+    String query,
+  ) async {
+    final body = await _request(
+      '/api/method/mobile_opportunity_policy',
+      query: {'action': 'owner_options', 'name': name, 'txt': query},
+    );
+    final message = body['message'];
+    final user = await SessionAuthApi.getSavedSessionUser();
+    if (message is! Map ||
+        message['current_user'] != user ||
+        message['options'] is! List) {
+      throw const FormatException(
+        'ERP did not return Opportunity Owner choices.',
+      );
+    }
+    final rows = message['options'] as List;
+    if (rows.any((row) => row is! Map || row['value'] is! String)) {
+      throw const FormatException(
+        'ERP returned invalid Opportunity Owner choices.',
+      );
+    }
+    return rows.map((row) => Map<String, dynamic>.from(row as Map)).toList();
+  }
+
+  static Future<void> changeOwner({
+    required Map<String, dynamic> original,
+    required String newOwner,
+  }) async {
+    final name = original['name']?.toString() ?? '';
+    if (name.isEmpty ||
+        newOwner.trim().isEmpty ||
+        original['modified'] == null) {
+      throw ArgumentError('Refresh the Opportunity and select an owner.');
+    }
+    final body = await _request(
+      '/api/method/mobile_opportunity_policy',
+      expectedOpportunityOwner: original['opportunity_owner']?.toString(),
+      changes: {
+        'action': 'change_owner',
+        'name': name,
+        'new_owner': newOwner.trim(),
+        'modified': original['modified'],
+      },
+    );
+    final message = body['message'];
+    if (message is! Map ||
+        message['status'] != 'success' ||
+        message['name'] != name ||
+        message['opportunity_owner'] != newOwner.trim() ||
+        message['current_user'] != original['opportunity_owner']) {
+      throw const FormatException(
+        'ERP did not confirm the owner change. Refresh before retrying.',
+      );
+    }
+  }
+
   static Future<Map<String, dynamic>> _request(
     String path, {
     Map<String, String>? query,
     Map<String, dynamic>? changes,
-    String? expectedOwner,
+    String? expectedOpportunityOwner,
   }) async {
     final site = dotenv.env['SITE_URL']?.trim() ?? '';
     final base = _configuredSite(site);
@@ -311,7 +467,7 @@ class OpportunityApi {
     if (sid == null || sid.isEmpty || user == null || user == 'Guest') {
       throw StateError('Your session expired. Please sign in again.');
     }
-    if (changes != null && user != expectedOwner) {
+    if (changes != null && user != expectedOpportunityOwner) {
       throw StateError('Your account changed. Reopen Opportunities.');
     }
     Future<void> assertSession() async {
@@ -332,8 +488,6 @@ class OpportunityApi {
       await assertSession();
       final request =
           http.Request(method, uri)
-            // Fetch cannot expose a manual redirect's Location header. Only
-            // the read-only HTML bootstrap may follow; verify its final origin.
             ..followRedirects = kIsWeb && html
             ..headers.addAll({
               if (!kIsWeb) 'Cookie': 'sid=$sid',
@@ -347,17 +501,7 @@ class OpportunityApi {
       }
       final response = await client
           .send(request)
-          .then((stream) async {
-            if (stream case http.BaseResponseWithUrl(
-              :final url,
-            ) when url.origin != base.origin) {
-              await stream.stream.listen(null).cancel();
-              throw StateError(
-                'ERP redirected to a different site. Check SITE_URL.',
-              );
-            }
-            return http.Response.fromStream(stream);
-          })
+          .then(http.Response.fromStream)
           .timeout(const Duration(seconds: 25));
       await assertSession();
       return response;
@@ -391,7 +535,11 @@ class OpportunityApi {
     try {
       for (var attempt = 0; attempt < 2; attempt++) {
         final response = await send(
-          changes == null ? 'GET' : 'PUT',
+          changes == null
+              ? 'GET'
+              : path == '/api/method/mobile_opportunity_policy'
+              ? 'POST'
+              : 'PUT',
           base.resolve(path).replace(queryParameters: query),
           csrf: changes == null ? null : await token(),
         );
@@ -420,6 +568,33 @@ class OpportunityApi {
             body is! Map ||
             body['exc_type'] != null ||
             body['exception'] != null) {
+          if (response.statusCode == 417) {
+            String? validationMessage;
+            // Read user-facing validation messages only, never server tracebacks.
+            try {
+              final raw = body is Map ? body['_server_messages'] : null;
+              final messages = raw is String ? jsonDecode(raw) : raw;
+              if (messages is List) {
+                final texts = <String>[];
+                for (final item in messages) {
+                  final entry = item is String ? jsonDecode(item) : item;
+                  final message = entry is Map ? entry['message'] : null;
+                  if (message is String && message.trim().isNotEmpty) {
+                    texts.add(
+                      message.replaceAll(RegExp(r'<[^>]*>'), '').trim(),
+                    );
+                  }
+                }
+                if (texts.isNotEmpty) validationMessage = texts.join('\n');
+              }
+            } catch (_) {
+              // Malformed validation details use the existing safe fallback.
+            }
+            throw OpportunityActionError(
+              statusCode: response.statusCode,
+              validationMessage: validationMessage,
+            );
+          }
           throw StateError(switch (response.statusCode) {
             401 => 'Your session expired. Please sign in again.',
             403 => 'You do not have permission for this Opportunity action.',
@@ -444,8 +619,60 @@ class OpportunityEditOptions {
     required this.statuses,
     this.followUpField,
     this.notesType,
+    this.allowedStatuses,
+    this.statusTransitions = const {},
+    this.allowPastFollowup = false,
+    this.earliestDate,
+    this.businessPolicy = ApiBusinessPolicy.empty,
   });
   final List<String> statuses;
   final String? followUpField;
   final String? notesType;
+  final List<String>? allowedStatuses;
+  final Map<String, List<String>> statusTransitions;
+  final bool allowPastFollowup;
+  final DateTime? earliestDate;
+  final ApiBusinessPolicy businessPolicy;
+
+  List<String> statusesFor(String current) {
+    final allowed = allowedStatuses ?? OpportunityApi.editableStatuses;
+    final targets = statusTransitions[current];
+    return allowed
+        .where(
+          (value) =>
+              targets == null || targets.contains(value) || value == current,
+        )
+        .toList();
+  }
+
+  DateTime get firstFollowupDate {
+    final today = OpportunityApi.earliestFollowUpDate;
+    if (!allowPastFollowup) {
+      return earliestDate != null && earliestDate!.isAfter(today)
+          ? earliestDate!
+          : today;
+    }
+    return earliestDate ?? DateTime(1900);
+  }
+
+  bool isAllowedFollowupDate(Object? value) {
+    if (value is! String || !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)) {
+      return false;
+    }
+    final date = DateTime.tryParse(value);
+    return date != null &&
+        date.toIso8601String().substring(0, 10) == value &&
+        !date.isBefore(firstFollowupDate);
+  }
+}
+
+/// Preserves the response status for the edit dialog without exposing tracebacks.
+class OpportunityActionError extends StateError {
+  OpportunityActionError({required this.statusCode, this.validationMessage})
+    : super(
+        validationMessage ??
+            'ERP could not save this Opportunity. Check required fields and workflow rules in ERP.',
+      );
+  final int statusCode;
+  final String? validationMessage;
 }

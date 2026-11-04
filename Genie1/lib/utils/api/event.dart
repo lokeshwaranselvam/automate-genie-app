@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../api_business_policy.dart';
 import '../event_location_selection.dart';
 import '../event_otp.dart';
 import 'package:flutter/src/widgets/framework.dart';
@@ -9,6 +10,50 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class Event {
+  static Future<ApiBusinessPolicy> getBusinessPolicy(
+    String feature, {
+    String? eventId,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final site = dotenv.env['SITE_URL'] ?? '';
+    final user =
+        prefs.getString('session_username') ?? prefs.getString('email');
+    final sid = prefs.getString('session_sid');
+    final response = await http
+        .get(
+          Uri.parse(site)
+              .resolve('/api/method/mobile_business_policy')
+              .replace(
+                queryParameters: {
+                  'feature': feature,
+                  if (eventId != null) 'event_id': eventId,
+                },
+              ),
+          headers: {
+            'Accept': 'application/json',
+            'Authorization': prefs.getString('token') ?? '',
+            if (sid != null) 'Cookie': 'sid=$sid',
+          },
+        )
+        .timeout(const Duration(seconds: 15));
+    final body = jsonDecode(response.body);
+    final raw =
+        body is Map && body['message'] is Map
+            ? body['message']['policy']
+            : null;
+    if (response.statusCode != 200 ||
+        raw is! Map ||
+        raw['current_user'] != user ||
+        prefs.getString('session_sid') != sid ||
+        (prefs.getString('session_username') ?? prefs.getString('email')) !=
+            user) {
+      throw StateError(
+        'ERP could not verify the current business policy. Refresh and try again.',
+      );
+    }
+    return ApiBusinessPolicy.fromApi(raw);
+  }
+
   static String? token;
 
   static late SharedPreferences prefs;
@@ -17,7 +62,8 @@ class Event {
   static Future<List<dynamic>> eventList(String usr) async {
     final pingResult = await Check.pingpong();
 
-    if (pingResult == null || pingResult['message'] != 'pong') {
+    // pingpong() returns false (not a Map) when ERP is unreachable.
+    if (pingResult is! Map || pingResult['message'] != 'pong') {
       return [
         {
           "message":
@@ -29,14 +75,18 @@ class Event {
     final prefs = await SharedPreferences.getInstance();
     final String? token = prefs.getString('token');
     try {
-      var response = await http.get(
-        Uri.parse('$URL.event_list?user=$usr'),
-        headers: {
-          "Authorization": token ?? "",
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      );
+      var response = await http
+          .get(
+            Uri.parse(
+              '$URL.event_list',
+            ).replace(queryParameters: {'user': usr}),
+            headers: {
+              "Authorization": token ?? "",
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 20));
       if (response.statusCode == 200) {
         var data = json.decode(response.body);
         return data['message'];
@@ -66,14 +116,18 @@ class Event {
     final String? token = prefs.getString('token');
 
     try {
-      var response = await http.get(
-        Uri.parse('$URL.is_otp_required?event_id=$eventId'),
-        headers: {
-          "Authorization": token ?? "",
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      );
+      var response = await http
+          .get(
+            Uri.parse(
+              '$URL.is_otp_required',
+            ).replace(queryParameters: {'event_id': eventId}),
+            headers: {
+              "Authorization": token ?? "",
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         var data = json.decode(response.body);
@@ -111,8 +165,12 @@ class Event {
     }
 
     try {
-      final url = Uri.parse(
-        '$URL.history_list?user=$usr&from_date=$fromDate&to_date=$toDate',
+      final url = Uri.parse('$URL.history_list').replace(
+        queryParameters: {
+          'user': usr,
+          'from_date': fromDate,
+          'to_date': toDate,
+        },
       );
 
       final response = await http
@@ -154,14 +212,18 @@ class Event {
     final prefs = await SharedPreferences.getInstance();
     final String? token = prefs.getString('token');
     try {
-      var response = await http.get(
-        Uri.parse('$URL.event_details?id=$id'),
-        headers: {
-          "Authorization": token ?? "",
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      );
+      var response = await http
+          .get(
+            Uri.parse(
+              '$URL.event_details',
+            ).replace(queryParameters: {'id': id}),
+            headers: {
+              "Authorization": token ?? "",
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 20));
       if (response.statusCode == 200) {
         var data = json.decode(response.body);
         return data['message'];
@@ -183,7 +245,9 @@ class Event {
     try {
       final response = await http
           .get(
-            Uri.parse('$URL.event_details?id=$id'),
+            Uri.parse(
+              '$URL.event_details',
+            ).replace(queryParameters: {'id': id}),
             headers: {
               'Authorization': token ?? '',
               'Content-Type': 'application/json',
@@ -240,10 +304,12 @@ class Event {
           },
         );
 
-    final response = await http.get(
-      uri,
-      headers: {'Authorization': token, 'Accept': 'application/json'},
-    );
+    final response = await http
+        .get(
+          uri,
+          headers: {'Authorization': token, 'Accept': 'application/json'},
+        )
+        .timeout(const Duration(seconds: 20));
     if (response.statusCode != 200) {
       throw StateError('Could not load visit photos (${response.statusCode}).');
     }
@@ -299,20 +365,8 @@ class Event {
     final message = decoded is Map ? decoded['message'] : null;
     if (response.statusCode != 200 ||
         (decoded is Map && decoded['exc'] != null)) {
-      String? validationMessage;
-      try {
-        final raw = decoded is Map ? decoded['_server_messages'] : null;
-        final messages = raw is String ? jsonDecode(raw) : raw;
-        if (messages is List && messages.isNotEmpty) {
-          final first = messages.first;
-          final entry = first is String ? jsonDecode(first) : first;
-          if (entry is Map && entry['message'] is String) {
-            validationMessage = entry['message'] as String;
-          }
-        }
-      } catch (_) {
-        // Preserve the existing fallback for malformed server messages.
-      }
+      final validationMessage =
+          decoded is Map ? _serverValidationMessage(decoded) : null;
       final detail =
           validationMessage ??
           (message?.toString().trim().isNotEmpty == true
@@ -334,10 +388,12 @@ class Event {
       throw StateError('Sign in to view this visit report.');
     }
 
-    final response = await http.get(
-      _visitReportUri({'action': 'get', 'event_id': eventId}),
-      headers: {'Authorization': token, 'Accept': 'application/json'},
-    );
+    final response = await http
+        .get(
+          _visitReportUri({'action': 'get', 'event_id': eventId}),
+          headers: {'Authorization': token, 'Accept': 'application/json'},
+        )
+        .timeout(const Duration(seconds: 20));
     return _visitReportResponse(response);
   }
 
@@ -387,20 +443,22 @@ class Event {
       throw StateError('Sign in to submit this visit report.');
     }
 
-    final response = await http.post(
-      _visitReportUri(const {}),
-      headers: {
-        'Authorization': token,
-        'Accept': 'application/json',
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: {
-        'action': 'save',
-        'event_id': eventId,
-        'observation': observation,
-        'outcome': outcome,
-      },
-    );
+    final response = await http
+        .post(
+          _visitReportUri(const {}),
+          headers: {
+            'Authorization': token,
+            'Accept': 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: {
+            'action': 'save',
+            'event_id': eventId,
+            'observation': observation,
+            'outcome': outcome,
+          },
+        )
+        .timeout(const Duration(seconds: 25));
     return _visitReportResponse(response);
   }
 
@@ -429,10 +487,11 @@ class Event {
     }
 
     try {
-      final uri = Uri.parse(
-        '$siteUrl/api/method/event'
-        '?reference_docname=$referenceDocname'
-        '&reference_doctype=$referenceDoctype',
+      final uri = Uri.parse('$siteUrl/api/method/event').replace(
+        queryParameters: {
+          'reference_docname': referenceDocname,
+          'reference_doctype': referenceDoctype,
+        },
       );
 
       debugPrint(
@@ -440,14 +499,16 @@ class Event {
         'reference_docname=$referenceDocname, reference_doctype=$referenceDoctype',
       );
 
-      final response = await http.get(
-        uri,
-        headers: {
-          "Authorization": token ?? "",
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      );
+      final response = await http
+          .get(
+            uri,
+            headers: {
+              "Authorization": token ?? "",
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode != 200) {
         debugPrint(
@@ -526,14 +587,18 @@ class Event {
     final prefs = await SharedPreferences.getInstance();
     final String? token = prefs.getString('token');
     try {
-      var response = await http.get(
-        Uri.parse('$URL.officetype?user=$usr'),
-        headers: {
-          "Authorization": token ?? "",
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      );
+      var response = await http
+          .get(
+            Uri.parse(
+              '$URL.officetype',
+            ).replace(queryParameters: {'user': usr}),
+            headers: {
+              "Authorization": token ?? "",
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 20));
       if (response.statusCode == 200) {
         var data = json.decode(response.body);
         return data['message'];
@@ -665,15 +730,17 @@ class Event {
 
     final String? token = prefs.getString('token');
 
-    final response = await http.post(
-      Uri.parse('$URL.event_list_date'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': token ?? '',
-      },
-      body: jsonEncode({"user": user, "date": date}),
-    );
+    final response = await http
+        .post(
+          Uri.parse('$URL.event_list_date'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': token ?? '',
+          },
+          body: jsonEncode({"user": user, "date": date}),
+        )
+        .timeout(const Duration(seconds: 20));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -716,7 +783,7 @@ class Event {
       '[EventApi] eventCheckin response: ${response.statusCode} ${response.body}',
     );
 
-    return json.decode(response.body);
+    return _visitActionResponse(response, 'check-in');
   }
 
   static Future<Map<String, dynamic>> eventCheckout(
@@ -760,7 +827,53 @@ class Event {
         )
         .timeout(const Duration(seconds: 25));
 
-    return json.decode(response.body);
+    return _visitActionResponse(response, 'check-out');
+  }
+
+  /// Visit check-in/out callers read `response['message']['status']`. A proxy
+  /// error page (HTML 502) or a non-Map message must become an error result of
+  /// that same shape instead of throwing FormatException/TypeError.
+  static Map<String, dynamic> _visitActionResponse(
+    http.Response response,
+    String action,
+  ) {
+    dynamic decoded;
+    try {
+      decoded = json.decode(response.body);
+    } catch (_) {
+      decoded = null;
+    }
+    if (decoded is Map && decoded['message'] is Map) {
+      return Map<String, dynamic>.from(decoded);
+    }
+    final message = decoded is Map ? decoded['message'] : null;
+    final detail =
+        (decoded is Map ? _serverValidationMessage(decoded) : null) ??
+        (message is String && message.trim().isNotEmpty
+            ? message.trim()
+            : 'ERP could not complete the visit $action '
+                '(${response.statusCode}). Please try again.');
+    return {
+      'message': {'status': 'error', 'message': detail},
+    };
+  }
+
+  /// First message from Frappe's `_server_messages`, if any.
+  static String? _serverValidationMessage(Map decoded) {
+    try {
+      final raw = decoded['_server_messages'];
+      final messages = raw is String ? jsonDecode(raw) : raw;
+      if (messages is List && messages.isNotEmpty) {
+        final first = messages.first;
+        final entry = first is String ? jsonDecode(first) : first;
+        if (entry is Map && entry['message'] is String) {
+          return entry['message'] as String;
+        }
+      }
+    } catch (_) {
+      // Malformed server messages fall back to the generic text.
+    }
+    return null;
   }
 
   static Future<bool> saveCustomerLocationFromVisit({
@@ -787,14 +900,18 @@ class Event {
     }
 
     try {
-      final visitResponse = await http.get(
-        Uri.parse('$siteUrl/api/method/visit?event_id=$eventId'),
-        headers: {
-          'Authorization': token,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      );
+      final visitResponse = await http
+          .get(
+            Uri.parse(
+              '$siteUrl/api/method/visit',
+            ).replace(queryParameters: {'event_id': eventId}),
+            headers: {
+              'Authorization': token,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 15));
 
       debugPrint(
         '[EventApi] saveCustomerLocationFromVisit -> event_id=$eventId, '
@@ -820,16 +937,18 @@ class Event {
         return false;
       }
 
-      final opportunityResponse = await http.get(
-        Uri.parse(
-          '$siteUrl/api/resource/Opportunity/${Uri.encodeComponent(referenceDocname)}',
-        ),
-        headers: {
-          'Authorization': token,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      );
+      final opportunityResponse = await http
+          .get(
+            Uri.parse(
+              '$siteUrl/api/resource/Opportunity/${Uri.encodeComponent(referenceDocname)}',
+            ),
+            headers: {
+              'Authorization': token,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 15));
 
       debugPrint(
         '[EventApi] opportunity fetch response: '
@@ -864,17 +983,19 @@ class Event {
         'event_id': visitData['event_id']?.toString() ?? eventId,
       });
 
-      final response = await http.put(
-        Uri.parse(
-          '$siteUrl/api/resource/Opportunity/${Uri.encodeComponent(referenceDocname)}',
-        ),
-        headers: {
-          'Authorization': token,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode({'custom_location': existingRows}),
-      );
+      final response = await http
+          .put(
+            Uri.parse(
+              '$siteUrl/api/resource/Opportunity/${Uri.encodeComponent(referenceDocname)}',
+            ),
+            headers: {
+              'Authorization': token,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode({'custom_location': existingRows}),
+          )
+          .timeout(const Duration(seconds: 20));
 
       debugPrint(
         '[EventApi] saveCustomerLocationFromVisit response: '
@@ -941,15 +1062,19 @@ class Event {
     }
 
     try {
-      final response = await http.put(
-        Uri.parse('$siteUrl/api/resource/Event/$eventId'),
-        headers: {
-          'Authorization': token,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode({'location': locationType}),
-      );
+      final response = await http
+          .put(
+            Uri.parse(
+              '$siteUrl/api/resource/Event/${Uri.encodeComponent(eventId)}',
+            ),
+            headers: {
+              'Authorization': token,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode({'location': locationType}),
+          )
+          .timeout(const Duration(seconds: 20));
 
       return response.statusCode == 200;
     } catch (_) {
@@ -980,16 +1105,18 @@ class Event {
     }
 
     try {
-      final response = await http.get(
-        Uri.parse(
-          '$siteUrl/api/resource/Opportunity/${Uri.encodeComponent(referenceDocname)}',
-        ),
-        headers: {
-          'Authorization': token,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      );
+      final response = await http
+          .get(
+            Uri.parse(
+              '$siteUrl/api/resource/Opportunity/${Uri.encodeComponent(referenceDocname)}',
+            ),
+            headers: {
+              'Authorization': token,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 15));
 
       debugPrint(
         '[EventApi] getOpportunityLocations response: ${response.statusCode} ${response.body}',
@@ -1026,10 +1153,14 @@ class Event {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
 
-    final response = await http.get(
-      Uri.parse('$URL.send_otp?event_id=$eventId'),
-      headers: {'Authorization': token!},
-    );
+    final response = await http
+        .get(
+          Uri.parse(
+            '$URL.send_otp',
+          ).replace(queryParameters: {'event_id': '$eventId'}),
+          headers: {'Authorization': token!},
+        )
+        .timeout(const Duration(seconds: 20));
 
     if (response.statusCode != 200) {
       throw Exception("Failed to send OTP");
@@ -1044,15 +1175,17 @@ class Event {
     if (token == null || token.isEmpty) return false;
 
     try {
-      final response = await http.post(
-        Uri.parse('$URL.verify_otp'),
-        headers: {
-          'Authorization': token,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode({'otp': otp, 'event_id': eventId}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('$URL.verify_otp'),
+            headers: {
+              'Authorization': token,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode({'otp': otp, 'event_id': eventId}),
+          )
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);

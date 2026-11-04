@@ -1,3 +1,4 @@
+import '../live_tracking_access.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -26,7 +27,9 @@ class LiveLocationService {
       await _stop();
       return;
     }
-    if (_subscription != null) return;
+    final allowed = await LiveTrackingAccess.trackingDecision();
+    if (allowed == false) { await _stop(); return; }
+    if (_subscription != null || allowed != true) return;
     if (!await hasLocationPermissions() &&
         !await requestLocationPermissions()) {
       throw StateError('Allow location access to track while the PWA is open.');

@@ -1,5 +1,6 @@
-import '../platform/multipart_file.dart';
+import 'package:homegenie/utils/platform/multipart_file.dart';
 import 'dart:convert';
+import '../api_business_policy.dart';
 import 'package:homegenie/utils/platform/platform_file.dart';
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -30,6 +31,7 @@ class ExpenseClaimFormOptions {
   final List<ExpenseClaimOption> expenseApprovers;
   final List<ExpenseClaimOption> expenseTypes;
   final bool supportsMultipleExpenses;
+  final ApiBusinessPolicy businessPolicy;
 
   const ExpenseClaimFormOptions({
     required this.defaultEmployee,
@@ -40,6 +42,7 @@ class ExpenseClaimFormOptions {
     required this.expenseApprovers,
     required this.expenseTypes,
     this.supportsMultipleExpenses = false,
+    this.businessPolicy = ApiBusinessPolicy.empty,
   });
 
   static List<ExpenseClaimOption> _readOptions(dynamic raw, String label) {
@@ -63,20 +66,28 @@ class ExpenseClaimFormOptions {
     return options;
   }
 
-  factory ExpenseClaimFormOptions.fromJson(Map<String, dynamic> json) =>
-      ExpenseClaimFormOptions(
-        defaultEmployee: json['employee']?.toString() ?? '',
-        defaultExpenseApprover: json['expense_approver']?.toString() ?? '',
-        currency: json['currency']?.toString() ?? '',
-        csrfToken: json['csrf_token']?.toString() ?? '',
-        supportsMultipleExpenses: json['supports_multiple_expenses'] == true,
-        employees: _readOptions(json['employee_options'], 'Employee'),
-        expenseApprovers: _readOptions(
-          json['expense_approver_options'],
-          'Expense Approver',
-        ),
-        expenseTypes: _readOptions(json['expense_types'], 'Expense Type'),
-      );
+  factory ExpenseClaimFormOptions.fromJson(Map<String, dynamic> json) {
+    final policy = ApiBusinessPolicy.fromApi(json['business_policy']);
+    final types = _readOptions(json['expense_types'], 'Expense Type');
+    final allowed = policy.options(
+      'expense_type',
+      types.map((row) => row.value).toList(),
+    );
+    return ExpenseClaimFormOptions(
+      businessPolicy: policy,
+      defaultEmployee: json['employee']?.toString() ?? '',
+      defaultExpenseApprover: json['expense_approver']?.toString() ?? '',
+      currency: json['currency']?.toString() ?? '',
+      csrfToken: json['csrf_token']?.toString() ?? '',
+      supportsMultipleExpenses: json['supports_multiple_expenses'] == true,
+      employees: _readOptions(json['employee_options'], 'Employee'),
+      expenseApprovers: _readOptions(
+        json['expense_approver_options'],
+        'Expense Approver',
+      ),
+      expenseTypes: types.where((row) => allowed.contains(row.value)).toList(),
+    );
+  }
 }
 
 class ExpenseClaimLine {
@@ -322,6 +333,7 @@ class ExpenseClaimApi {
     required String csrfToken,
     required List<String> billPaths,
     bool supportsMultipleExpenses = false,
+    ApiBusinessPolicy businessPolicy = ApiBusinessPolicy.empty,
   }) async {
     if (employee.trim().isEmpty || expenseApprover.trim().isEmpty) {
       throw StateError('Choose an Employee and Expense Approver.');
@@ -329,7 +341,8 @@ class ExpenseClaimApi {
     if (expenses.isEmpty) {
       throw StateError('Add at least one expense.');
     }
-    if (billPaths.isEmpty) {
+    if (billPaths.length <
+        (businessPolicy.data.isEmpty ? 1 : businessPolicy.minimumUploads)) {
       throw StateError('Attach a bill photo before submitting.');
     }
     if (!supportsMultipleExpenses &&
@@ -341,18 +354,35 @@ class ExpenseClaimApi {
     for (var index = 0; index < expenses.length; index++) {
       final row = expenses[index].toJson();
       final amount = double.tryParse(row['amount']!);
-      if (row['expense_type']!.isEmpty ||
+      if (businessPolicy.validate(
+                'expense_type',
+                row['expense_type'],
+                legacyRequired: true,
+              ) !=
+              null ||
           row['expense_date']!.isEmpty ||
-          row['description']!.isEmpty ||
+          businessPolicy.validate(
+                'description',
+                row['description'],
+                legacyRequired: true,
+              ) !=
+              null ||
           amount == null ||
           !amount.isFinite ||
-          amount <= 0) {
+          (businessPolicy.hasField('amount')
+              ? businessPolicy.validate('amount', row['amount']) != null
+              : amount <= 0)) {
         throw StateError(
           'Complete the required fields in expense ${index + 1}.',
         );
       }
     }
     final sid = await _sessionId();
+    final uploadError = await businessPolicy.validateUploads(billPaths);
+    if (uploadError != null) throw StateError(uploadError);
+    final maxRows = businessPolicy.rules['max_expense_rows'] as int? ?? 0;
+    if (maxRows > 0 && expenses.length > maxRows)
+      throw StateError('The permitted expense row count has been exceeded.');
     for (final billPath in billPaths) {
       if (!await File(billPath).exists()) {
         throw StateError(
@@ -390,7 +420,9 @@ class ExpenseClaimApi {
       });
       for (final billPath in billPaths) {
         request.files.add(
-          await platformMultipartFile('file', billPath,
+          await platformMultipartFile(
+            'file',
+            billPath,
             filename: path.basename(billPath),
           ),
         );
@@ -425,7 +457,7 @@ class ExpenseClaimApi {
       throw const FormatException('ERPNext did not return the new claim name.');
     }
     final billUrl = message['bill_file_url']?.toString() ?? '';
-    if (billUrl.isEmpty) {
+    if (billUrl.isEmpty && billPaths.isNotEmpty) {
       throw const FormatException(
         'ERPNext created the claim but did not confirm that the bill was attached.',
       );

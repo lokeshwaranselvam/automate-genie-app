@@ -16,6 +16,17 @@ http.Response options({String? token}) => http.Response(
       'lead_owner_name': 'Sales',
       'source_options': ['Website'],
       'product_category_options': ['Doors'],
+      'customer_category_options': ['B2B', 'B2C'],
+      'location_fields': {
+        'custom_citytown': {
+          'fieldtype': 'Select',
+          'options': ['Chennai', 'Madurai'],
+        },
+        'custom_district': {
+          'fieldtype': 'Select',
+          'options': ['Chennai - TN', 'Madurai - TN'],
+        },
+      },
       'csrf_token': token,
     },
   }),
@@ -36,7 +47,10 @@ Future<Map<String, dynamic>> submit({String token = ''}) => LeadApi.createLead(
   requirement: ' Doors & windows ',
   source: ' Website ',
   productCategory: ' Doors ',
+  customerCategory: ' B2B ',
   address: ' Chennai ',
+  cityTown: ' Chennai ',
+  district: ' Chennai - TN ',
   csrfToken: token,
 );
 
@@ -57,6 +71,35 @@ void main() {
       expect(LeadPhoneNumber.validateWhatsApp(value), isNull);
     }
     expect(LeadPhoneNumber.normalize('+91 (98765) 43210'), '+919876543210');
+  });
+
+  test(
+    'missing Customer Category contract requests the ERP API update',
+    () async {
+      await http.runWithClient(
+        () async {
+          await expectLater(LeadApi.getFormOptions(), throwsFormatException);
+        },
+        () => MockClient((_) async {
+          final data = jsonDecode(options().body) as Map<String, dynamic>;
+          (data['message'] as Map).remove('customer_category_options');
+          return http.Response(jsonEncode(data), 200);
+        }),
+      );
+    },
+  );
+
+  test('missing location field metadata requests an ERP API update', () async {
+    await http.runWithClient(
+      () async {
+        await expectLater(LeadApi.getFormOptions(), throwsFormatException);
+      },
+      () => MockClient((_) async {
+        final data = jsonDecode(options().body) as Map<String, dynamic>;
+        (data['message'] as Map).remove('location_fields');
+        return http.Response(jsonEncode(data), 200);
+      }),
+    );
   });
 
   test('invalid WhatsApp is rejected before any request', () async {
@@ -103,6 +146,7 @@ void main() {
         final form = await LeadApi.getFormOptions();
         expect(form.sourceOptions, ['Website']);
         expect(form.productCategoryOptions, ['Doors']);
+        expect(form.customerCategoryOptions, ['B2B', 'B2C']);
         expect((await submit(token: form.csrfToken!))['name'], 'LEAD-1');
       },
       () => MockClient((request) async {
@@ -118,7 +162,10 @@ void main() {
           'custom_requirement': 'Doors & windows',
           'source': 'Website',
           'custom_product_enquired': 'Doors',
+          'custom_customer_category': 'B2B',
           'custom_address': 'Chennai',
+          'custom_citytown': 'Chennai',
+          'custom_district': 'Chennai - TN',
           'csrf_token': 'form-token',
         });
         return created();

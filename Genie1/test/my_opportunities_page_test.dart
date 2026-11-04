@@ -44,7 +44,7 @@ void main() {
           await tester.tap(find.text('Follow-up'));
           await tester.pumpAndSettle();
           expect(filters.last, [
-            ['owner', '=', 'creator@example.test'],
+            ['opportunity_owner', '=', 'creator@example.test'],
             ['status', '=', 'Follow-up'],
           ]);
           expect(find.text('Status: Follow-up'), findsOneWidget);
@@ -53,7 +53,7 @@ void main() {
           await tester.tap(find.text('Clear filter'));
           await tester.pumpAndSettle();
           expect(filters.last, [
-            ['owner', '=', 'creator@example.test'],
+            ['opportunity_owner', '=', 'creator@example.test'],
           ]);
           await tester.pumpWidget(const SizedBox.shrink());
         },
@@ -71,11 +71,36 @@ void main() {
                       {
                         'fieldname': 'status',
                         'fieldtype': 'Select',
-                        'options': 'Open\nFollow-up',
+                        'options':
+                            'Open\nFollow-up\nDemo\nVC\nDuplicate Lead\nJunk\nNot Interested\nHot Followup\nRNR\nB2B Database',
                       },
                     ],
                   },
                 ],
+              }),
+              200,
+            );
+          }
+          if (request.url.path.endsWith('mobile_opportunity_policy')) {
+            return http.Response(
+              jsonEncode({
+                'message': {
+                  'current_user': 'creator@example.test',
+                  'editable_statuses': [
+                    'Open',
+                    'Follow-up',
+                    'Demo',
+                    'VC',
+                    'Duplicate Lead',
+                    'Junk',
+                    'Not Interested',
+                    'Hot Followup',
+                    'RNR',
+                    'B2B Database',
+                  ],
+                  'status_transitions': {},
+                  'followup_policy': {'allow_past': false, 'earliest_date': ''},
+                },
               }),
               200,
             );
@@ -103,9 +128,13 @@ void main() {
     if (request.url.path.endsWith('get_logged_user')) {
       return http.Response('{"message":"creator@example.test"}', 200);
     }
+    if (request.url.path.endsWith('get_value')) {
+      return http.Response('{"message":{"full_name":"Original Creator"}}', 200);
+    }
     final doc = {
       'name': 'OPP-1',
-      'owner': 'creator@example.test',
+      'owner': 'other.creator@example.test',
+      'opportunity_owner': 'creator@example.test',
       'customer_name': 'Customer One',
       'status': 'Open',
       'custom_requirement': 'Office doors',
@@ -122,47 +151,47 @@ void main() {
     );
   });
 
-  testWidgets(
-    'owned list opens full details including custom fields and child rows',
-    (tester) async {
-      await http.runWithClient(() async {
-        await tester.pumpWidget(const MaterialApp(home: MyOpportunitiesPage()));
-        await tester.pumpAndSettle();
-        expect(find.text('My Opportunities'), findsOneWidget);
-        await tester.tap(find.text('Customer One'));
-        await tester.pumpAndSettle();
-        expect(find.byType(OpportunityDetailsPage), findsOneWidget);
-        expect(find.text('Creator Full Name'), findsOneWidget);
-        expect(find.text('creator@example.test'), findsNothing);
-        expect(find.text('Office doors'), findsOneWidget);
-        await tester.scrollUntilVisible(
-          find.text('Row 1'),
-          200,
-          scrollable: find.byType(Scrollable).first,
-        );
-        await tester.pumpAndSettle();
-        await tester.ensureVisible(find.text('Row 1'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Row 1'));
-        await tester.pumpAndSettle();
-        await tester.scrollUntilVisible(
-          find.text('DOOR-1'),
-          120,
-          scrollable: find.byType(Scrollable).first,
-        );
-        expect(find.text('DOOR-1'), findsOneWidget);
-        expect(tester.takeException(), isNull);
-        await tester.pumpWidget(const SizedBox.shrink());
-      }, () => server());
-    },
-  );
+  testWidgets('Opportunity Owner opens details created by another user', (
+    tester,
+  ) async {
+    await http.runWithClient(() async {
+      await tester.pumpWidget(const MaterialApp(home: MyOpportunitiesPage()));
+      await tester.pumpAndSettle();
+      expect(find.text('Opportunities'), findsOneWidget);
+      await tester.tap(find.text('Customer One'));
+      await tester.pumpAndSettle();
+      expect(find.byType(OpportunityDetailsPage), findsOneWidget);
+      expect(find.text('Original Creator'), findsOneWidget);
+      // Opportunity Owner remains visible separately from Created By.
+      expect(find.text('creator@example.test'), findsOneWidget);
+      expect(find.text('Office doors'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('Row 1'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Row 1'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Row 1'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('DOOR-1'),
+        120,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('DOOR-1'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    }, () => server());
+  });
 
   testWidgets('empty list offers pull to refresh', (tester) async {
     await http.runWithClient(() async {
       await tester.pumpWidget(const MaterialApp(home: MyOpportunitiesPage()));
       await tester.pumpAndSettle();
       expect(
-        find.text('You have not created any opportunities yet.'),
+        find.text('No opportunities list you as Opportunity Owner.'),
         findsOneWidget,
       );
       expect(find.byType(RefreshIndicator), findsOneWidget);
@@ -197,7 +226,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(searches.last, isNull);
         expect(
-          find.text('You have not created any opportunities yet.'),
+          find.text('No opportunities list you as Opportunity Owner.'),
           findsOneWidget,
         );
         await tester.pumpWidget(const SizedBox.shrink());
@@ -208,7 +237,7 @@ void main() {
         }
         searches.add(request.url.queryParameters['or_filters']);
         expect(jsonDecode(request.url.queryParameters['filters']!), [
-          ['owner', '=', 'creator@example.test'],
+          ['opportunity_owner', '=', 'creator@example.test'],
         ]);
         return http.Response('{"data":[]}', 200);
       }),

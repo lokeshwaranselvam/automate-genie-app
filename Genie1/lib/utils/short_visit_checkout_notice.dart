@@ -1,7 +1,16 @@
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 /// Recognizes only the server's pending short-visit checkout restriction.
 /// Server HTML and its URL are never rendered or used for navigation.
 class ShortVisitCheckoutNotice {
-  static const url = 'https://16.itgenie.online/SVR';
+  /// SVR on the signed-in ERP site, so SessionWebView injects its session.
+  static String get url {
+    var site = dotenv.env['SITE_URL']?.trim() ?? '';
+    while (site.endsWith('/')) {
+      site = site.substring(0, site.length - 1);
+    }
+    return '$site/SVR';
+  }
   static const actionLabel = 'SVR';
   final int? pendingCount;
 

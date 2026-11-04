@@ -1,6 +1,9 @@
-import '../utils/platform/multipart_file.dart';
-import '../utils/platform/file_image.dart';
 import 'package:flutter/foundation.dart';
+import 'package:homegenie/utils/platform/file_image.dart';
+import 'package:homegenie/utils/platform/multipart_file.dart';
+import '../utils/api/notification_inbox.dart';
+import '../utils/event_category_policy.dart';
+import '../utils/api_business_policy.dart';
 import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
@@ -13,11 +16,11 @@ import 'package:homegenie/Screen/login.dart';
 
 import '../utils/api/event.dart';
 import '../utils/event_location_selection.dart';
+import '../utils/mock_location_guard.dart';
 import '../utils/api/image_upload_api.dart';
 import '../utils/api/session_auth.dart';
 import '../utils/widget/camera_service.dart';
 import '../utils/widget/gps_photo_stamper.dart';
-import '../utils/widget/location_permission_helper.dart';
 import '../utils/widget/glass_card.dart';
 import '../utils/widget/geofence_manager.dart';
 import '../utils/widget/warning.dart';
@@ -41,11 +44,20 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:homegenie/utils/widget/audio_recording_service.dart';
 import 'package:homegenie/utils/widget/live_location_service.dart';
 import '../utils/widget/home_back_button.dart';
+import '../utils/widget/completed_visit_attachments.dart';
+
+// Visit whose geofence is currently being monitored by GeofenceManager.
+String? _geofenceEventId;
 
 class EventDetails extends StatefulWidget {
   final String eventid;
+  final bool hideVisitActions;
 
-  const EventDetails({super.key, required this.eventid});
+  const EventDetails({
+    super.key,
+    required this.eventid,
+    this.hideVisitActions = false,
+  });
 
   @override
   State<EventDetails> createState() => _EventDetailsState();
@@ -63,19 +75,38 @@ class _EventDetailsState extends State<EventDetails> {
   File? capturedImage;
   String? selectedLocationType;
 
-  bool _isLoading = false;
+  bool _isLoading = true;
+  bool _fetchingDetails = false;
+  bool _checkingConnection = false;
+  bool _loadingVisitContext = false;
+  String? _detailsError;
+
+  bool get _canUseVisitActions =>
+      !_isLoading &&
+      !_loadingVisitContext &&
+      _detailsError == null &&
+      _visitEvent['name']?.toString() == widget.eventid;
   bool _isActionInProgress = false;
   bool _isLoadingDirections = false;
   bool _wasRecordingBeforeCall = false;
   bool _shouldStartNewRecordingAfterCall = false;
 
-  bool _isRecording = false;
+  // Seeded from the singleton service, which may still be recording from an
+  // earlier visit to this page.
+  bool _isRecording = AudioRecordingService().isRecording;
+  StreamSubscription<PhoneState>? _phoneStateSubscription;
 
   // ── Photo capture ──────────────────────────────────────────────────────────
   final List<File> _capturedPhotos = [];
   bool _isUploadingPhoto = false;
   // Photos already uploaded to this Event for checkout.
   int _uploadedCheckoutPhotos = 0;
+  int _savedVisitPhotoCount = 0;
+
+  // Display state only; checkout/upload validation keeps its existing rules.
+  bool get _checklistHasPhotos =>
+      _capturedPhotos.isNotEmpty ||
+      (_visitCheckedOut ? _savedVisitPhotoCount > 0 : _uploadedCheckoutPhotos > 0);
 
   // ── Geofence ───────────────────────────────────────────────────────────────
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -103,10 +134,6 @@ class _EventDetailsState extends State<EventDetails> {
         print("❌ Location permission denied");
       } else if (status.isGranted) {
         print("✅ Foreground location permission granted");
-
-        // Background location is asked once per install, not on every
-        // screen open; "While using the app" is enough for live tracking.
-        await LocationPermissionHelper.requestBackgroundOnce();
       } else if (status.isPermanentlyDenied) {
         print(
           "⚠️ Location permission permanently denied - opening app settings",
@@ -163,24 +190,35 @@ class _EventDetailsState extends State<EventDetails> {
   }
 
   Future<void> _startManualRecording() async {
-    await AudioRecordingService().startRecording();
+    final recordingService = AudioRecordingService();
+    // The service is a singleton that keeps recording after this page closes.
+    if (!recordingService.isRecording) {
+      await recordingService.startRecording();
+    }
+    if (!mounted) return;
     setState(() {
-      _isRecording = true;
+      _isRecording = recordingService.isRecording;
     });
   }
 
   Future<void> _stopManualRecording() async {
-    await AudioRecordingService().stopRecording();
+    final recordingService = AudioRecordingService();
+    if (recordingService.isRecording) {
+      await recordingService.stopRecording();
+    }
+    if (!mounted) return;
     setState(() {
-      _isRecording = false;
+      _isRecording = recordingService.isRecording;
     });
   }
 
   void _listenToPhoneState() async {
     if (kIsWeb) return;
     await Permission.phone.request();
+    if (!mounted) return;
 
-    PhoneState.stream.listen((PhoneState state) async {
+    await _phoneStateSubscription?.cancel();
+    _phoneStateSubscription = PhoneState.stream.listen((PhoneState state) async {
       final status = state.status;
       final recordingService = AudioRecordingService();
 
@@ -239,18 +277,88 @@ class _EventDetailsState extends State<EventDetails> {
 
   @override
   void dispose() {
+    _phoneStateSubscription?.cancel();
     _audioPlayer.dispose();
-    GeofenceManager.instance.stopMonitoring();
+    // Keep monitoring while the visit is still checked in; it is stopped on
+    // checkout and restored when the page is reopened.
+    if (identical(
+      GeofenceManager.instance.onStatusChange,
+      _geofenceStatusHandler,
+    )) {
+      GeofenceManager.instance.onStatusChange = null;
+    }
+    if (!_visitCheckedIn || _visitCheckedOut) {
+      unawaited(_stopGeofenceForEvent());
+    }
     super.dispose();
   }
 
   // ── Geofence ───────────────────────────────────────────────────────────────
 
   Future<void> _startGeofenceForEvent(double lat, double lng) async {
-    if (!_requiresEventGeofence) return;
+    if (!_requiresEventGeofence ||
+        !eventMonitoringEnabled(_reportLocationPolicy))
+      return;
 
-    GeofenceManager.instance.onStatusChange = (id, status) {
-      if (!mounted) return;
+    _attachGeofenceStatusHandler();
+
+    await GeofenceManager.instance.startMonitoring(
+      eventId: widget.eventid,
+      latitude: lat,
+      longitude: lng,
+      radiusMeters: eventMonitoringRadiusMeters(_reportLocationPolicy),
+    );
+    _geofenceEventId = widget.eventid;
+  }
+
+  /// Stops geofence monitoring only when it belongs to this visit (or its
+  /// owner is unknown), so another active visit keeps being monitored.
+  Future<void> _stopGeofenceForEvent() async {
+    if (_geofenceEventId != null && _geofenceEventId != widget.eventid) return;
+    await GeofenceManager.instance.stopMonitoring();
+    _geofenceEventId = null;
+  }
+
+  /// Restores geofence monitoring for a visit that is still checked in when
+  /// the page is reopened after check-in.
+  Future<void> _resumeGeofenceIfVisitActive() async {
+    if (!mounted || !_visitCheckedIn || _visitCheckedOut) return;
+    if (!_requiresEventGeofence ||
+        !eventMonitoringEnabled(_reportLocationPolicy))
+      return;
+
+    // Already monitoring this visit (e.g. started at check-in): only reattach
+    // the in-app handler instead of restarting the geofence.
+    if (GeofenceManager.instance.isRunning &&
+        _geofenceEventId == widget.eventid) {
+      _attachGeofenceStatusHandler();
+      return;
+    }
+
+    final locationTypes = _getAvailableLocationTypes();
+    final target =
+        _getLocationCoordinates(selectedLocationType) ??
+        _getLocationCoordinates(_mapLocationType) ??
+        (locationTypes.isEmpty
+            ? null
+            : _getLocationCoordinates(locationTypes.first));
+    if (target == null) return;
+
+    try {
+      await _startGeofenceForEvent(target.latitude, target.longitude);
+    } catch (error) {
+      debugPrint('Unable to resume event geofence: $error');
+    }
+  }
+
+  void Function(String, GeofenceStatus)? _geofenceStatusHandler;
+
+  void _attachGeofenceStatusHandler() {
+    GeofenceManager.instance.onStatusChange = _geofenceStatusHandler ??= (
+      id,
+      status,
+    ) {
+      if (!mounted || id != widget.eventid) return;
       final msg =
           status == GeofenceStatus.ENTER
               ? '📍 You have entered the event zone.'
@@ -268,13 +376,6 @@ class _EventDetailsState extends State<EventDetails> {
             : 'Info',
       );
     };
-
-    await GeofenceManager.instance.startMonitoring(
-      eventId: widget.eventid,
-      latitude: lat,
-      longitude: lng,
-      radiusMeters: 200,
-    );
   }
 
   // ── Photo capture & upload ─────────────────────────────────────────────────
@@ -313,6 +414,14 @@ class _EventDetailsState extends State<EventDetails> {
       lng: lng,
       address: address,
       title: 'Visit Check-out',
+      onStampFailed: (_) {
+        if (!mounted) return;
+        Warning.show(
+          context,
+          'GPS stamp could not be added; the photo will upload without it.',
+          'Warning',
+        );
+      },
     );
   }
 
@@ -463,12 +572,88 @@ class _EventDetailsState extends State<EventDetails> {
   bool _isNewVisit() => _getParticipantVisitType().toLowerCase() == 'new';
 
   bool _requiresLocationBeforeCheckout() {
-    return _isSiteVisitEvent() && _isNewVisit();
+    return _requiresLocationBeforeCheckIn() &&
+        _isSiteVisitEvent() &&
+        _isNewVisit();
+  }
+
+  bool get _requiresCheckoutDestination =>
+      _requiresSavedEventLocation &&
+      eventRequiresCheckoutLocation(
+        _reportLocationPolicy,
+        category: _visitEvent['event_category']?.toString().trim() ?? '',
+        visitType: _getParticipantVisitType(),
+        legacyRequired: _requiresLocationBeforeCheckout(),
+      );
+
+  Map<String, dynamic> _reportLocationPolicy = {};
+  ApiBusinessPolicy _visitBusinessPolicy = ApiBusinessPolicy.empty;
+  bool _visitActionAllowed(String action, bool legacyPhase) =>
+      _visitBusinessPolicy.data['actions'] is Map
+          ? _visitBusinessPolicy.actionBlockReason(
+                action,
+                allowPreparation: true,
+              ) ==
+              null
+          : legacyPhase;
+  void _applyVisitBusinessPolicy(ApiBusinessPolicy policy) {
+    _visitBusinessPolicy = policy;
+    if (policy.uploads['current_count'] is int)
+      _uploadedCheckoutPhotos = policy.uploads['current_count'] as int;
+    _reportLocationPolicy = {
+      ..._reportLocationPolicy,
+      ...Map<String, dynamic>.from(policy.rules),
+      'requires_checkout_photo': policy.minimumUploads > 0,
+    };
+  }
+
+  bool get _requiresSavedEventLocation => eventRequiresSavedLocation({
+    'event': _visitEvent,
+    'requires_saved_location': _reportLocationPolicy['requires_saved_location'],
+  });
+
+  Future<void> _loadVisitLocationPolicy() async {
+    try {
+      final report = await Event.getVisitReport(
+        widget.eventid,
+      ).timeout(const Duration(seconds: 15));
+      if (mounted) {
+        setState(
+          () =>
+              _reportLocationPolicy = {
+                for (final key in [
+                  'requires_saved_location',
+                  'visit_geofencing_enabled',
+                  'requires_checkout_photo',
+                  'visit_checkin_radius_meters',
+                  'visit_monitoring_enabled',
+                  'visit_monitoring_radius_meters',
+                  'checkout_location_categories',
+                  'checkout_location_visit_types',
+                ])
+                  key: report[key],
+              },
+        );
+        if (report['visit_policy'] != null) {
+          final policy = await Event.getBusinessPolicy(
+            'visit',
+            eventId: widget.eventid,
+          );
+          if (!mounted) return;
+          setState(() => _applyVisitBusinessPolicy(policy));
+        }
+        if (!eventGeofencingEnabled(_reportLocationPolicy)) {
+          await _stopGeofenceForEvent();
+        }
+      }
+    } catch (error) {
+      // Older/unavailable report APIs preserve the original category rules.
+      debugPrint('Unable to load visit location policy: $error');
+    }
   }
 
   bool _requiresPhotoBeforeCheckout() {
-    // A photo is mandatory before checking out of any event.
-    return true;
+    return eventRequiresCheckoutPhoto(_reportLocationPolicy);
   }
 
   bool _hasCapturedCheckoutPhoto() {
@@ -476,7 +661,9 @@ class _EventDetailsState extends State<EventDetails> {
   }
 
   bool _requiresLocationBeforeCheckIn() {
-    return true;
+    return !isLocationFreeEventCategory(
+      _visitEvent['event_category'] ?? _visitEvent['custom_event_category'],
+    );
   }
 
   List<String> _getAvailableLocationTypes() {
@@ -487,7 +674,8 @@ class _EventDetailsState extends State<EventDetails> {
           .toList();
     }
 
-    return ["Site", "Office", "Home"];
+    // Location-free categories have no destination or location choices.
+    return [];
   }
 
   List<String> _getLocationOptionLabels() {
@@ -801,8 +989,9 @@ class _EventDetailsState extends State<EventDetails> {
     }
   }
 
-  // The API decides the exception; older responses keep geofencing enabled.
-  bool get _requiresEventGeofence => eventData['requires_geofence'] != false;
+  bool get _requiresEventGeofence =>
+      eventGeofencingEnabled(_reportLocationPolicy) &&
+      eventRequiresGeofence(eventData);
 
   bool _isWithinAllowedLocation({
     required double currentLat,
@@ -822,7 +1011,7 @@ class _EventDetailsState extends State<EventDetails> {
       target.longitude,
     );
 
-    return distance <= 100;
+    return distance <= eventCheckInRadiusMeters(_reportLocationPolicy);
   }
 
   void _resetSelectedLocation() {
@@ -866,7 +1055,13 @@ class _EventDetailsState extends State<EventDetails> {
     required double lng,
     required String address,
   }) async {
-    if (_requiresLocationBeforeCheckIn()) {
+    final event = eventData['event'];
+    final hasSavedLocation = eventHasCheckInLocation(
+      event is Map ? event : const {},
+      _savedOpportunityLocations,
+    );
+    if (_requiresSavedEventLocation ||
+        (_requiresLocationBeforeCheckIn() && hasSavedLocation)) {
       if (!_useSavedEventLocation()) return;
       if (selectedLocationType == null) {
         Warning.show(
@@ -887,9 +1082,11 @@ class _EventDetailsState extends State<EventDetails> {
       }
 
       if (!_isWithinAllowedLocation(currentLat: lat, currentLng: lng)) {
+        final radius = eventCheckInRadiusMeters(_reportLocationPolicy);
+        final radiusLabel = radius.toStringAsFixed(radius % 1 == 0 ? 0 : 1);
         Warning.show(
           context,
-          'You must be within 100m of the selected customer location to check in.',
+          'You must be within ${radiusLabel}m of the selected customer location to check in.',
           'Location Restriction',
         );
         return;
@@ -964,6 +1161,15 @@ class _EventDetailsState extends State<EventDetails> {
     if (!mounted) return;
     setState(() {
       eventData = {...eventData, 'event': updatedEvent};
+      if (_visitBusinessPolicy.data['actions'] is Map) {
+        _visitBusinessPolicy = ApiBusinessPolicy({
+          ..._visitBusinessPolicy.data,
+          'actions': {
+            for (final action in ['check_in', 'check_out'])
+              action: {'allowed': false, 'reason': 'Refreshing visit actions.'},
+          },
+        });
+      }
     });
   }
 
@@ -995,6 +1201,13 @@ class _EventDetailsState extends State<EventDetails> {
         };
       });
       await _loadUserFullNames(response);
+      if (_visitBusinessPolicy.data.isNotEmpty) {
+        final policy = await Event.getBusinessPolicy(
+          'visit',
+          eventId: widget.eventid,
+        );
+        if (mounted) setState(() => _applyVisitBusinessPolicy(policy));
+      }
     } catch (error) {
       debugPrint('Unable to refresh visit details after status update: $error');
     }
@@ -1048,6 +1261,25 @@ class _EventDetailsState extends State<EventDetails> {
       context,
       beforeCheckout: () async {
         if (!mounted) return false;
+        if (_capturedPhotos.length + _uploadedCheckoutPhotos <
+            _visitBusinessPolicy.minimumUploads) {
+          Warning.show(
+            context,
+            'Capture the required visit photos before checkout.',
+            'Warning',
+          );
+          return false;
+        }
+        final uploadError = await _visitBusinessPolicy.validateUploads(
+          _capturedPhotos.map((file) => file.path).toList(),
+          enforceMinimum: false,
+        );
+        if (uploadError != null) {
+          if (mounted) Warning.show(context, uploadError, 'Warning');
+          return false;
+        }
+        if (!_requiresPhotoBeforeCheckout() && _capturedPhotos.isEmpty)
+          return true;
         final photosUploaded = await _uploadCheckoutPhotosBeforeCheckout(
           lat: lat,
           lng: lng,
@@ -1116,6 +1348,11 @@ class _EventDetailsState extends State<EventDetails> {
     // Attendance check-in owns the day's live tracking. Only stop it here when
     // the employee is not checked in for the day, otherwise the rest of the
     // shift would go untracked after a single visit checkout.
+    try {
+      await _stopGeofenceForEvent();
+    } catch (error) {
+      debugPrint('Unable to stop event geofence after checkout: $error');
+    }
     final attendanceCheckedIn =
         prefs.getBool('is_employee_checked_in') ?? false;
     if (!attendanceCheckedIn) {
@@ -1162,6 +1399,9 @@ class _EventDetailsState extends State<EventDetails> {
       if (AudioRecordingService().isRecording) {
         await AudioRecordingService().stopRecording();
       }
+      if (mounted) {
+        setState(() => _isRecording = AudioRecordingService().isRecording);
+      }
       final paths = AudioRecordingService().getAllRecordingPaths();
       for (final path in paths) {
         if (File(path).existsSync()) {
@@ -1182,63 +1422,66 @@ class _EventDetailsState extends State<EventDetails> {
   }
 
   Future<void> _checkPing() async {
+    if (!mounted || _checkingConnection || _fetchingDetails) return;
+    _checkingConnection = true;
+    setState(() {
+      _isLoading = true;
+      _detailsError = null;
+    });
     try {
-      var connectivity = await Connectivity().checkConnectivity();
+      var connectivity = await Connectivity().checkConnectivity().timeout(
+        const Duration(seconds: 10),
+      );
 
       bool noInternet = false;
-
-      if (connectivity == ConnectivityResult.none) {
-        noInternet = true;
-      }
 
       if (connectivity.contains(ConnectivityResult.none)) {
         noInternet = true;
       }
 
       if (noInternet) {
-        Warning.show(
-          context,
-          'No Internet Connection! Please check your network.',
-          'Error',
+        throw StateError('No Internet Connection! Please check your network.');
+      }
+      if (!mounted) return;
+      var pingResult = await Check.pingpong().timeout(
+        const Duration(seconds: 12),
+      );
+      if (!mounted) return;
+      if (pingResult == false) {
+        throw StateError('ERP Site is not available. Please try again.');
+      }
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? "";
+      final email = prefs.getString('email') ?? "";
+
+      final sessionValid = await Check.sessionActive(
+        token,
+        email,
+      ).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+
+      if (!sessionValid) {
+        Warning.show(context, 'Session expired. Please log in again.', 'Error');
+        await LiveLocationService.stopForSignOut();
+        await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
+        if (!mounted) return;
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const Login()),
+          (route) => false,
         );
         return;
       }
-      var pingResult = await Check.pingpong();
-      if (pingResult == false) {
-        Warning.show(
-          context,
-          'ERP Site is not in working condition! Please try again later.',
-          'Error',
-        );
-      } else {
-        final prefs = await SharedPreferences.getInstance();
-        final token = prefs.getString('token') ?? "";
-        final email = prefs.getString('email') ?? "";
-
-        final sessionValid = await Check.sessionActive(token, email);
-
-        if (!sessionValid) {
-          Warning.show(
-            context,
-            'Session expired. Please log in again.',
-            'Error',
-          );
-          await LiveLocationService.stopForSignOut();
-          await prefs.clear();
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const Login()),
-            (route) => false,
-          );
-          return;
-        }
-        if (!mounted) return;
+      if (!mounted) return;
+      await _init();
+    } catch (e) {
+      if (mounted) {
         setState(() {
           _isLoading = false;
+          _detailsError = _detailsErrorMessage(e);
         });
-        _init();
       }
-    } catch (e) {
-      print('Error during ping: $e');
+    } finally {
+      _checkingConnection = false;
     }
   }
 
@@ -1249,22 +1492,62 @@ class _EventDetailsState extends State<EventDetails> {
     setState(() {});
   }
 
+  String _detailsErrorMessage(Object error) =>
+      error is TimeoutException
+          ? 'Task details timed out. Check your connection and retry.'
+          : error
+              .toString()
+              .replaceFirst('Bad state: ', '')
+              .replaceFirst('Exception: ', '');
+
   Future<void> _fetchData() async {
-    if (!mounted) return;
+    if (!mounted || _fetchingDetails) return;
+    _fetchingDetails = true;
     setState(() {
       _isLoading = true;
+      _detailsError = null;
+      _loadingVisitContext = true;
       _resetSelectedLocation();
       _participantVisitType = null;
       _savedOpportunityLocations = [];
+      _reportLocationPolicy = {};
       _mapLocationType = null;
     });
+    try {
+      await _fetchEventDetails();
+      if (!mounted) return;
+      // Names are display-only and must never hold the task body or actions.
+      unawaited(_loadDisplayNames());
+      setState(() => _isLoading = false);
+      // Destination and visit-type rules must finish before enabling writes.
+      await Future.wait([
+        _loadVisitLocationPolicy(),
+        if (_requiresLocationBeforeCheckIn())
+          _loadOpportunityLocations().timeout(const Duration(seconds: 15)),
+        _loadParticipantVisitType().timeout(const Duration(seconds: 15)),
+      ]);
+      // Policy and locations are loaded; restore monitoring for a visit that
+      // is still checked in after the page was closed and reopened.
+      if (mounted) unawaited(_resumeGeofenceIfVisitActive());
+    } catch (error) {
+      if (mounted) setState(() => _detailsError = _detailsErrorMessage(error));
+    } finally {
+      _fetchingDetails = false;
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _loadingVisitContext = false;
+        });
+      }
+    }
+  }
 
-    await Future.wait([_fetchEventDetails()]);
-
-    if (!mounted) return;
-    setState(() {
-      _isLoading = false;
-    });
+  Future<void> _loadDisplayNames() async {
+    try {
+      await _loadUserFullNames(eventData).timeout(const Duration(seconds: 12));
+    } catch (error) {
+      debugPrint('Unable to resolve task display names: $error');
+    }
   }
 
   Future<void> _loadParticipantVisitType() async {
@@ -1328,19 +1611,20 @@ class _EventDetailsState extends State<EventDetails> {
   }
 
   Future<void> _fetchEventDetails() async {
-    final response = await Event.eventdetails(widget.eventid, context);
+    final response = await Event.eventdetails(
+      widget.eventid,
+      context,
+    ).timeout(const Duration(seconds: 25));
     if (!mounted) return;
-    if (response != Null) {
-      setState(() {
-        eventData = response;
-      });
-      // Show the Event's saved coordinate URL immediately. An ancillary user
-      // or visit-type lookup must not prevent the map from being initialized.
-      _applyEventLocations([]);
-      await _loadOpportunityLocations();
-      await _loadUserFullNames(response is Map ? response : {});
-      await _loadParticipantVisitType();
+    if (response is! Map ||
+        response['event'] is! Map ||
+        response['event']['name']?.toString() != widget.eventid) {
+      throw StateError(
+        'ERP did not return valid details for this task. Please retry.',
+      );
     }
+    setState(() => eventData = Map<String, dynamic>.from(response));
+    _applyEventLocations([]);
   }
 
   Future<void> _loadUserFullNames(Map response) async {
@@ -1426,7 +1710,9 @@ class _EventDetailsState extends State<EventDetails> {
       request.fields['docname'] = docname;
       request.headers['Authorization'] = token;
       request.files.add(
-        await platformMultipartFile('file', filePath,
+        await platformMultipartFile(
+          'file',
+          filePath,
           filename: kIsWeb ? filePath.split('/').last : 'event.mp3',
         ),
       );
@@ -1468,41 +1754,6 @@ class _EventDetailsState extends State<EventDetails> {
     }
   }
 
-  bool _isTodayEvent() {
-    final startsOn = eventData['event']?['starts_on']?.toString();
-    if (startsOn == null || startsOn.isEmpty) {
-      debugPrint(
-        '[EventDetails] starts_on missing for event ${widget.eventid}: ${eventData['event']}',
-      );
-      return false;
-    }
-
-    try {
-      final eventDate = DateTime.parse(startsOn);
-      final today = DateTime.now();
-
-      // Extract date only (ignore time) - like DATE() in SQL
-      final eventDateOnly = DateTime(
-        eventDate.year,
-        eventDate.month,
-        eventDate.day,
-      );
-      final todayOnly = DateTime(today.year, today.month, today.day);
-
-      debugPrint(
-        '[EventDetails] Comparing dates for event ${widget.eventid}: '
-        'eventDate=$eventDateOnly, today=$todayOnly',
-      );
-
-      return eventDateOnly.isAtSameMomentAs(todayOnly);
-    } catch (e) {
-      debugPrint(
-        '[EventDetails] invalid starts_on for event ${widget.eventid}: $startsOn, error=$e',
-      );
-      return false;
-    }
-  }
-
   Future<Position> _getCurrentVisitPosition() async {
     final cached = _employeeMapPosition;
     if (cached != null) {
@@ -1510,39 +1761,38 @@ class _EventDetailsState extends State<EventDetails> {
       if (!age.isNegative &&
           age <= const Duration(seconds: 15) &&
           cached.accuracy <= 50) {
-        return cached;
+        return requireRealPosition(cached);
       }
     }
 
-    final position = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        timeLimit: Duration(seconds: 15),
+    final position = requireRealPosition(
+      await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
+        ),
       ),
     );
     if (mounted) setState(() => _employeeMapPosition = position);
     return position;
   }
 
-  Future<void> _handleVisitCheckInOut() async {
-    if (_isActionInProgress) return;
+  Future<void> _handleVisitCheckInOut({String? action}) async {
+    if (_isActionInProgress || !_canUseVisitActions) return;
     setState(() => _isActionInProgress = true);
     var timeoutStage = 'GPS location lookup';
     try {
-      if (!_isTodayEvent()) {
-        Warning.show(
-          context,
-          'You can only check in/out on the event day.',
-          'Invalid Date',
-        );
-        return;
-      }
-
       final event = _visitEvent;
       final checkIn = event['custom_check_in']?.toString().trim() ?? '';
       final checkOut = event['custom_check_out']?.toString().trim() ?? '';
-      final startingVisit = checkIn.isEmpty && checkOut.isEmpty;
-      final endingVisit = checkIn.isNotEmpty && checkOut.isEmpty;
+      final startingVisit =
+          action != null
+              ? action == 'check_in'
+              : checkIn.isEmpty && checkOut.isEmpty;
+      final endingVisit =
+          action != null
+              ? action == 'check_out'
+              : checkIn.isNotEmpty && checkOut.isEmpty;
       if (!startingVisit && !endingVisit) {
         Warning.show(
           context,
@@ -1552,25 +1802,26 @@ class _EventDetailsState extends State<EventDetails> {
         return;
       }
 
-      // A visit check-in is only allowed after the employee's attendance
-      // check-in for the day, verified against the server's current status.
-      if (startingVisit) {
-        timeoutStage = 'attendance status check';
-        final blockReason = await Check.eventCheckinBlockReason(
-          prefs.getString('email'),
-        );
-        if (blockReason != null) {
-          if (mounted) {
-            Warning.show(context, blockReason, 'Employee Check-in required');
-          }
-          return;
-        }
-        timeoutStage = 'GPS location lookup';
+      timeoutStage = 'visit action permission check';
+      final policy = await Event.getBusinessPolicy(
+        'visit',
+        eventId: widget.eventid,
+      );
+      if (!mounted) return;
+      setState(() => _applyVisitBusinessPolicy(policy));
+      final blockReason = policy.actionBlockReason(
+        startingVisit ? 'check_in' : 'check_out',
+        allowPreparation: endingVisit && _capturedPhotos.isNotEmpty,
+      );
+      if (blockReason != null) {
+        Warning.show(context, blockReason, 'Visit action unavailable');
+        return;
       }
+      timeoutStage = 'GPS location lookup';
 
       // Use only the location saved when creating the Event; no chooser.
       if (startingVisit &&
-          _requiresLocationBeforeCheckIn() &&
+          _requiresSavedEventLocation &&
           !_useSavedEventLocation()) {
         return;
       }
@@ -1581,7 +1832,7 @@ class _EventDetailsState extends State<EventDetails> {
         return;
       }
       if (endingVisit &&
-          _requiresLocationBeforeCheckout() &&
+          _requiresCheckoutDestination &&
           !_useSavedEventLocation()) {
         return;
       }
@@ -1744,8 +1995,7 @@ class _EventDetailsState extends State<EventDetails> {
       ('Site visit started', checkIn.isNotEmpty, checkIn),
       (
         'Photos captured',
-        _capturedPhotos.isNotEmpty ||
-            (_visitCheckedOut && _requiresPhotoBeforeCheckout()),
+        _checklistHasPhotos,
         _capturedPhotos.isNotEmpty
             ? '${_capturedPhotos.length} photo(s) ready'
             : '',
@@ -1852,10 +2102,6 @@ class _EventDetailsState extends State<EventDetails> {
         participants.isEmpty ? <String, dynamic>{} : participants.first;
     final customer = _visitCustomer;
     final subject = _visitField('subject', fallback: 'Site Visit');
-    final department = _visitField(
-      'department',
-      fallback: participant['department']?.toString() ?? '',
-    );
     final assignedTo = _displayUserName(
       _visitField('assigned_to', fallback: _visitField('owner')),
     );
@@ -1868,8 +2114,7 @@ class _EventDetailsState extends State<EventDetails> {
     final completedChecklistCount =
         [
           checkedIn,
-          _capturedPhotos.isNotEmpty ||
-              (checkedOut && _requiresPhotoBeforeCheckout()),
+          _checklistHasPhotos,
           checkedIn,
           checkedOut,
         ].where((value) => value).length;
@@ -1895,11 +2140,31 @@ class _EventDetailsState extends State<EventDetails> {
               : PullToRefresh(
                 onRefresh: () async {
                   await _checkPing();
-                  await _fetchData();
                 },
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
                   children: [
+                    if (_detailsError != null) ...[
+                      Text(
+                        _detailsError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: _fetchingDetails ? null : _checkPing,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry task details'),
+                        ),
+                      ),
+                    ],
+                    if (_loadingVisitContext)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 12),
+                        child: Text('Loading visit location and rules...'),
+                      ),
                     Text(
                       subject,
                       style: const TextStyle(
@@ -1969,8 +2234,13 @@ class _EventDetailsState extends State<EventDetails> {
                                 const SizedBox(width: 14),
                                 Expanded(
                                   child: _visitInfoPair(
-                                    'Department',
-                                    department,
+                                    'Visit Category',
+                                    _visitField(
+                                      'event_category',
+                                      fallback: _visitField(
+                                        'custom_event_category',
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ],
@@ -1979,7 +2249,7 @@ class _EventDetailsState extends State<EventDetails> {
                               children: [
                                 Expanded(
                                   child: _visitInfoPair(
-                                    'Assigned To',
+                                    'Assigned By',
                                     assignedTo,
                                   ),
                                 ),
@@ -2038,78 +2308,87 @@ class _EventDetailsState extends State<EventDetails> {
                     _visitChecklistRow('Site visit started', checkedIn),
                     _visitChecklistRow(
                       'Photos captured',
-                      _capturedPhotos.isNotEmpty ||
-                          _uploadedCheckoutPhotos > 0 ||
-                          (checkedOut && _requiresPhotoBeforeCheckout()),
+                      _checklistHasPhotos,
                     ),
                     _visitChecklistRow('Customer location verified', checkedIn),
                     _visitChecklistRow('Site visit completed', checkedOut),
                     const Divider(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Attachments (${_capturedPhotos.length})',
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFF202B3C),
-                            ),
-                          ),
-                        ),
-                        if (_isUploadingPhoto)
-                          const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      height: 82,
-                      child: ListView(
-                        scrollDirection: Axis.horizontal,
+                    if (checkedOut)
+                      CompletedVisitAttachments(
+                        key: ValueKey(widget.eventid),
+                        eventId: widget.eventid,
+                        onImageCountLoaded: (count) {
+                          if (!mounted || count == _savedVisitPhotoCount) return;
+                          setState(() => _savedVisitPhotoCount = count);
+                        },
+                      )
+                    else ...[
+                      Row(
                         children: [
-                          for (var i = 0; i < _capturedPhotos.length; i++)
-                            _capturedPhotoTile(i),
-                          if (checkedIn && !checkedOut)
-                            SizedBox(
-                              width: 82,
-                              height: 82,
-                              child: OutlinedButton(
-                                onPressed:
-                                    _isUploadingPhoto
-                                        ? null
-                                        : _capturePhotoForCheckout,
-                                style: OutlinedButton.styleFrom(
-                                  side: const BorderSide(
-                                    color: Color(0xFFDCE2E8),
-                                  ),
-                                  shape: const StadiumBorder(),
-                                ),
-                                child: const Icon(
-                                  Icons.add_rounded,
-                                  color: BrandColors.ink,
-                                  size: 28,
-                                ),
+                          Expanded(
+                            child: Text(
+                              'Attachments (${_capturedPhotos.length})',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF202B3C),
                               ),
                             ),
-                          if (_capturedPhotos.isEmpty &&
-                              (!checkedIn || checkedOut))
-                            const Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                'No attachments yet',
-                                style: TextStyle(
-                                  color: Color(0xFF7B8492),
-                                  fontSize: 12,
-                                ),
-                              ),
+                          ),
+                          if (_isUploadingPhoto)
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             ),
                         ],
                       ),
-                    ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 82,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            for (var i = 0; i < _capturedPhotos.length; i++)
+                              _capturedPhotoTile(i),
+                            if (checkedIn && !checkedOut)
+                              SizedBox(
+                                width: 82,
+                                height: 82,
+                                child: OutlinedButton(
+                                  onPressed:
+                                      _isUploadingPhoto
+                                          ? null
+                                          : _capturePhotoForCheckout,
+                                  style: OutlinedButton.styleFrom(
+                                    side: const BorderSide(
+                                      color: Color(0xFFDCE2E8),
+                                    ),
+                                    shape: const StadiumBorder(),
+                                  ),
+                                  child: const Icon(
+                                    Icons.add_rounded,
+                                    color: BrandColors.ink,
+                                    size: 28,
+                                  ),
+                                ),
+                              ),
+                            if (_capturedPhotos.isEmpty &&
+                                (!checkedIn || checkedOut))
+                              const Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  'No attachments yet',
+                                  style: TextStyle(
+                                    color: Color(0xFF7B8492),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
                     if (checkedIn &&
                         !checkedOut &&
                         _requiresPhotoBeforeCheckout()) ...[
@@ -2200,88 +2479,121 @@ class _EventDetailsState extends State<EventDetails> {
                             'Contact',
                             participant['contact_mobile']?.toString() ?? '',
                           ),
-                          _detailInfo(
-                            'Location',
-                            eventSavedLocationType(
-                                  _visitEvent,
-                                  _savedOpportunityLocations,
-                                ) ??
-                                'Not specified',
-                          ),
+                          if (_requiresLocationBeforeCheckIn())
+                            _detailInfo(
+                              'Location',
+                              eventSavedLocationType(
+                                    _visitEvent,
+                                    _savedOpportunityLocations,
+                                  ) ??
+                                  'Not specified',
+                            ),
                           _detailInfo(
                             'Event Owner',
                             _displayUserName(_visitField('owner')),
                           ),
-                          _buildCustomerLocationMap(),
+                          if (_requiresLocationBeforeCheckIn())
+                            _buildCustomerLocationMap(),
                         ],
                       ),
                     ),
                   ],
                 ),
               ),
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: Container(
-          color: Colors.white,
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-          child: Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  onPressed:
-                      !checkedIn && !checkedOut && !_isActionInProgress
-                          ? _handleVisitCheckInOut
-                          : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: BrandColors.ink,
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor:
-                        checkedIn ? const Color(0xFFE8F6EF) : Colors.black12,
-                    disabledForegroundColor:
-                        checkedIn ? const Color(0xFF219653) : Colors.black45,
-                    minimumSize: const Size.fromHeight(46),
-                    shape: const StadiumBorder(),
-                  ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
-                  child: const Text(
-                    'Check In',
-                    style: TextStyle(fontWeight: FontWeight.w700),
+      bottomNavigationBar: Visibility(
+        visible: !widget.hideVisitActions,
+        child: SafeArea(
+          top: false,
+          child: Container(
+            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Tooltip(
+                    message:
+                        _visitBusinessPolicy.data['actions'] is Map
+                            ? (_visitBusinessPolicy.actionBlockReason(
+                                  'check_in',
+                                ) ??
+                                '')
+                            : '',
+                    child: ElevatedButton(
+                      onPressed:
+                          _canUseVisitActions &&
+                                  _visitActionAllowed(
+                                    'check_in',
+                                    !checkedIn && !checkedOut,
+                                  ) &&
+                                  !_isActionInProgress
+                              ? () => _handleVisitCheckInOut(action: 'check_in')
+                              : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: BrandColors.ink,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor:
+                            checkedIn ? const Color(0xFFE8F6EF) : Colors.black12,
+                        disabledForegroundColor:
+                            checkedIn ? const Color(0xFF219653) : Colors.black45,
+                        minimumSize: const Size.fromHeight(46),
+                        shape: const StadiumBorder(),
+                      ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
+                      child: const Text(
+                        'Check In',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed:
-                      checkedIn && !checkedOut && !_isActionInProgress
-                          ? _handleVisitCheckInOut
-                          : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: BrandColors.ink,
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor:
-                        checkedOut ? const Color(0xFFE8F6EF) : Colors.black12,
-                    disabledForegroundColor:
-                        checkedOut ? const Color(0xFF219653) : Colors.black45,
-                    minimumSize: const Size.fromHeight(46),
-                    shape: const StadiumBorder(),
-                  ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
-                  child:
-                      _isActionInProgress
-                          ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                          : const Text(
-                            'Check Out',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Tooltip(
+                    message:
+                        _visitBusinessPolicy.data['actions'] is Map
+                            ? (_visitBusinessPolicy.actionBlockReason(
+                                  'check_out',
+                                ) ??
+                                '')
+                            : '',
+                    child: ElevatedButton(
+                      onPressed:
+                          _canUseVisitActions &&
+                                  _visitActionAllowed(
+                                    'check_out',
+                                    checkedIn && !checkedOut,
+                                  ) &&
+                                  !_isActionInProgress
+                              ? () => _handleVisitCheckInOut(action: 'check_out')
+                              : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: BrandColors.ink,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor:
+                            checkedOut ? const Color(0xFFE8F6EF) : Colors.black12,
+                        disabledForegroundColor:
+                            checkedOut ? const Color(0xFF219653) : Colors.black45,
+                        minimumSize: const Size.fromHeight(46),
+                        shape: const StadiumBorder(),
+                      ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
+                      child:
+                          _isActionInProgress
+                              ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                              : const Text(
+                                'Check Out',
+                                style: TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                    ),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

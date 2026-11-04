@@ -110,34 +110,7 @@ def get_expense_approver_options(employee):
     if primary_approver:
         approver_names.append(primary_approver)
 
-    if employee.get("department"):
-        department_rows = frappe.get_all(
-            "Department Approver",
-            filters={
-                "parent": employee.department,
-                "parentfield": "expense_approvers",
-            },
-            fields=["approver"],
-            order_by="idx asc",
-            limit_page_length=500,
-        )
-        for row in department_rows:
-            if row.approver and row.approver not in approver_names:
-                approver_names.append(row.approver)
-
-    # If HR has not assigned an approver to this employee or department, offer
-    # enabled users with the Expense Approver role as searchable suggestions.
-    if not approver_names:
-        role_rows = frappe.get_all(
-            "Has Role",
-            filters={"role": "Expense Approver", "parenttype": "User"},
-            fields=["parent"],
-            limit_page_length=1000,
-        )
-        for row in role_rows:
-            if row.parent and row.parent not in approver_names:
-                approver_names.append(row.parent)
-
+    # Only the selected Employee's expense_approver is eligible.
     if not approver_names:
         return {"options": [], "default_approver": ""}
 
@@ -177,40 +150,13 @@ def get_expense_approver_options(employee):
 
 
 def is_allowed_expense_approver(employee, approver_name):
+    if not approver_name or employee.get("expense_approver") != approver_name:
+        return False
+
     if not frappe.db.exists("User", {"name": approver_name, "enabled": 1}):
         return False
 
-    has_configured_approver = bool(employee.get("expense_approver"))
-    if employee.get("expense_approver") == approver_name:
-        return True
-
-    if employee.get("department"):
-        department_filters = {
-            "parent": employee.department,
-            "parentfield": "expense_approvers",
-        }
-        if frappe.db.exists(
-            "Department Approver",
-            dict(department_filters, approver=approver_name),
-        ):
-            return True
-
-        if frappe.db.exists("Department Approver", department_filters):
-            has_configured_approver = True
-
-    if has_configured_approver:
-        return False
-
-    return bool(
-        frappe.db.exists(
-            "Has Role",
-            {
-                "parent": approver_name,
-                "parenttype": "User",
-                "role": "Expense Approver",
-            },
-        )
-    )
+    return True
 
 
 def get_form_options(employee_name=None):
@@ -222,7 +168,7 @@ def get_form_options(employee_name=None):
     default_approver = approver_data["default_approver"]
     if not approver_options:
         frappe.throw(
-            "No enabled Expense Approver is configured for this employee, department, or Expense Approver role."
+            "Set an enabled Expense Approver in the selected Employee's expense_approver field."
         )
 
     company = frappe.db.get_value(
@@ -274,13 +220,35 @@ def skip_expense_claim_after_insert():
     return
 
 
+def find_recent_duplicate_claim(employee_name, approver, expenses):
+    # The mobile client sends no idempotency key. An identical draft claim by
+    # the same user for the same employee within two minutes is a retry.
+    wanted = [(row["expense_type"] or "", str(row["expense_date"]), round(row["amount"], 2),
+        row["description"] or "") for row in expenses]
+    recent = frappe.get_all("Expense Claim", filters={
+        "owner": current_user, "employee": employee_name, "expense_approver": approver, "docstatus": 0,
+        "posting_date": frappe.utils.today(),
+    }, fields=["name", "creation"], order_by="creation desc", limit_page_length=5)
+    for candidate in recent:
+        if frappe.utils.time_diff_in_seconds(frappe.utils.now_datetime(), candidate.creation) > 120:
+            break
+        existing = frappe.get_doc("Expense Claim", candidate.name)
+        rows = [(row.expense_type or "", str(row.expense_date), round(frappe.utils.flt(row.amount), 2),
+            row.description or "") for row in existing.expenses]
+        if rows == wanted:
+            return existing
+    return None
+
+
 if frappe.request.method == "GET":
     selected_employee = (frappe.form_dict.get("employee") or "").strip() or None
     options = get_form_options(selected_employee)
-    options["csrf_token"] = frappe.session.data.csrf_token
+    options["csrf_token"] = frappe.session.get("csrf_token") or frappe.session.data.csrf_token
+    options["business_policy"] = frappe.call("mobile_business_policy", feature="expense", action="get", event_id="")["policy"]
     frappe.response["message"] = options
 
 elif frappe.request.method == "POST":
+    business_policy = frappe.call("mobile_business_policy", feature="expense", action="get", event_id="")["policy"]
     employee_name = (frappe.form_dict.get("employee") or "").strip()
     expense_approver = (frappe.form_dict.get("expense_approver") or "").strip()
     if not employee_name:
@@ -308,6 +276,8 @@ elif frappe.request.method == "POST":
 
     if not isinstance(raw_expenses, list) or not raw_expenses:
         frappe.throw("Add at least one expense row.")
+    if business_policy["rules"]["max_expense_rows"] and len(raw_expenses) > business_policy["rules"]["max_expense_rows"]:
+        frappe.throw("The permitted expense row count has been exceeded.")
 
     expenses = []
     row_number = 0
@@ -319,9 +289,9 @@ elif frappe.request.method == "POST":
         expense_type = str(row.get("expense_type") or "").strip()
         description = str(row.get("description") or "").strip()
         expense_date_value = str(row.get("expense_date") or "").strip()
-        if not expense_type:
+        if not expense_type and business_policy["fields"]["expense_type"]["required"]:
             frappe.throw(prefix + "Expense Type is required.")
-        if not description:
+        if not description and business_policy["fields"]["description"]["required"]:
             frappe.throw(prefix + "Description is required.")
         if not expense_date_value:
             frappe.throw(prefix + "Date is required.")
@@ -329,9 +299,9 @@ elif frappe.request.method == "POST":
             amount = float(str(row.get("amount") or "").replace(",", "").strip())
         except Exception:
             frappe.throw(prefix + "Amount must be a valid number greater than zero.")
-        if amount <= 0 or amount != amount or amount == float("inf"):
+        if amount != amount or amount == float("inf") or amount == -float("inf"):
             frappe.throw(prefix + "Amount must be a valid number greater than zero.")
-        if not frappe.db.exists("Expense Claim Type", expense_type):
+        if expense_type and not frappe.db.exists("Expense Claim Type", expense_type):
             frappe.throw(prefix + "Choose an Expense Type from the configured options.")
         try:
             expense_date = frappe.utils.getdate(expense_date_value)
@@ -339,6 +309,10 @@ elif frappe.request.method == "POST":
             frappe.throw(prefix + "Enter a valid expense date.")
         if not expense_date:
             frappe.throw(prefix + "Enter a valid expense date.")
+        frappe.call("mobile_business_policy", feature="expense", action="validate", original_values={}, error_prefix=prefix, values={
+            "description": description, "expense_type": expense_type,
+            "expense_date": expense_date_value, "amount": amount,
+        })
         expenses.append(
             {
                 "expense_date": expense_date,
@@ -352,7 +326,7 @@ elif frappe.request.method == "POST":
     # Read every bill before inserting anything. All files are attached to the
     # same draft claim in this request, preserving the existing upload flow.
     uploaded_files = frappe.request.files.getlist("file")
-    if not uploaded_files:
+    if len(uploaded_files) < business_policy["uploads"]["min_count"]:
         frappe.throw("Select a bill image to upload.")
     bills = []
     for uploaded_file in uploaded_files:
@@ -361,6 +335,8 @@ elif frappe.request.method == "POST":
         file_content = uploaded_file.stream.read()
         if not file_content:
             frappe.throw("The selected bill image is empty.")
+        frappe.call("mobile_business_policy", feature="expense", action="upload",
+            file_name=uploaded_file.filename, file_size=len(file_content), file_count=len(uploaded_files))
         bills.append({"file_name": uploaded_file.filename, "content": file_content})
 
     # Look up only the selected employee and verify the submitted approver.
@@ -389,34 +365,45 @@ elif frappe.request.method == "POST":
             "Set the Default Expense Claim Payable Account on the Company linked to this Employee record."
         )
 
-    claim = frappe.new_doc("Expense Claim")
-    claim.naming_series = "HR-EXP-.YYYY.-"
-    claim.employee = employee.name
-    claim.employee_name = employee.employee_name or employee.name
-    claim.department = employee.department
-    claim.company = employee.company
-    claim.expense_approver = expense_approver
-    claim.approval_status = "Draft"
-    claim.posting_date = frappe.utils.today()
-    claim.currency = company.default_currency
-    claim.exchange_rate = 1
-    claim.payable_account = company.default_expense_claim_payable_account
-    if company.cost_center:
-        claim.cost_center = company.cost_center
-
-    # Match ERPNext by copying Amount into Sanctioned Amount for every row.
-    for row in expenses:
-        row["cost_center"] = company.cost_center
-        claim.append("expenses", row)
-
-    # The API verifies the signed-in user's employee scope and validates both
-    # selected links before bypassing document-role permissions to insert.
-    # Skip only HRMS's synchronous approver notification; normal validation
-    # and the remaining Expense Claim hooks still run.
-    claim.after_insert = skip_expense_claim_after_insert
-    claim.insert(ignore_permissions=True)
-
+    # Retried submissions (lost response, double tap) return the earlier claim.
+    claim = find_recent_duplicate_claim(employee.name, expense_approver, expenses)
     bill_files = []
+    if claim:
+        # The earlier request already attached its bills; do not add copies.
+        bills = []
+        for existing_bill in frappe.get_all("File", filters={
+            "attached_to_doctype": "Expense Claim", "attached_to_name": claim.name,
+        }, fields=["name", "file_name", "file_url"], order_by="creation asc", limit_page_length=100):
+            bill_files.append({"name": existing_bill.name, "file_name": existing_bill.file_name,
+                "file_url": existing_bill.file_url})
+    else:
+        claim = frappe.new_doc("Expense Claim")
+        claim.naming_series = "HR-EXP-.YYYY.-"
+        claim.employee = employee.name
+        claim.employee_name = employee.employee_name or employee.name
+        claim.department = employee.department
+        claim.company = employee.company
+        claim.expense_approver = expense_approver
+        claim.approval_status = "Draft"
+        claim.posting_date = frappe.utils.today()
+        claim.currency = company.default_currency
+        claim.exchange_rate = 1
+        claim.payable_account = company.default_expense_claim_payable_account
+        if company.cost_center:
+            claim.cost_center = company.cost_center
+
+        # Match ERPNext by copying Amount into Sanctioned Amount for every row.
+        for row in expenses:
+            row["cost_center"] = company.cost_center
+            claim.append("expenses", row)
+
+        # The API verifies the signed-in user's employee scope and validates both
+        # selected links before bypassing document-role permissions to insert.
+        # Skip only HRMS's synchronous approver notification; normal validation
+        # and the remaining Expense Claim hooks still run.
+        claim.after_insert = skip_expense_claim_after_insert
+        claim.insert(ignore_permissions=True)
+
     for uploaded_bill in bills:
         bill = frappe.new_doc("File")
         bill.file_name = uploaded_bill["file_name"]
@@ -431,7 +418,7 @@ elif frappe.request.method == "POST":
         )
 
     expense_row = claim.expenses[0]
-    first_bill = bill_files[0]
+    first_bill = bill_files[0] if bill_files else {"name": "", "file_name": "", "file_url": ""}
 
     frappe.response["message"] = {
         "status": "success",

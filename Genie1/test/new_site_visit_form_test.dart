@@ -31,7 +31,14 @@ Future<void> withForm(
   WidgetTester tester,
   List<Map<String, String>> opportunities,
   Future<void> Function() check, {
+  bool selectInitialCategory = true,
+  bool nestedRoute = false,
+  Map<String, Object?>? categoryRules,
+  Map<String, Object?>? businessPolicy,
+  List<String>? eventLocationTypes,
+  Future<http.Response> Function(http.Request)? onReferences,
   Future<http.Response> Function(http.Request)? onSearch,
+  Future<http.Response> Function(http.Request)? onOpportunitySearch,
   List<http.Request>? requests,
   Future<http.Response> Function(http.Request)? onMapRequest,
   Future<http.Response> Function(http.Request)? onLocationSearch,
@@ -75,9 +82,17 @@ Future<void> withForm(
           ? http.Response('', 200)
           : onMapRequest(request);
     }
+    if (request.url.queryParameters['action'] == 'get_references' &&
+        onReferences != null) {
+      return onReferences(request);
+    }
     if (request.url.queryParameters['action'] == 'search_by_mobile' &&
         onSearch != null) {
       return onSearch(request);
+    }
+    if (request.url.queryParameters['action'] == 'search_opportunities' &&
+        onOpportunitySearch != null) {
+      return onOpportunitySearch(request);
     }
     final body =
         request.method == 'POST' ? request.bodyFields : <String, String>{};
@@ -90,15 +105,26 @@ Future<void> withForm(
           if (request.method == 'GET') ...{
             'opportunities': opportunities,
             'product_enquired_options': ["D'sign Doors", 'Windows'],
-            'event_categories': [
-              'Installation',
-              'Measurement',
-              'Site Visit',
-              'Client Visit',
-              'Meeting',
-              'Call',
-            ],
+            if (categoryRules != null) 'event_category_rules': categoryRules,
+            'event_categories':
+                categoryRules?.keys.toList() ??
+                [
+                  'Installation',
+                  'Measurement',
+                  'Site Visit',
+                  'Client Visit',
+                  'Meeting',
+                  'Call',
+                  'Other',
+                  'Bank',
+                  'Head Office CH',
+                  'Timbe / Bioman Office CH',
+                  'Collection',
+                ],
             'location_types': ['Site', 'Home', 'Others'],
+            if (businessPolicy != null) 'business_policy': businessPolicy,
+            if (eventLocationTypes != null)
+              'event_location_types': eventLocationTypes,
             'users': [
               {'name': user, 'full_name': 'Sales'},
               {'name': 'installer@example.test', 'full_name': 'Installer'},
@@ -112,8 +138,21 @@ Future<void> withForm(
   });
   try {
     await http.runWithClient(() async {
-      await tester.pumpWidget(const MaterialApp(home: NewSiteVisitPage()));
+      await tester.pumpWidget(
+        MaterialApp(
+          initialRoute: nestedRoute ? '/new-visit' : '/',
+          home:
+              nestedRoute
+                  ? const Scaffold(body: Text('Site Visits destination'))
+                  : const NewSiteVisitPage(),
+          routes: {'/new-visit': (_) => const NewSiteVisitPage()},
+        ),
+      );
       await tester.pumpAndSettle();
+      if (selectInitialCategory) {
+        await tester.tap(find.widgetWithText(ListTile, "Site Visit"));
+        await tester.pumpAndSettle();
+      }
       await check();
     }, () => client);
   } finally {
@@ -167,8 +206,8 @@ Future<void> continueToEvent(
   if (mapLink != null) {
     await tester.enterText(field('Customer map link *'), mapLink);
   }
-  await tester.ensureVisible(dropdown('Location type *'));
-  await tester.tap(dropdown('Location type *'));
+  await tester.ensureVisible(dropdown('Location type'));
+  await tester.tap(dropdown('Location type'));
   await tester.pumpAndSettle();
   await tester.tap(find.text('Site').last);
   await tester.pumpAndSettle();
@@ -178,6 +217,386 @@ Future<void> continueToEvent(
 }
 
 void main() {
+  for (final systemBack in [false, true]) {
+    Future<void> back(WidgetTester tester) async {
+      if (systemBack) {
+        await tester.binding.handlePopRoute();
+      } else {
+        await tester.tap(find.byTooltip('Back'));
+      }
+      await tester.pumpAndSettle();
+    }
+
+    for (final category in ['Site Visit', 'Collection']) {
+      testWidgets(
+        '$category Back returns to categories before exiting, phone=$systemBack',
+        (tester) async {
+          final requests = <http.Request>[];
+          await withForm(
+            tester,
+            [],
+            () async {
+              final tile = find.widgetWithText(ListTile, category);
+              await tester.ensureVisible(tile);
+              await tester.tap(tile);
+              await tester.pumpAndSettle();
+              expect(find.text('Select event category'), findsNothing);
+              await back(tester);
+              expect(find.text('Select event category'), findsOneWidget);
+              expect(find.byType(NewSiteVisitPage), findsOneWidget);
+              expect(
+                requests.where((request) => request.method == 'POST'),
+                isEmpty,
+              );
+              await back(tester);
+              expect(find.text('Site Visits destination'), findsOneWidget);
+              expect(find.byType(NewSiteVisitPage), findsNothing);
+            },
+            selectInitialCategory: false,
+            nestedRoute: true,
+            requests: requests,
+          );
+        },
+      );
+    }
+
+    testWidgets(
+      'Event Details Back restores location before categories, phone=$systemBack',
+      (tester) async {
+        await withForm(
+          tester,
+          [
+            {'name': 'OPP-1', 'title': 'Customer'},
+          ],
+          () async {
+            await continueToEvent(tester);
+            expect(find.text('Event Details'), findsOneWidget);
+            await back(tester);
+            expect(find.text('Save location and continue'), findsOneWidget);
+            expect(
+              tester
+                  .widget<TextField>(field('Customer map link *'))
+                  .controller!
+                  .text,
+              'https://maps.google.com/?q=13,80',
+            );
+            await back(tester);
+            expect(find.text('Select event category'), findsOneWidget);
+          },
+          nestedRoute: true,
+        );
+      },
+    );
+  }
+
+  testWidgets('location can be saved without type while map remains required', (
+    tester,
+  ) async {
+    final requests = <http.Request>[];
+    await withForm(
+      tester,
+      [
+        {'name': 'OPP-1', 'title': 'Customer'},
+      ],
+      () async {
+        expect(dropdown('Location type'), findsOneWidget);
+        await tester.ensureVisible(find.text('Save location and continue'));
+        await tester.tap(find.text('Save location and continue'));
+        await tester.pumpAndSettle();
+        expect(find.text('Map link is required.'), findsOneWidget);
+        expect(requests.where((r) => r.method == 'POST'), isEmpty);
+
+        await tester.ensureVisible(field('Customer map link *'));
+        await tester.enterText(
+          field('Customer map link *'),
+          'https://maps.google.com/?q=13,80',
+        );
+        await tester.ensureVisible(find.text('Save location and continue'));
+        await tester.tap(find.text('Save location and continue'));
+        await tester.pumpAndSettle();
+        final saved = requests.singleWhere(
+          (r) =>
+              r.method == 'POST' && r.bodyFields['action'] == 'save_location',
+        );
+        expect(saved.bodyFields['location_type'], '');
+        expect(saved.bodyFields['latitude'], '13.0');
+        expect(saved.bodyFields['longitude'], '80.0');
+        expect(find.text('Event Details'), findsOneWidget);
+      },
+      requests: requests,
+    );
+  });
+
+  testWidgets('API supplies event location type choices', (tester) async {
+    await withForm(
+      tester,
+      [],
+      () async {
+        await tester.tap(find.widgetWithText(ListTile, 'Other'));
+        await tester.pumpAndSettle();
+        final location = dropdown('Location type *');
+        await tester.ensureVisible(location);
+        await tester.tap(location);
+        await tester.pumpAndSettle();
+        expect(find.text('Warehouse'), findsWidgets);
+        expect(find.text('Home'), findsNothing);
+      },
+      selectInitialCategory: false,
+      eventLocationTypes: ['Warehouse'],
+      categoryRules: {
+        'Other': {
+          'reference_mode': 'document',
+          'reference_doctype': 'Measurement',
+          'required_fields': ['reference_name', 'location_type'],
+        },
+      },
+      onReferences:
+          (_) async => http.Response(
+            jsonEncode({
+              'message': {
+                'status': 'success',
+                'current_user': 'sales@example.test',
+                'reference_doctype': 'Measurement',
+                'references': [],
+              },
+            }),
+            200,
+          ),
+    );
+  });
+
+  testWidgets('API can route Site Visit directly without Opportunity', (
+    tester,
+  ) async {
+    await withForm(
+      tester,
+      [],
+      () async {
+        expect(find.text('Event Details'), findsOneWidget);
+        expect(field('Opportunity *'), findsNothing);
+        expect(field('Customer map link *'), findsNothing);
+      },
+      categoryRules: {
+        'Site Visit': {
+          'reference_mode': 'none',
+          'reference_doctype': '',
+          'required_fields': [
+            'category',
+            'summary',
+            'starts_on',
+            'ends_on',
+            'assigned_to',
+          ],
+        },
+      },
+    );
+  });
+
+  testWidgets('Maintenance API rule opens Event Details without Opportunity', (
+    tester,
+  ) async {
+    await withForm(
+      tester,
+      [],
+      () async {
+        await tester.tap(find.widgetWithText(ListTile, 'Maintenance'));
+        await tester.pumpAndSettle();
+        expect(find.text('Event Details'), findsOneWidget);
+        expect(field('Opportunity *'), findsNothing);
+        expect(field('Customer map link *'), findsNothing);
+      },
+      selectInitialCategory: false,
+      categoryRules: {
+        'Maintenance': {
+          'reference_mode': 'none',
+          'reference_doctype': '',
+          'required_fields': [
+            'category',
+            'summary',
+            'starts_on',
+            'ends_on',
+            'assigned_to',
+          ],
+        },
+      },
+    );
+  });
+
+  testWidgets('API can route Other to a Measurement document selector', (
+    tester,
+  ) async {
+    await withForm(
+      tester,
+      [],
+      () async {
+        await tester.tap(find.widgetWithText(ListTile, 'Other'));
+        await tester.pumpAndSettle();
+        expect(field('Measurement *'), findsOneWidget);
+        expect(field('Opportunity *'), findsNothing);
+        expect(field('Customer map link *'), findsOneWidget);
+      },
+      selectInitialCategory: false,
+      categoryRules: {
+        'Other': {
+          'reference_mode': 'document',
+          'reference_doctype': 'Measurement',
+          'required_fields': [
+            'category',
+            'summary',
+            'starts_on',
+            'ends_on',
+            'assigned_to',
+            'reference_name',
+            'map_link',
+            'latitude',
+            'longitude',
+            'location_type',
+          ],
+        },
+      },
+      onReferences:
+          (_) async => http.Response(
+            jsonEncode({
+              'message': {
+                'status': 'success',
+                'current_user': 'sales@example.test',
+                'reference_doctype': 'Measurement',
+                'references': [],
+              },
+            }),
+            200,
+          ),
+    );
+  });
+
+  testWidgets('invalid API category rule blocks the creation form', (
+    tester,
+  ) async {
+    await withForm(
+      tester,
+      [],
+      () async {
+        expect(
+          find.textContaining('invalid event category rule'),
+          findsOneWidget,
+        );
+        expect(find.text('Create site visit'), findsNothing);
+      },
+      selectInitialCategory: false,
+      categoryRules: {
+        'Other': {'reference_mode': 'unknown'},
+      },
+    );
+  });
+
+  testWidgets(
+    'Opportunity ID search displays Opportunity ID and own contact number',
+    (tester) async {
+      final requests = <http.Request>[];
+      await withForm(
+        tester,
+        [
+          {'name': 'OPP-1', 'title': 'First'},
+          {'name': 'OPP-2', 'title': 'Second'},
+        ],
+        () async {
+          await tester.enterText(field('Opportunity *'), '28718');
+          await tester.pump(const Duration(milliseconds: 450));
+          await tester.pumpAndSettle();
+          expect(find.text('Ankit'), findsOneWidget);
+          expect(
+            find.text('CRM-OPP-2026-28718 · 9873823617'),
+            findsOneWidget,
+          );
+          expect(find.textContaining('CRM-LEAD-2026-50209'), findsNothing);
+          await tester.tap(find.text('Ankit'));
+          await tester.pumpAndSettle();
+          await continueToEvent(tester);
+          final save = requests.singleWhere(
+            (request) =>
+                request.method == 'POST' &&
+                request.bodyFields['action'] == 'save_location',
+          );
+          expect(save.bodyFields['opportunity'], 'CRM-OPP-2026-28718');
+        },
+        requests: requests,
+        onOpportunitySearch: (request) async {
+          expect(request.url.queryParameters['query'], '28718');
+          return http.Response(
+            jsonEncode({
+              'message': {
+                'status': 'success',
+                'current_user': 'sales@example.test',
+                'opportunities': [
+                  {
+                    'name': 'CRM-OPP-2026-28718',
+                    'title': 'Ankit',
+                    'party_name': 'CRM-LEAD-2026-50209',
+                    'contact_mobile': '9873823617',
+                  },
+                ],
+              },
+            }),
+            200,
+          );
+        },
+      );
+    },
+  );
+
+  testWidgets('Opportunity ID search ignores stale server results', (
+    tester,
+  ) async {
+    final oldSearch = Completer<http.Response>();
+    await withForm(
+      tester,
+      [
+        {'name': 'OPP-1', 'title': 'First'},
+        {'name': 'OPP-2', 'title': 'Second'},
+      ],
+      () async {
+        await tester.enterText(field('Opportunity *'), 'old');
+        await tester.pump(const Duration(milliseconds: 450));
+        await tester.enterText(field('Opportunity *'), 'new');
+        await tester.pump(const Duration(milliseconds: 450));
+        await tester.pumpAndSettle();
+        oldSearch.complete(
+          http.Response(
+            jsonEncode({
+              'message': {
+                'status': 'success',
+                'current_user': 'sales@example.test',
+                'opportunities': [
+                  {'name': 'OLD-OPP', 'title': 'Old match'},
+                ],
+              },
+            }),
+            200,
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('New match'), findsOneWidget);
+        expect(find.text('Old match'), findsNothing);
+      },
+      onOpportunitySearch: (request) async {
+        if (request.url.queryParameters['query'] == 'old')
+          return oldSearch.future;
+        return http.Response(
+          jsonEncode({
+            'message': {
+              'status': 'success',
+              'current_user': 'sales@example.test',
+              'opportunities': [
+                {'name': 'NEW-OPP', 'title': 'New match'},
+              ],
+            },
+          }),
+          200,
+        );
+      },
+    );
+  });
+
   const initialOpportunities = [
     {
       'name': 'OPP-1',
@@ -219,6 +638,216 @@ void main() {
     }),
     200,
   );
+
+  for (final category in ['Measurement', 'Installation']) {
+    testWidgets(
+      '$category selects its own document by phone and creates a linked Event',
+      (tester) async {
+        final doctype =
+            category == 'Measurement' ? 'Measurement' : 'Installation Note';
+        const detailLabel = 'Company';
+        const detailKey = 'company';
+        final requests = <http.Request>[];
+        await withForm(
+          tester,
+          [],
+          () async {
+            await tester.ensureVisible(find.widgetWithText(ListTile, category));
+            await tester.tap(find.widgetWithText(ListTile, category));
+            await tester.pumpAndSettle();
+            expect(field('Opportunity *'), findsNothing);
+            expect(dropdown('Product enquired'), findsNothing);
+            expect(field('$doctype *'), findsOneWidget);
+            await tester.enterText(field('Mobile number'), '98765');
+            await tester.pump(const Duration(milliseconds: 600));
+            await tester.pumpAndSettle();
+            expect(
+              tester.widget<TextField>(field('$doctype *')).controller!.text,
+              'Phone result (SOURCE-PHONE)',
+            );
+            final detail = tester.widget<TextField>(field(detailLabel));
+            expect(detail.controller!.text, 'Selected detail');
+            expect(detail.readOnly, isTrue);
+            await tester.ensureVisible(field('Customer map link *'));
+            await tester.enterText(
+              field('Customer map link *'),
+              'https://www.google.com/maps?q=13.085,80.21',
+            );
+            if (category != 'Measurement') {
+              await tester.ensureVisible(dropdown('Location type'));
+              await tester.tap(dropdown('Location type'));
+              await tester.pumpAndSettle();
+              await tester.tap(find.text('Site').last);
+              await tester.pumpAndSettle();
+            }
+            await tester.ensureVisible(find.text('Continue to event details'));
+            await tester.tap(find.text('Continue to event details'));
+            await tester.pumpAndSettle();
+            expect(find.text('Event Details'), findsOneWidget);
+            expect(find.text('Selected detail'), findsOneWidget);
+            expect(requests.where((r) => r.method == 'POST'), isEmpty);
+            await tester.ensureVisible(find.text('Select visit date'));
+            await tester.tap(find.text('Select visit date'));
+            await tester.pumpAndSettle();
+            tester
+                .widget<CalendarDatePicker>(find.byType(CalendarDatePicker))
+                .onDateChanged(
+                  DateUtils.dateOnly(
+                    DateTime.now(),
+                  ).add(const Duration(days: 1)),
+                );
+            await tester.pumpAndSettle();
+            await tester.tap(find.text('OK'));
+            await tester.pumpAndSettle();
+            for (final label in ['Start time *', 'End time *']) {
+              final input = find.byWidgetPredicate(
+                (widget) =>
+                    widget is InputDecorator &&
+                    widget.decoration.labelText == label,
+              );
+              await tester.ensureVisible(input);
+              await tester.tap(input);
+              await tester.pumpAndSettle();
+              await tester.tap(find.byType(ListTile).first);
+              await tester.pumpAndSettle();
+            }
+            await tester.ensureVisible(field('Summary *'));
+            await tester.enterText(field('Summary *'), 'Source visit');
+            await tester.ensureVisible(find.text('Create site visit'));
+            await tester.tap(find.text('Create site visit'));
+            await tester.pumpAndSettle();
+            final post =
+                requests.singleWhere((r) => r.method == 'POST').bodyFields;
+            expect(post['reference_doctype'], doctype);
+            expect(
+              post['location_type'],
+              category == 'Measurement' ? isNull : 'Site',
+            );
+            expect(post['reference_name'], 'SOURCE-PHONE');
+            expect(post['opportunity'], '');
+            expect(post['location_row'], '');
+            expect(post['category'], category);
+            expect(post['latitude'], '13.085');
+            expect(post['longitude'], '80.21');
+            expect(post, isNot(contains('product_enquired')));
+            expect(post, isNot(contains('company')));
+            expect(post, isNot(contains('custom_brand')));
+          },
+          selectInitialCategory: false,
+          requests: requests,
+          onReferences: (request) async {
+            expect(request.url.queryParameters['category'], category);
+            final byPhone = request.url.queryParameters['mobile'] == '98765';
+            return http.Response(
+              jsonEncode({
+                'message': {
+                  'status': 'success',
+                  'current_user': 'sales@example.test',
+                  'reference_doctype': doctype,
+                  'references':
+                      byPhone
+                          ? [
+                            {
+                              'name': 'SOURCE-PHONE',
+                              'title': 'Phone result',
+                              detailKey: 'Selected detail',
+                            },
+                          ]
+                          : [
+                            {
+                              'name': 'SOURCE-1',
+                              'title': 'First',
+                              detailKey: 'First detail',
+                            },
+                            {
+                              'name': 'SOURCE-2',
+                              'title': 'Second',
+                              detailKey: 'Second detail',
+                            },
+                          ],
+                },
+              }),
+              200,
+            );
+          },
+        );
+      },
+    );
+  }
+
+  for (final category in [
+    'Other',
+    'Bank',
+    'Head Office CH',
+    'Timbe / Bioman Office CH',
+    'Collection',
+  ]) {
+    testWidgets('$category creates without Opportunity or location controls', (
+      tester,
+    ) async {
+      final requests = <http.Request>[];
+      await withForm(
+        tester,
+        [],
+        () async {
+          expect(field('Opportunity *'), findsNothing);
+          expect(field('Search location'), findsNothing);
+          final tile = find.widgetWithText(ListTile, category);
+          await tester.ensureVisible(tile);
+          await tester.tap(tile);
+          await tester.pumpAndSettle();
+          expect(find.text('Event Details'), findsOneWidget);
+          expect(field('Opportunity *'), findsNothing);
+          expect(dropdown('Product enquired'), findsNothing);
+          expect(field('Search location'), findsNothing);
+          expect(field('Customer map link *'), findsNothing);
+          expect(dropdown('Location type'), findsNothing);
+          expect(find.byType(GoogleMap), findsNothing);
+          await tester.ensureVisible(find.text('Select visit date'));
+          await tester.tap(find.text('Select visit date'));
+          await tester.pumpAndSettle();
+          tester
+              .widget<CalendarDatePicker>(find.byType(CalendarDatePicker))
+              .onDateChanged(
+                DateUtils.dateOnly(DateTime.now()).add(const Duration(days: 1)),
+              );
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('OK'));
+          await tester.pumpAndSettle();
+          for (final label in ['Start time *', 'End time *']) {
+            final input = find.byWidgetPredicate(
+              (widget) =>
+                  widget is InputDecorator &&
+                  widget.decoration.labelText == label,
+            );
+            await tester.ensureVisible(input);
+            await tester.tap(input);
+            await tester.pumpAndSettle();
+            await tester.tap(find.byType(ListTile).first);
+            await tester.pumpAndSettle();
+          }
+          await tester.ensureVisible(field('Summary *'));
+          await tester.enterText(field('Summary *'), 'Office visit');
+          await tester.ensureVisible(find.text('Create site visit'));
+          await tester.tap(find.text('Create site visit'));
+          await tester.pumpAndSettle();
+          final post =
+              requests.singleWhere((r) => r.method == 'POST').bodyFields;
+          expect(post['category'], category);
+          for (final key in [
+            'map_link',
+            'latitude',
+            'longitude',
+            'location_type',
+          ]) {
+            expect(post, isNot(contains(key)));
+          }
+        },
+        requests: requests,
+        selectInitialCategory: false,
+      );
+    });
+  }
 
   testWidgets(
     'typing debounces Google suggestions and keeps the keyboard focused',
@@ -753,6 +1382,135 @@ void main() {
   );
 
   testWidgets(
+    'swipe refresh resets the site visit draft and reloads form options',
+    (tester) async {
+      final requests = <http.Request>[];
+      await withForm(
+        tester,
+        [],
+        () async {
+          await tester.ensureVisible(
+            find.widgetWithText(ListTile, 'Head Office CH'),
+          );
+          await tester.tap(find.widgetWithText(ListTile, 'Head Office CH'));
+          await tester.pumpAndSettle();
+          await tester.ensureVisible(field('Summary *'));
+          await tester.enterText(field('Summary *'), 'Unsaved office visit');
+          final getCount =
+              requests.where((request) => request.method == 'GET').length;
+          await tester.runAsync(
+            () =>
+                tester
+                    .widget<RefreshIndicator>(
+                      find.byType(RefreshIndicator).first,
+                    )
+                    .onRefresh(),
+          );
+          await tester.pumpAndSettle();
+          expect(
+            find.widgetWithText(ListTile, 'Head Office CH'),
+            findsOneWidget,
+          );
+          expect(field('Summary *'), findsNothing);
+          expect(
+            requests.where((request) => request.method == 'GET').length,
+            greaterThan(getCount),
+          );
+          await tester.ensureVisible(
+            find.widgetWithText(ListTile, 'Head Office CH'),
+          );
+          await tester.tap(find.widgetWithText(ListTile, 'Head Office CH'));
+          await tester.pumpAndSettle();
+          expect(
+            tester.widget<TextField>(field('Summary *')).controller!.text,
+            isEmpty,
+          );
+          expect(find.text('Select visit date'), findsOneWidget);
+          expect(selectedValue(tester, 'Assigned to *'), 'sales@example.test');
+          expect(
+            requests.where((request) => request.method == 'POST'),
+            isEmpty,
+          );
+          expect(tester.takeException(), isNull);
+        },
+        requests: requests,
+        selectInitialCategory: false,
+      );
+    },
+  );
+
+  testWidgets(
+    'Head Office CH picker contains only the logged-in user and switching categories restores all users',
+    (tester) async {
+      await withForm(tester, [], () async {
+        Future<void> chooseCategory(String category) async {
+          final tile = find.widgetWithText(ListTile, category);
+          await tester.ensureVisible(tile);
+          await tester.tap(tile);
+          await tester.pumpAndSettle();
+        }
+
+        Future<void> openAssignees() async {
+          await tester.ensureVisible(field('Assigned to *'));
+          await tester.tap(field('Assigned to *'));
+          await tester.pumpAndSettle();
+        }
+
+        Future<void> closeAssignees() async {
+          Navigator.of(tester.element(find.text('Assigned to'))).pop();
+          await tester.pumpAndSettle();
+        }
+
+        await chooseCategory('Bank');
+        await openAssignees();
+        await tester.tap(
+          find.widgetWithText(ListTile, 'installer@example.test'),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          selectedValue(tester, 'Assigned to *'),
+          'installer@example.test',
+        );
+        await tester.ensureVisible(find.text('Change category'));
+        await tester.tap(find.text('Change category'));
+        await tester.pumpAndSettle();
+        await chooseCategory('Head Office CH');
+        expect(selectedValue(tester, 'Assigned to *'), 'sales@example.test');
+        await openAssignees();
+        expect(find.byType(ListTile), findsOneWidget);
+        expect(
+          find.widgetWithText(ListTile, 'Assign to me (sales@example.test)'),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(ListTile, 'installer@example.test'),
+          findsNothing,
+        );
+        await tester.enterText(field('Search username'), 'installer');
+        await tester.pumpAndSettle();
+        expect(find.text('No matching users.'), findsOneWidget);
+        await closeAssignees();
+        expect(selectedValue(tester, 'Assigned to *'), 'sales@example.test');
+        await tester.ensureVisible(find.text('Change category'));
+        await tester.tap(find.text('Change category'));
+        await tester.pumpAndSettle();
+        await chooseCategory('Timbe / Bioman Office CH');
+        await openAssignees();
+        expect(
+          find.widgetWithText(ListTile, 'installer@example.test'),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(ListTile, 'Assign to me (sales@example.test)'),
+          findsOneWidget,
+        );
+        await closeAssignees();
+        expect(tester.takeException(), isNull);
+      }, selectInitialCategory: false);
+    },
+  );
+
+  testWidgets(
     'assignee recommendations filter by username and save the selected user',
     (tester) async {
       final requests = <http.Request>[];
@@ -1113,6 +1871,16 @@ void main() {
         await tester
             .widget<RefreshIndicator>(find.byType(RefreshIndicator))
             .onRefresh();
+        await tester.pumpAndSettle();
+        expect(find.widgetWithText(ListTile, 'Site Visit'), findsOneWidget);
+        expect(attempts, 1);
+        await tester.tap(find.widgetWithText(ListTile, 'Site Visit'));
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<TextField>(field('Mobile number')).controller!.text,
+          isEmpty,
+        );
+        await tester.enterText(field('Mobile number'), '8667733611');
         await tester.pump(const Duration(milliseconds: 600));
         await tester.pumpAndSettle();
         expect(
@@ -1189,7 +1957,7 @@ void main() {
       () async {
         await tester.enterText(field('Opportunity *'), 'Lokesh');
         await tester.pumpAndSettle();
-        expect(find.text('LEAD-1'), findsOneWidget);
+        expect(find.text('OPP-1'), findsOneWidget);
         await tester.tap(find.widgetWithText(ListTile, 'Lokesh'));
         await tester.pumpAndSettle();
         expect(
@@ -1228,29 +1996,7 @@ void main() {
         await tester.tap(find.text('Assign to me (sales@example.test)').last);
         await tester.pumpAndSettle();
         expect(selectedValue(tester, 'Assigned to *'), 'sales@example.test');
-        final category = dropdown('Event category *');
-        await tester.ensureVisible(category);
-        await tester.tap(category);
-        await tester.pumpAndSettle();
-        for (final name in [
-          'Installation',
-          'Measurement',
-          'Site Visit',
-          'Client Visit',
-        ]) {
-          expect(find.text(name), findsWidgets);
-        }
-        expect(find.text('Meeting'), findsNothing);
-        expect(find.text('Call'), findsNothing);
-        await tester.tap(find.text('Measurement').last);
-        await tester.pumpAndSettle();
-        final selected = tester.widget<DropdownButton<String>>(
-          find.descendant(
-            of: category,
-            matching: find.byType(DropdownButton<String>),
-          ),
-        );
-        expect(selected.value, 'Measurement');
+        expect(find.text('Site Visit'), findsOneWidget);
 
         await tester.ensureVisible(find.text('Edit customer location'));
         await tester.tap(find.text('Edit customer location'));

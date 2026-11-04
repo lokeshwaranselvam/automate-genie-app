@@ -7,6 +7,9 @@ import '../short_visit_checkout_notice.dart';
 import '../connection_notice.dart';
 
 class Warning extends StatelessWidget {
+  static const opportunityEventRequiredMessage =
+      'Create an event first for this Opportunity before saving Demo. If an event already exists, check that it is linked to this Opportunity in ERP, then try again.';
+
   final String message;
 
   const Warning(context, {super.key, required this.message, required type});
@@ -49,6 +52,10 @@ class Warning extends StatelessWidget {
     }
 
     _showingPopup = true;
+    final eventRequired =
+        request.type != 'Success' &&
+        request.message.trim() == opportunityEventRequiredMessage;
+    final popupType = eventRequired ? 'Warning' : request.type;
     final connectionNotice =
         request.type == 'Success'
             ? null
@@ -57,18 +64,19 @@ class Warning extends StatelessWidget {
         request.type == 'Success'
             ? null
             : ShortVisitCheckoutNotice.fromMessage(request.message);
-    final color = switch (request.type) {
+    final color = switch (popupType) {
       'Warning' => Colors.orange.shade700,
       'Error' => Colors.red.shade700,
       'Success' => Colors.green.shade700,
       _ => BrandColors.ink,
     };
-    final icon = switch (request.type) {
+    final icon = switch (popupType) {
       'Warning' || 'Error' => Icons.warning_amber_rounded,
       'Success' => Icons.check_circle_outline,
       _ => Icons.info_outline,
     };
     final title = switch (request.type) {
+      'Session Expired' => 'Session Expired',
       'Warning' => 'Warning',
       'Error' => 'Something went wrong',
       'Success' => 'Success',
@@ -78,11 +86,11 @@ class Warning extends StatelessWidget {
     showDialog<void>(
       context: request.context,
       useRootNavigator: true,
-      barrierDismissible: true,
+      barrierDismissible: request.type != 'Session Expired',
       barrierColor: Colors.black54,
       builder: (dialogContext) {
         final screenHeight = MediaQuery.sizeOf(dialogContext).height;
-        return Dialog(
+        final dialog = Dialog(
           elevation: 12,
           insetPadding: const EdgeInsets.symmetric(
             horizontal: 32,
@@ -101,7 +109,7 @@ class Warning extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Align(
+                  if (request.type != 'Session Expired') Align(
                     alignment: Alignment.centerRight,
                     child: IconButton(
                       tooltip: 'Close',
@@ -125,7 +133,9 @@ class Warning extends StatelessWidget {
                   const SizedBox(height: 16),
                   Text(
                     connectionNotice?.title ??
-                        (shortVisitNotice == null
+                        (eventRequired
+                            ? 'Create event'
+                            : shortVisitNotice == null
                             ? title
                             : 'Checkout restricted'),
                     textAlign: TextAlign.center,
@@ -159,7 +169,7 @@ class Warning extends StatelessWidget {
                         Navigator.of(request.context).push<void>(
                           MaterialPageRoute<void>(
                             builder:
-                                (_) => const SessionWebView(
+                                (_) => SessionWebView(
                                   url: ShortVisitCheckoutNotice.url,
                                   title: 'SVR',
                                 ),
@@ -187,6 +197,10 @@ class Warning extends StatelessWidget {
               ),
             ),
           ),
+        );
+        return PopScope(
+          canPop: request.type != 'Session Expired',
+          child: dialog,
         );
       },
     ).whenComplete(() {

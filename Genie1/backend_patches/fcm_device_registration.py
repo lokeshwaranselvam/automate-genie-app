@@ -1,17 +1,17 @@
 """Custom Frappe application Python, NOT a restricted Server Script.
 
-Replace only register_device in apps/itgenie/itgenie/fcm/devices.py.
+Replace only register_device in apps/itgenie/itgenie/lead_calling/mobile_api.py.
 Keep all other functions/imports in that deployed module unchanged.
+The existing FCM Device schema stores one employee-keyed record per employee.
 """
 import frappe
-from frappe.utils import now_datetime
 
 
 @frappe.whitelist()
 def register_device(
-    fcm_token=None,
-    platform=None,
+    fcm_token,
     device_id=None,
+    platform="android",
     app_version=None,
     build_version=None,
 ):
@@ -20,47 +20,58 @@ def register_device(
         frappe.throw("Login required", frappe.PermissionError)
 
     fcm_token = (fcm_token or "").strip()
-    platform = (platform or "").strip().lower()
+    platform = (platform or "android").strip().lower()
     if not fcm_token:
         frappe.throw("Missing FCM token")
-    if platform not in ("android", "ios", "web"):
-        frappe.throw("Platform must be android, ios or web")
+    if platform not in ("android", "ios"):
+        frappe.throw("Platform must be android or ios")
+    try:
+        build_version = int(build_version or 0)
+    except (TypeError, ValueError):
+        frappe.throw("Invalid build version")
 
-    # FCM Device is named by Employee, which is also unique. Lock that
-    # employee row so simultaneous login/token-refresh requests serialize,
-    # including the first registration when no FCM Device exists yet.
+    # Serialize this employee's registrations, including the first insert.
+    # Frappe holds the row lock until this POST commits or rolls back.
     employee = frappe.db.get_value(
         "Employee", {"user_id": user}, "name", for_update=True,
     )
     if not employee:
         frappe.throw("No Employee is linked to the logged-in user")
 
-    values = {
+    # Login may already have created an inactive Android-labelled record.
+    # A browser can send another platform/token/device ID; these are not the
+    # identity of the employee-keyed FCM Device record.
+    existing = frappe.db.get_value(
+        "FCM Device", {"employee": employee}, ["name", "user"],
+        as_dict=True, for_update=True,
+    )
+    if existing and existing.get("user") != user:
+        frappe.throw("FCM Device belongs to another user", frappe.PermissionError)
+
+    data = {
         "user": user,
         "employee": employee,
         "fcm_token": fcm_token,
+        "device_id": device_id,
         "platform": platform,
         "is_active": 1,
-        "last_seen": now_datetime(),
-        "device_id": device_id,
+        "last_seen": frappe.utils.now(),
         "app_version": app_version,
         "build_version": build_version,
     }
 
-    # The token can rotate; Employee is the stable identity of this DocType.
-    existing_name = frappe.db.get_value(
-        "FCM Device", {"employee": employee}, "name", for_update=True,
-    )
-    if existing_name:
-        doc = frappe.get_doc("FCM Device", existing_name, for_update=True)
-        for field, value in values.items():
-            if value is not None:
-                doc.set(field, value)
-        doc.save(ignore_permissions=True)
+    if existing:
+        name = existing["name"]
+        # Keep the deployed function's existing metadata update behavior.
+        # Only the fields above change; login binding fields are untouched.
+        frappe.db.set_value("FCM Device", name, data)
     else:
-        frappe.get_doc({"doctype": "FCM Device", **values}).insert(
-            ignore_permissions=True,
-        )
+        doc = frappe.get_doc({"doctype": "FCM Device", **data})
+        doc.insert(ignore_permissions=True)
+        name = doc.name
 
-    # Frappe commits the successful POST transaction and releases row locks.
-    return {"status": "success", "user": user}
+    frappe.db.commit()
+    return {
+        "status": "success", "device": name,
+        "app_version": app_version, "build_version": build_version,
+    }

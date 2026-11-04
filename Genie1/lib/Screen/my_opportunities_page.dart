@@ -7,32 +7,31 @@ import '../utils/theme/brand_theme.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import '../utils/widget/home_back_button.dart';
 import 'opportunity_details_page.dart';
+import 'lead_creation_page.dart';
 
 class MyOpportunitiesPage extends StatefulWidget {
-  const MyOpportunitiesPage({super.key});
+  const MyOpportunitiesPage({
+    super.key,
+    this.embedded = false,
+    this.canCreateLead = false,
+  });
+
+  final bool embedded;
+  final bool canCreateLead;
 
   @override
   State<MyOpportunitiesPage> createState() => _MyOpportunitiesPageState();
 }
 
 class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
-  static const _filterStatuses = [
-    'Open',
-    'Follow-up',
-    'Demo',
-    'VC',
-    'Duplicate Lead',
-    'Junk',
-    'Not Interested',
-    'Hot Followup',
-    'RNR',
-    'B2B Database',
-  ];
   List<Map<String, dynamic>> _items = [];
   bool _loading = false;
   bool _hasMore = false;
   int _offset = 0;
   String? _error;
+
+  /// A failed "Load more" keeps the loaded items and retries the next page.
+  String? _moreError;
   final _search = TextEditingController();
   Timer? _searchDebounce;
   int _request = 0;
@@ -43,13 +42,16 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
     if (_filterLoading) return;
     setState(() => _filterLoading = true);
     try {
+      final options = await OpportunityApi.getEditOptions();
+      if (!mounted) return;
+      final filterStatuses = options.allowedStatuses ?? options.statuses;
       final selected = await showDialog<String>(
         context: context,
         builder:
             (context) => SimpleDialog(
               title: const Text('Filter by status'),
               children: [
-                for (final status in _filterStatuses)
+                for (final status in filterStatuses)
                   SimpleDialogOption(
                     onPressed: () => Navigator.pop(context, status),
                     child: Text(status),
@@ -119,6 +121,7 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
     setState(() {
       _loading = true;
       _error = null;
+      _moreError = null;
     });
     try {
       final page = await OpportunityApi.getMyOpportunities(
@@ -139,11 +142,16 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
       });
     } catch (error) {
       if (mounted && request == _request) {
+        final message = error.toString().replaceFirst('Bad state: ', '');
         setState(() {
-          _items = [];
-          _offset = 0;
-          _hasMore = false;
-          _error = error.toString().replaceFirst('Bad state: ', '');
+          if (more) {
+            _moreError = message;
+          } else {
+            _items = [];
+            _offset = 0;
+            _hasMore = false;
+            _error = message;
+          }
         });
       }
     } finally {
@@ -151,13 +159,32 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
     }
   }
 
+  Future<void> _createLead() async {
+    if (!widget.canCreateLead) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const LeadCreationPage()),
+    );
+    if (mounted) await _load();
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: const Color(0xFFF5F7FA),
-    appBar: brandAppBar(
-      leading: const HomeBackButton(color: Colors.white),
-      title: const Text('My Opportunities'),
-    ),
+    appBar:
+        widget.embedded
+            ? null
+            : brandAppBar(
+              leading: const HomeBackButton(color: Colors.white),
+              title: const Text('Opportunities'),
+            ),
+    floatingActionButton:
+        widget.canCreateLead
+            ? brandFloatingActionButton(
+              onPressed: _createLead,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('New Lead'),
+            )
+            : null,
     body: Column(
       children: [
         Padding(
@@ -214,7 +241,12 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
             onRefresh: () => _load(),
             child: ListView.builder(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                16,
+                16,
+                widget.canCreateLead ? 96 : 16,
+              ),
               itemCount: _items.length + 2,
               itemBuilder: (context, index) {
                 if (index == 0) {
@@ -226,12 +258,7 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
                           children: [
                             Text(_error!, textAlign: TextAlign.center),
                             TextButton(
-                              onPressed:
-                                  _loading
-                                      ? null
-                                      : () => _load(
-                                        more: _items.isNotEmpty && _hasMore,
-                                      ),
+                              onPressed: _loading ? null : () => _load(),
                               child: const Text('Retry'),
                             ),
                           ],
@@ -253,9 +280,23 @@ class _MyOpportunitiesPageState extends State<MyOpportunitiesPage> {
                           _status.isNotEmpty
                               ? 'No opportunities match the selected status and phone filters.'
                               : _search.text.isEmpty
-                              ? 'You have not created any opportunities yet.'
+                              ? 'No opportunities list you as Opportunity Owner.'
                               : 'No opportunities match this phone number.',
                         ),
+                      ),
+                    );
+                  }
+                  if (_moreError != null) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Column(
+                        children: [
+                          Text(_moreError!, textAlign: TextAlign.center),
+                          TextButton(
+                            onPressed: () => _load(more: true),
+                            child: const Text('Retry loading more'),
+                          ),
+                        ],
                       ),
                     );
                   }

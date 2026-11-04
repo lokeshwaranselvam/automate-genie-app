@@ -29,6 +29,7 @@ def get_assigned_task(task_id, user):
                   WHERE assigned_todo.reference_type = 'Task'
                     AND assigned_todo.reference_name = t.name
                     AND assigned_todo.allocated_to = %(user)s
+                    AND assigned_todo.status != 'Cancelled'
               )
               OR FIND_IN_SET(
                   %(user)s,

@@ -1,0 +1,74 @@
+Pending Work Web Page setup
+==========================
+
+Route: genie-pending-work
+URL: https://YOUR_ERP_SITE/genie-pending-work
+Combined source: pending-work.html (HTML, internal CSS and internal JavaScript).
+
+1. In Frappe, create a Web Page titled Pending Work.
+2. Set Route to genie-pending-work and Content Type to HTML.
+3. Paste the entire pending-work.html into Main Section (HTML).
+   Use the source/code editor so Frappe does not escape the script/style tags.
+   Leave separate JavaScript and CSS fields empty; disable Markdown processing.
+4. Enable Published, disable caching/dynamic-page caching if your setup offers it,
+   and save. This page contains user-specific data and must not be cached by a
+   reverse proxy. Its API requests already use no-store.
+5. Rebuild and install the Flutter app to use the new Pending Work route.
+
+The existing API remains unchanged:
+  GET /api/method/get_pending_work?action=dashboard
+  GET /api/method/get_pending_work?action=stock
+  GET /api/method/get_pending_work?action=manufacturing
+  GET /api/method/get_pending_work?action=projects
+  GET /api/method/get_pending_work?action=same_area_city
+  GET /api/method/get_pending_work?action=opportunities
+  GET /api/method/get_pending_work?action=overdue_followups
+  GET /api/method/get_pending_work?action=overdue_closing
+  GET /api/method/get_pending_work?action=draft_delivery_plans
+
+In the app the webpage requests data through GeniePendingWork, which delegates
+to the existing PendingWorkApi. This preserves the authenticated session checks,
+user-name lookup, PendingWorkMonitor snapshots, pending-item alarms and document
+navigation. The SID is set only as the ERP cookie; it is never sent through the
+JavaScript bridge. No cookie jar is cleared by the new screen.
+
+The existing available_sections list controls visible categories; older responses
+fall back to section-map key presence. Zero-count authorized categories stay
+visible. Counts, roles and records are never hardcoded in the delivered page.
+
+Native document routes remain unchanged:
+  - Open Opportunities: OpportunitiesWebViewPage, selected opportunity_id or name,
+    using the existing /genie-opportunities webpage.
+  - Other category records: existing PendingDetailPage, including its refresh.
+  - SVR: existing SessionWebView at /SVR, only under a visible Sales Team group.
+
+When opened directly in an authenticated browser, the same file reads those
+existing APIs with the site's session cookie. It opens Opportunities at
+/genie-opportunities#opportunity=ENCODED_ID and SVR at /SVR; other records use a
+read-only details view within this webpage. Browser sessions do not play native
+Android alarms. Sign in to ERP before opening the route directly.
+
+UI:
+  - Original gradient colors, Roboto font weights and original Material icons
+    embedded in the combined file; no CDN or package installation for deployment.
+  - Layout dimensions follow the existing Flutter overview and category screens.
+  - Pull down at the top of the page to refresh. Search filters the loaded list.
+  - Webpage Back and Android Back return from a category to the overview, then
+    close Pending Work. Native detail Back returns to the webpage and reloads.
+
+Validation after deployment:
+  - Compare the overview and Open Opportunities with the original screenshots on
+    the same phone/display scale. Desktop browser rendering is not phone proof.
+  - Check both Sales and Production roles, authorized zero counts, hidden sections,
+    empty results, search/clear, offline/retry and expired/switched sessions.
+  - Open each category record, return, pull to refresh, and confirm the existing
+    detail routes, SVR and new-item alarms still behave correctly.
+
+Scope: the home Pending Work entry now opens PendingWorkWebViewPage. My Tasks,
+the original native pages, notifications/monitor services, API files, ERP scripts,
+Expense Claim, Leave Application and other home actions were not modified.
+
+Local webpage tests use the same test-only linkedom installation as the existing
+webpage tests: %TEMP%/genie-opportunities-qa/node_modules/linkedom.
+Run: node --test test/pending_work_webpage_test.cjs
+Run: flutter test --no-pub test/pending_work_webview_page_test.dart

@@ -7,9 +7,12 @@ import '../utils/api/lead_api.dart';
 import '../utils/widget/home_back_button.dart';
 import 'lead_creation_page.dart';
 import 'lead_details_page.dart';
+import 'my_opportunities_page.dart';
 
 class MyLeadsPage extends StatefulWidget {
-  const MyLeadsPage({super.key});
+  const MyLeadsPage({super.key, this.showOpportunities = false});
+
+  final bool showOpportunities;
 
   @override
   State<MyLeadsPage> createState() => _MyLeadsPageState();
@@ -28,9 +31,20 @@ class _MyLeadsPageState extends State<MyLeadsPage> {
   ];
   final _phone = TextEditingController();
   String _status = '';
+  int _section = 0;
+  bool _opportunitiesOpened = false;
   List<Map<String, dynamic>> _leads = [];
   bool _loading = true;
   String? _error;
+
+  @override
+  void didUpdateWidget(covariant MyLeadsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.showOpportunities) {
+      _section = 0;
+      _opportunitiesOpened = false;
+    }
+  }
 
   @override
   void dispose() {
@@ -132,11 +146,14 @@ class _MyLeadsPageState extends State<MyLeadsPage> {
   @override
   Widget build(BuildContext context) {
     final leads = _filteredLeads;
-    return Scaffold(
-      appBar: brandAppBar(
-        leading: const HomeBackButton(color: Colors.white),
-        title: const Text('My Leads'),
-      ),
+    final leadsPage = Scaffold(
+      appBar:
+          widget.showOpportunities
+              ? null
+              : brandAppBar(
+                leading: const HomeBackButton(color: Colors.white),
+                title: const Text('My Leads'),
+              ),
       body: Column(
         children: [
           Padding(
@@ -293,6 +310,62 @@ class _MyLeadsPageState extends State<MyLeadsPage> {
         onPressed: _createLead,
         icon: const Icon(Icons.add_rounded),
         label: const Text('New Lead'),
+      ),
+    );
+    if (!widget.showOpportunities) return leadsPage;
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: brandAppBar(
+          leading: const HomeBackButton(color: Colors.white),
+          title: const Text('My Leads'),
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(56),
+            child: Container(
+              decoration: const BoxDecoration(gradient: BrandColors.gradient),
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: TabBar(
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  indicator: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  dividerColor: Colors.transparent,
+                  labelColor: BrandColors.ink,
+                  unselectedLabelColor: Colors.white,
+                  labelStyle: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                  onTap:
+                      (index) => setState(() {
+                        _section = index;
+                        if (index == 1) _opportunitiesOpened = true;
+                      }),
+                  tabs: const [
+                    Tab(text: 'My Leads'),
+                    Tab(text: 'My Opportunities'),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        body: IndexedStack(
+          index: _section,
+          children: [
+            leadsPage,
+            if (_opportunitiesOpened)
+              const MyOpportunitiesPage(embedded: true)
+            else
+              const SizedBox.shrink(),
+          ],
+        ),
       ),
     );
   }

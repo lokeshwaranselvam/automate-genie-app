@@ -250,7 +250,7 @@ void main() {
             .onPressed,
         isNotNull,
       );
-      expect(find.text('Leave Application'), findsOneWidget);
+      expect(find.text('Leave Application'), findsNothing);
     },
   );
 }

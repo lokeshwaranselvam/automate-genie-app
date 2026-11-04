@@ -9,6 +9,8 @@ from frappe.utils import getdate, nowdate, now_datetime
 
 @frappe.whitelist(allow_guest = False)
 def checkin(user, lat, lng, address=None, office_type=None, photo_url=None, face_verification=None, include_timings=None):
+    if user != frappe.session.user:
+        frappe.throw("You can only check in or out for yourself.", frappe.PermissionError)
     # Genie checkin timings v1
     from time import perf_counter
 
@@ -25,12 +27,26 @@ def checkin(user, lat, lng, address=None, office_type=None, photo_url=None, face
             timings = frappe.local.response.setdefault("attendance_timings_ms", {})
             timings[stage] = round((perf_counter() - started) * 1000, 3)
 
+    import hashlib
+    attendance_lock = None
     try:
         employeeid = checkin_timed("checkin_employee_lookup", frappe.db.get_value, "Employee", {"user_id": user, "status": "Active"}, "name")
         if not employeeid:
             frappe.local.response["message"] = "Employee not found or inactive"
             frappe.local.response["http_status_code"] = 404
             return
+
+        # Serialize retried/concurrent requests for this employee so the
+        # existence checks below cannot race (connection-scoped MariaDB lock).
+        attendance_lock = hashlib.sha256((frappe.local.site + ":genie-attendance:" + employeeid).encode()).hexdigest()
+        locked = frappe.db.sql("SELECT GET_LOCK(%s, 10)", (attendance_lock,))
+        if not locked or locked[0][0] != 1:
+            attendance_lock = None
+            frappe.local.response["message"] = "Another attendance request is being processed. Please retry."
+            frappe.local.response["http_status_code"] = 409
+            return
+        # Discard any snapshot read before the lock so the checks see committed rows.
+        frappe.db.commit()
 
         existing_checkin = checkin_timed("checkin_existing_in", frappe.db.exists, "Employee Checkin", {
             "employee": employeeid,
@@ -75,6 +91,8 @@ def checkin(user, lat, lng, address=None, office_type=None, photo_url=None, face
         frappe.local.response["message"] = "Check In Denied,Check Error Log"
         frappe.local.response["http_status_code"] = 500
     finally:
+        if attendance_lock:
+            frappe.db.sql("SELECT RELEASE_LOCK(%s)", (attendance_lock,))
         if timing_enabled:
             timings = frappe.local.response.setdefault("attendance_timings_ms", {})
             timings["checkin_total"] = round((perf_counter() - checkin_started) * 1000, 3)
@@ -82,6 +100,8 @@ def checkin(user, lat, lng, address=None, office_type=None, photo_url=None, face
 
 @frappe.whitelist(allow_guest = False)
 def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,distance=None, office_type=None,location_logs=None,with_event=None,last_lat_lng=None, photo_url=None, face_verification=None, include_timings=None):
+    if user != frappe.session.user:
+        frappe.throw("You can only check in or out for yourself.", frappe.PermissionError)
     # Genie checkout performance v1
     from time import perf_counter
 
@@ -113,12 +133,26 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
                 raise RuntimeError("Google distance lookup timed out. Please retry checkout.") from None
         return route_responses[url]
 
+    import hashlib
+    attendance_lock = None
     try:
         employeeid = checkout_timed("checkout_employee_lookup", frappe.db.get_value, "Employee", {"user_id": user, "status": "Active"}, "name")
         if not employeeid:
             frappe.local.response["message"] = "Employee not found or inactive"
             frappe.local.response["http_status_code"] = 404
             return
+
+        # Serialize retried/concurrent requests for this employee so the
+        # existence checks below cannot race (connection-scoped MariaDB lock).
+        attendance_lock = hashlib.sha256((frappe.local.site + ":genie-attendance:" + employeeid).encode()).hexdigest()
+        locked = frappe.db.sql("SELECT GET_LOCK(%s, 10)", (attendance_lock,))
+        if not locked or locked[0][0] != 1:
+            attendance_lock = None
+            frappe.local.response["message"] = "Another attendance request is being processed. Please retry."
+            frappe.local.response["http_status_code"] = 409
+            return
+        # Discard any snapshot read before the lock so the checks see committed rows.
+        frappe.db.commit()
 
         # Block checkout if event visit is still in progress
         event_visit_in_progress = checkout_timed("checkout_active_visit", frappe.db.exists, "Visit", {
@@ -148,12 +182,16 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
             "log_type": "OUT"
         }, fields=["name", "time"], order_by="time desc", limit=1)
 
-        if latest_checkin:
-            in_time = latest_checkin[0]["time"]
-            if latest_checkout and latest_checkout[0]["time"] > in_time:
-                frappe.local.response["message"] = "Employee Already checked out!"
-                frappe.local.response["http_status_code"] = 200
-                return
+        if not latest_checkin:
+            frappe.local.response["message"] = "No check-in found to check out from."
+            frappe.local.response["http_status_code"] = 400
+            return
+
+        in_time = latest_checkin[0]["time"]
+        if latest_checkout and latest_checkout[0]["time"] > in_time:
+            frappe.local.response["message"] = "Employee Already checked out!"
+            frappe.local.response["http_status_code"] = 200
+            return
 
         
 
@@ -224,7 +262,7 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
             origin = f"{lat_str},{lng_str}"
             destination = f"{lat},{lng}"
             
-            api_key = "AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI"
+            api_key = frappe.conf.get("google_maps_api_key") or frappe.throw("Google Maps is not configured on the server. Contact your administrator.")
             visit.custom_from_google_api = 1
             url = (
                     f"https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -290,7 +328,7 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
             origin = f"{visit.latitude},{visit.longitude}"
             destination = f"{lat},{lng}"
             
-            api_key = "AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI"
+            api_key = frappe.conf.get("google_maps_api_key") or frappe.throw("Google Maps is not configured on the server. Contact your administrator.")
             visit.custom_from_google_api = 1
             url = (
                     f"https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -326,6 +364,8 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
         frappe.local.response["message"] = str(e)
         frappe.local.response["http_status_code"] = 500
     finally:
+        if attendance_lock:
+            frappe.db.sql("SELECT RELEASE_LOCK(%s)", (attendance_lock,))
         if timing_enabled:
             timings = frappe.local.response.setdefault("attendance_timings_ms", {})
             timings["checkout_total"] = round((perf_counter() - checkout_started) * 1000, 3)

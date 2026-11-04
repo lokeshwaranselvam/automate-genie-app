@@ -1,11 +1,14 @@
+import '../utils/widget/webview_pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../utils/api/session_auth.dart';
 import '../utils/connection_notice.dart';
+import '../utils/canteen_payment_webview.dart';
 import '../utils/widget/warning.dart';
 
 class SessionWebView extends StatefulWidget {
@@ -30,6 +33,7 @@ class _SessionWebViewState extends State<SessionWebView> {
   WebViewController? _controller;
   bool _isLoading = true;
   String? _error;
+  bool _openingPaymentApp = false;
 
   @override
   void initState() {
@@ -56,15 +60,23 @@ class _SessionWebViewState extends State<SessionWebView> {
       final siteHost = Uri.tryParse(siteUrl)?.host;
       final isSameSite = siteHost != null && uri.host == siteHost;
 
-      final controller =
+      final canteenPayments = isCanteenPaymentPage(uri);
+      late final WebViewController controller;
+      controller =
           WebViewController()
             ..setJavaScriptMode(JavaScriptMode.unrestricted)
             ..setNavigationDelegate(
               NavigationDelegate(
-                onNavigationRequest: (request) {
+                onNavigationRequest: (request) async {
                   final navigationUri = Uri.tryParse(request.url);
                   if (navigationUri == null ||
                       navigationUri.scheme != 'https') {
+                    if (canteenPayments) {
+                      final paymentUri = canteenUpiUri(request.url);
+                      if (paymentUri != null) {
+                        await _openPaymentApp(paymentUri);
+                      }
+                    }
                     return NavigationDecision.prevent;
                   }
                   return NavigationDecision.navigate;
@@ -77,7 +89,19 @@ class _SessionWebViewState extends State<SessionWebView> {
                     });
                   }
                 },
-                onPageFinished: (_) {
+                onPageFinished: (url) async {
+                  if (canteenPayments &&
+                      isCanteenPaymentPage(Uri.tryParse(url) ?? Uri())) {
+                    try {
+                      await controller.runJavaScript(
+                        canteenRazorpaySupportScript,
+                      );
+                    } catch (_) {
+                      _paymentNotice(
+                        'UPI could not be enabled. Please reopen Canteen.',
+                      );
+                    }
+                  }
                   if (mounted) setState(() => _isLoading = false);
                 },
                 onWebResourceError: (error) {
@@ -109,6 +133,54 @@ class _SessionWebViewState extends State<SessionWebView> {
     }
   }
 
+  Future<void> _refreshPage() async {
+    if (_isLoading || _openingPaymentApp) return;
+    final controller = _controller;
+    if (controller == null || _error != null) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+      await _initializeWebView();
+      return;
+    }
+    final current = Uri.tryParse(await controller.currentUrl() ?? widget.url);
+    if (!mounted ||
+        current == null ||
+        current.scheme != 'https' ||
+        current.host.isEmpty) {
+      return;
+    }
+    // Start a fresh GET document; never resubmit a previous form POST.
+    await controller.loadRequest(current);
+  }
+
+  Future<void> _openPaymentApp(Uri uri) async {
+    if (_openingPaymentApp) return;
+    _openingPaymentApp = true;
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened) {
+        _paymentNotice('No compatible UPI app could be opened.');
+      }
+    } catch (_) {
+      _paymentNotice(
+        'Unable to open the UPI app. Please check it is installed.',
+      );
+    } finally {
+      _openingPaymentApp = false;
+    }
+    // Returning from a UPI app is not proof of payment. The Canteen page keeps
+    // responsibility for its existing server verification and booking flow.
+  }
+
+  void _paymentNotice(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   void _showError(String message) {
     if (!mounted) return;
     final connection = ConnectionNotice.fromError(message);
@@ -118,6 +190,21 @@ class _SessionWebViewState extends State<SessionWebView> {
       _isLoading = false;
     });
     if (showPopup) Warning.show(context, message, 'Error');
+  }
+
+  /// Phone Back when it is not blocked: step back in web history first, then
+  /// leave the page.
+  Future<void> _handleSystemBack() async {
+    final controller = _controller;
+    try {
+      if (controller != null && await controller.canGoBack()) {
+        await controller.goBack();
+        return;
+      }
+    } catch (_) {
+      // Fall through and close the page if web history is unavailable.
+    }
+    if (mounted) Navigator.of(context).pop();
   }
 
   @override
@@ -138,12 +225,23 @@ class _SessionWebViewState extends State<SessionWebView> {
               ],
             );
 
+    final refreshableBody = WebViewPullToRefresh(
+      controller: _error == null ? _controller : null,
+      enabled: !_isLoading && !_openingPaymentApp,
+      onRefresh: _refreshPage,
+      child: body,
+    );
+
     if (widget.embedded) {
-      return PopScope(canPop: !widget.blockSystemBack, child: body);
+      return PopScope(canPop: !widget.blockSystemBack, child: refreshableBody);
     }
 
     return PopScope(
       canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || widget.blockSystemBack) return;
+        _handleSystemBack();
+      },
       child: Scaffold(
         appBar: brandAppBar(
           leading: IconButton(
@@ -153,7 +251,7 @@ class _SessionWebViewState extends State<SessionWebView> {
           ),
           title: Text(widget.title),
         ),
-        body: body,
+        body: refreshableBody,
       ),
     );
   }

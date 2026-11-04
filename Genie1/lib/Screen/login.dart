@@ -1,3 +1,5 @@
+import '../utils/widget/pull_to_refresh.dart';
+import '../utils/storage_diagnostics.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
@@ -45,11 +47,19 @@ class _LoginState extends State<Login> {
 
   Future<void> _restoreRememberedLogin() async {
     try {
-      final remember = await _secureStorage.read(key: _rememberKey) == 'true';
+      final remember =
+          await StorageDiagnostics.read(_secureStorage, key: _rememberKey) ==
+          'true';
       if (!remember) return;
 
-      final username = await _secureStorage.read(key: _usernameKey);
-      final password = await _secureStorage.read(key: _passwordKey);
+      final username = await StorageDiagnostics.read(
+        _secureStorage,
+        key: _usernameKey,
+      );
+      final password = await StorageDiagnostics.read(
+        _secureStorage,
+        key: _passwordKey,
+      );
       if (!mounted) return;
 
       setState(() => _rememberMe = true);
@@ -70,8 +80,12 @@ class _LoginState extends State<Login> {
         return;
       }
 
-      await _secureStorage.write(key: _rememberKey, value: 'true');
-      await _saveRememberedLogin();
+      // Credentials are saved only after the server accepts them in login().
+      await StorageDiagnostics.write(
+        _secureStorage,
+        key: _rememberKey,
+        value: 'true',
+      );
     } catch (error) {
       debugPrint('Could not update remembered login: $error');
     }
@@ -80,11 +94,13 @@ class _LoginState extends State<Login> {
   Future<void> _saveRememberedLogin() async {
     if (!_rememberMe) return;
     try {
-      await _secureStorage.write(
+      await StorageDiagnostics.write(
+        _secureStorage,
         key: _usernameKey,
         value: _emailController.text.trim(),
       );
-      await _secureStorage.write(
+      await StorageDiagnostics.write(
+        _secureStorage,
         key: _passwordKey,
         value: _passwordController.text,
       );
@@ -144,14 +160,19 @@ class _LoginState extends State<Login> {
       return;
     }
 
-    if (_rememberMe) await _saveRememberedLogin();
-
+    // Set loading before any await so a second tap cannot submit again.
     setState(() => _isLoading = true);
     unawaited(_checkPing());
 
     try {
       final user = await LoginApi.login(username, password);
       if (!mounted) return;
+      // Remember credentials only once the server has accepted them; keep
+      // the loading guard up until then so the form cannot be resubmitted.
+      if (_rememberMe && !user.containsKey('error')) {
+        await _saveRememberedLogin();
+        if (!mounted) return;
+      }
       setState(() => _isLoading = false);
       if (user.containsKey('error')) {
         Warning.show(context, user['error'], 'Warning');
@@ -173,49 +194,65 @@ class _LoginState extends State<Login> {
     }
   }
 
+  Future<void> _refreshLogin() async {
+    if (_isLoading) return;
+    setState(() {
+      _emailController.clear();
+      _passwordController.clear();
+      _isPasswordVisible = false;
+      _rememberMe = false;
+    });
+    await _restoreRememberedLogin();
+    await _checkPing();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F9FC),
-      body: SafeArea(
-        child: Stack(
-          children: [
-            Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 26,
-                  vertical: 28,
-                ),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 430),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const SizedBox(height: 8),
-                        _buildBrand(),
-                        const SizedBox(height: 35),
-                        _buildUsernameField(),
-                        const SizedBox(height: 19),
-                        _buildPasswordField(),
-                        const SizedBox(height: 8),
-                        _buildRememberAndForgot(),
-                        const SizedBox(height: 16),
-                        _buildLoginButton(),
-                      ],
+      body: PullToRefresh(
+        enabled: !_isLoading,
+        onRefresh: _refreshLogin,
+        child: SafeArea(
+          child: Stack(
+            children: [
+              Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 26,
+                    vertical: 28,
+                  ),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 430),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: 8),
+                          _buildBrand(),
+                          const SizedBox(height: 35),
+                          _buildUsernameField(),
+                          const SizedBox(height: 19),
+                          _buildPasswordField(),
+                          const SizedBox(height: 8),
+                          _buildRememberMe(),
+                          const SizedBox(height: 16),
+                          _buildLoginButton(),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            if (_isLoading)
-              ColoredBox(
-                color: Colors.black.withValues(alpha: 0.12),
-                child: const Center(
-                  child: AgPathLoadingIndicator(showBackground: true),
+              if (_isLoading)
+                ColoredBox(
+                  color: Colors.black.withValues(alpha: 0.12),
+                  child: const Center(
+                    child: AgPathLoadingIndicator(showBackground: true),
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -316,7 +353,7 @@ class _LoginState extends State<Login> {
     );
   }
 
-  Widget _buildRememberAndForgot() {
+  Widget _buildRememberMe() {
     return Row(
       children: [
         SizedBox(
@@ -339,15 +376,6 @@ class _LoginState extends State<Login> {
                 style: TextStyle(fontSize: 12, color: Color(0xFF5F6B7A)),
               ),
             ],
-          ),
-        ),
-        const Spacer(),
-        const Text(
-          'Forgot Password?',
-          style: TextStyle(
-            color: _brandBlue,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
           ),
         ),
       ],

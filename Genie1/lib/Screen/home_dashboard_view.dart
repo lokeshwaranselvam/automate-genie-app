@@ -39,6 +39,10 @@ class HomeDashboardView extends StatelessWidget {
     this.showLeads = false,
     this.showVisits = false,
     this.showPending = false,
+    this.showSchedule = false,
+    this.showTasks = true,
+    this.showAttendance = true,
+    this.showNewTask = true,
     this.taskSummary,
   });
 
@@ -49,6 +53,8 @@ class HomeDashboardView extends StatelessWidget {
   final bool showAddLead, showNewVisit;
   final bool showLeads, showVisits;
   final bool showPending;
+  final bool showSchedule;
+  final bool showTasks, showAttendance, showNewTask;
   final ({int pending, int inProgress, int completed})? taskSummary;
   final List<Widget> schedule;
   final Future<void> Function() onRefresh;
@@ -73,176 +79,181 @@ class HomeDashboardView extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1120),
           child: RefreshIndicator(
-            onRefresh: onRefresh,
-            color: BrandColors.indigo,
-            child: ListView(
-              physics: const AlwaysScrollableScrollPhysics(
-                parent: ClampingScrollPhysics(),
+        onRefresh: onRefresh,
+        color: BrandColors.indigo,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(
+            parent: ClampingScrollPhysics(),
+          ),
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
+          children: [
+            _header(),
+            const SizedBox(height: 20),
+            _profile(),
+            const SizedBox(height: 18),
+            if (showTasks && !showVisits && !showLeads && !showPending)
+              _tasksOverview()
+            else
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (showTasks)
+                    _metric(
+                      Icons.event_available_rounded,
+                      taskCount,
+                      'Tasks Today',
+                      const Color(0xFF4514EE),
+                      const Color(0xFFF0EDFF),
+                      onTasks,
+                    ),
+                  if (showVisits) ...[
+                    const SizedBox(width: 7),
+                    _metric(
+                      Icons.apartment_rounded,
+                      visitCount,
+                      'Site Visits',
+                      const Color(0xFF008F73),
+                      const Color(0xFFE8FAF4),
+                      onVisits,
+                    ),
+                  ],
+                  if (showLeads) ...[
+                    const SizedBox(width: 7),
+                    _metric(
+                      Icons.handshake_rounded,
+                      leadCount,
+                      'My Opportunities',
+                      const Color(0xFFAC7309),
+                      const Color(0xFFFFF6E5),
+                      onLeads,
+                    ),
+                  ],
+                  if (showPending) ...[
+                    const SizedBox(width: 7),
+                    _metric(
+                      Icons.assignment_late_rounded,
+                      pendingCount,
+                      'Pending',
+                      const Color(0xFFE30C4D),
+                      const Color(0xFFFFEDF2),
+                      onPending,
+                    ),
+                  ],
+                ],
               ),
-              padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
-              children: [
-                _header(),
-                const SizedBox(height: 20),
-                _profile(),
-                const SizedBox(height: 18),
-                if (!showVisits && !showLeads && !showPending)
-                  _tasksOverview()
-                else
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _metric(
-                        Icons.event_available_rounded,
-                        taskCount,
-                        'Tasks Today',
-                        const Color(0xFF4514EE),
-                        const Color(0xFFF0EDFF),
-                        onTasks,
-                      ),
-                      if (showVisits) ...[
-                        const SizedBox(width: 7),
-                        _metric(
-                          Icons.apartment_rounded,
-                          visitCount,
-                          'Site Visits',
-                          const Color(0xFF008F73),
-                          const Color(0xFFE8FAF4),
-                          onVisits,
-                        ),
-                      ],
-                      if (showLeads) ...[
-                        const SizedBox(width: 7),
-                        _metric(
-                          Icons.handshake_rounded,
-                          leadCount,
-                          'My Leads',
-                          const Color(0xFFAC7309),
-                          const Color(0xFFFFF6E5),
-                          onLeads,
-                        ),
-                      ],
-                      if (showPending) ...[
-                        const SizedBox(width: 7),
-                        _metric(
-                          Icons.assignment_late_rounded,
-                          pendingCount,
-                          'Pending',
-                          const Color(0xFFE30C4D),
-                          const Color(0xFFFFEDF2),
-                          onPending,
-                        ),
-                      ],
-                    ],
-                  ),
-                const SizedBox(height: 22),
-                Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        "Today's Schedule",
-                        style: TextStyle(
-                          color: _homeInk,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                        ),
+            if (showSchedule) ...[
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      "Today's Schedule",
+                      style: TextStyle(
+                        color: _homeInk,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                    if (onClearSchedule != null)
-                      TextButton(
-                        onPressed: onClearSchedule,
-                        child: const Text('Clear'),
-                      ),
+                  ),
+                  if (onClearSchedule != null)
                     TextButton(
-                      onPressed: onVisits,
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.only(left: 4),
-                        minimumSize: Size.zero,
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'View All',
-                            style: TextStyle(
-                              color: Color(0xFF4514EE),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          Icon(
-                            Icons.chevron_right,
-                            size: 20,
+                      onPressed: onClearSchedule,
+                      child: const Text('Clear'),
+                    ),
+                  TextButton(
+                    onPressed: onVisits,
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.only(left: 4),
+                      minimumSize: Size.zero,
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'View All',
+                          style: TextStyle(
                             color: Color(0xFF4514EE),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
                           ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                if (loading)
-                  const LinearProgressIndicator(
-                    color: BrandColors.indigo,
-                    minHeight: 2,
-                  )
-                else if (schedule.isEmpty)
-                  _emptySchedule()
-                else
-                  _surface(
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(children: schedule),
+                        ),
+                        Icon(
+                          Icons.chevron_right,
+                          size: 20,
+                          color: Color(0xFF4514EE),
+                        ),
+                      ],
                     ),
                   ),
-                const SizedBox(height: 22),
-                const Text(
-                  'Quick Actions',
-                  style: TextStyle(
-                    color: _homeInk,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (loading)
+                const LinearProgressIndicator(
+                  color: BrandColors.indigo,
+                  minHeight: 2,
+                )
+              else if (schedule.isEmpty)
+                _emptySchedule()
+              else
+                _surface(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(children: schedule),
                   ),
                 ),
-                const SizedBox(height: 12),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _quickAction(
-                      attendanceBusy
-                          ? Icons.hourglass_top_rounded
-                          : Icons.access_time_filled_rounded,
-                      attendanceBusy ? 'Working...' : 'Attendance',
-                      'Mark your day',
-                      const [Color(0xFF2969FF), Color(0xFF3911F4)],
-                      onAttendance,
-                    ),
-                    if (showAddLead)
-                      _quickAction(
-                        Icons.person_add_alt_1_rounded,
-                        'Add Lead',
-                        'Capture new opportunities',
-                        const [Color(0xFF30D47B), Color(0xFF00A48B)],
-                        onAddLead,
-                      ),
-                    if (showNewVisit)
-                      _quickAction(
-                        Icons.location_on_rounded,
-                        'Site Visit',
-                        'Log a site visit',
-                        const [Color(0xFFB449E8), Color(0xFF8120CD)],
-                        onNewVisit,
-                      ),
-                    _quickAction(
-                      Icons.add_task_rounded,
-                      'New Task',
-                      'Create a task',
-                      const [Color(0xFFFFA035), Color(0xFFFF641F)],
-                      onNewTask,
-                    ),
-                  ],
-                ),
+            ],
+            const SizedBox(height: 22),
+            const Text(
+              'Quick Actions',
+              style: TextStyle(
+                color: _homeInk,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (showAttendance)
+                  _quickAction(
+                    attendanceBusy
+                        ? Icons.hourglass_top_rounded
+                        : Icons.access_time_filled_rounded,
+                    attendanceBusy ? 'Working...' : 'Attendance',
+                    'Mark your day',
+                    const [Color(0xFF2969FF), Color(0xFF3911F4)],
+                    onAttendance,
+                  ),
+                if (showAddLead)
+                  _quickAction(
+                    Icons.person_add_alt_1_rounded,
+                    'Add Lead',
+                    'Capture new opportunities',
+                    const [Color(0xFF30D47B), Color(0xFF00A48B)],
+                    onAddLead,
+                  ),
+                if (showNewVisit)
+                  _quickAction(
+                    Icons.location_on_rounded,
+                    'Site Visit',
+                    'Log a site visit',
+                    const [Color(0xFFB449E8), Color(0xFF8120CD)],
+                    onNewVisit,
+                  ),
+                if (showNewTask)
+                  _quickAction(
+                    Icons.add_task_rounded,
+                    'New Task',
+                    'Create a task',
+                    const [Color(0xFFFFA035), Color(0xFFFF641F)],
+                    onNewTask,
+                  ),
               ],
             ),
+          ],
+        ),
           ),
         ),
       ),
@@ -972,10 +983,11 @@ class HomeNavigationBar extends StatelessWidget {
     required this.onTap,
     this.showVisits = false,
     this.showLeads = false,
+    this.showTasks = true,
   });
   final int currentIndex;
   final ValueChanged<int> onTap;
-  final bool showVisits, showLeads;
+  final bool showVisits, showLeads, showTasks;
 
   @override
   Widget build(BuildContext context) => ClipRRect(
@@ -990,7 +1002,7 @@ class HomeNavigationBar extends StatelessWidget {
             children: [
               for (final index in [
                 0,
-                1,
+                if (showTasks) 1,
                 if (showVisits) 2,
                 if (showLeads) 3,
                 4,
@@ -1019,15 +1031,24 @@ class HomeNavigationBar extends StatelessWidget {
                                     : const Color(0xFFE2DDFF),
                           ),
                           const SizedBox(height: 4),
-                          Text(
-                            ['Home', 'Tasks', 'Visits', 'Leads', 'More'][index],
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight:
-                                  index == currentIndex
-                                      ? FontWeight.w700
-                                      : FontWeight.w400,
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              [
+                                'Home',
+                                'Tasks',
+                                'Visits',
+                                'Opportunities',
+                                'More',
+                              ][index],
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight:
+                                    index == currentIndex
+                                        ? FontWeight.w700
+                                        : FontWeight.w400,
+                              ),
                             ),
                           ),
                           const SizedBox(height: 6),

@@ -1,7 +1,12 @@
 import '../platform/browser_notifications.dart';
 import 'notification_inbox.dart';
+import 'notification_inbox_taps.dart';
+import 'sales_summary_notification.dart';
+import 'document_notification.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'lead_call_notification.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'event_assignment_notification.dart';
+import 'package:event_assignment_alarm/event_assignment_alarm.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -20,6 +25,11 @@ const String _pendingWorkChannelId = 'work_assignment';
 const String _pendingWorkSilentChannelId = 'pending_work_alarm_playback';
 const String _pendingWorkChannelMigrationKey =
     'pending_work_alarm_channel_refreshed_v1';
+const String _eventAssignmentVisualChannelId = 'event_assignment_visual_v1';
+const String _eventAssignmentAlarmChannelId = 'event_assignment_alarm_v1';
+const String _documentVisualChannelId = 'document_notification_visual_v1';
+const String _documentAlarmChannelId = 'document_notification_alarm_v1';
+const String _documentDefaultChannelId = 'document_notification_default_v1';
 
 const AndroidNotificationChannel _pendingWorkChannel =
     AndroidNotificationChannel(
@@ -89,6 +99,14 @@ bool _isPendingWork(RemoteMessage message) {
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
+  if (message.data['type'] == 'DOCUMENT_NOTIFICATION') {
+    await showDocumentNotification(message);
+    return;
+  }
+  if (EventAssignmentNotification.fromData(message.data) != null) {
+    await showEventAssignmentNotification(message);
+    return;
+  }
   await NotificationInbox.capture(message);
   if (LeadCallNotification.fromData(message.data) != null) {
     if (message.notification == null) {
@@ -98,6 +116,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     return;
   }
   if (!_isPendingWork(message) || message.notification != null) return;
+  if (!await _isForSignedInUser(message)) return;
 
   await _initializeLocalNotifications();
   await showPendingWorkNotification(message);
@@ -112,7 +131,7 @@ Future<void> _initializeLocalNotifications() async {
     onDidReceiveNotificationResponse: (response) {
       final payload = response.payload;
       if (payload == null) return;
-      unawaited(_openLeadCallPayload(payload));
+      unawaited(_openNotificationPayload(payload));
     },
   );
 
@@ -133,6 +152,45 @@ Future<void> _initializeLocalNotifications() async {
   }
   await android?.createNotificationChannel(_pendingWorkChannel);
   await android?.createNotificationChannel(_pendingWorkSilentChannel);
+  for (final sound in [false, true]) {
+    await android?.createNotificationChannel(
+      AndroidNotificationChannel(
+        sound ? _documentAlarmChannelId : _documentVisualChannelId,
+        sound ? 'Document Notification Alarm' : 'Document Notifications',
+        importance: Importance.high,
+        playSound: sound,
+        sound:
+            sound
+                ? const RawResourceAndroidNotificationSound('work_assigned')
+                : null,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
+        enableVibration: true,
+      ),
+    );
+  }
+  await android?.createNotificationChannel(
+    const AndroidNotificationChannel(
+      _eventAssignmentVisualChannelId,
+      'Visit Assignments',
+      description: 'Visit alerts accompanied by the Event alarm player',
+      importance: Importance.high,
+      playSound: false,
+      enableVibration: true,
+    ),
+  );
+  await android?.createNotificationChannel(
+    const AndroidNotificationChannel(
+      _eventAssignmentAlarmChannelId,
+      'Visit Assignment Alarm',
+      description:
+          'Alarm sound when Android cannot start the Event alarm player',
+      importance: Importance.high,
+      sound: RawResourceAndroidNotificationSound('work_assigned'),
+      audioAttributesUsage: AudioAttributesUsage.alarm,
+      playSound: true,
+      enableVibration: true,
+    ),
+  );
   await android?.createNotificationChannel(
     const AndroidNotificationChannel(
       _leadCallChannelId,
@@ -149,15 +207,22 @@ class FcmNotificationService {
   static Future<void> initialize() async {
     if (_initialized) return;
 
-    if (!kIsWeb)
-      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    if (!kIsWeb) FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     await _initializeLocalNotifications();
 
     FirebaseMessaging.onMessage.listen((message) async {
+      if (message.data['type'] == 'DOCUMENT_NOTIFICATION') {
+        await showDocumentNotification(message, playAlarm: true);
+        return;
+      }
+      if (EventAssignmentNotification.fromData(message.data) != null) {
+        await showEventAssignmentNotification(message, playAlarm: true);
+        return;
+      }
       await NotificationInbox.capture(message);
       if (LeadCallNotification.fromData(message.data) != null) {
         await showLeadCallNotification(message);
-      } else if (_isPendingWork(message)) {
+      } else if (_isPendingWork(message) && await _isForSignedInUser(message)) {
         final audioUrl = message.data['alarm_audio_url']?.toString().trim();
         await showPendingWorkNotification(message, playChannelSound: false);
         await PendingWorkAlarmPlayer.play(url: audioUrl);
@@ -165,8 +230,7 @@ class FcmNotificationService {
     });
 
     FirebaseMessaging.onMessageOpenedApp.listen((message) async {
-      await NotificationInbox.capture(message);
-      await _openRemoteLeadCall(message);
+      await NotificationInboxTaps.open(message);
     });
     // Reading a launch notification should not delay opening the app.
     unawaited(() async {
@@ -175,15 +239,14 @@ class FcmNotificationService {
             .getInitialMessage()
             .timeout(const Duration(seconds: 5));
         if (initial != null) {
-          await NotificationInbox.capture(initial);
-          await _openRemoteLeadCall(initial);
+          await NotificationInboxTaps.open(initial);
         }
         if (kIsWeb) return;
         final launch =
             await _localNotifications.getNotificationAppLaunchDetails();
         final payload = launch?.notificationResponse?.payload;
         if (launch?.didNotificationLaunchApp == true && payload != null) {
-          await _openLeadCallPayload(payload);
+          await _openNotificationPayload(payload);
         }
       } catch (error) {
         debugPrint('Could not read initial notification: ${error.runtimeType}');
@@ -192,6 +255,203 @@ class FcmNotificationService {
     _initialized = true;
     debugPrint('FCM pending-work notification listener initialized.');
   }
+}
+
+String _documentReceipt(RemoteMessage message) {
+  if (isSalesSummaryPush(message.data)) {
+    return 'sales-summary:${message.data['notification_log']}';
+  }
+  if (message.messageId?.isNotEmpty == true) return message.messageId!;
+  final keys = message.data.keys.toList()..sort();
+  return jsonEncode([
+    message.sentTime?.millisecondsSinceEpoch,
+    {for (final key in keys) key: message.data[key]},
+  ]);
+}
+
+/// A new generic path; legacy Event/call/work handlers retain their contracts.
+Future<bool> showDocumentNotification(
+  RemoteMessage message, {
+  bool playAlarm = false,
+}) async {
+  final notification = DocumentNotification.fromData(message.data);
+  if (notification == null) return false;
+  final nativeAlarm =
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  Future<void> show({required bool sound}) async {
+    if (kIsWeb) {
+      await showBrowserNotification(notification.title, notification.body);
+      return;
+    }
+    final normalSound = !sound && notification.soundMode == 'default';
+    await _localNotifications.show(
+      _documentReceipt(message).hashCode & 0x7fffffff,
+      notification.title,
+      notification.body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          sound
+              ? _documentAlarmChannelId
+              : normalSound
+              ? _documentDefaultChannelId
+              : _documentVisualChannelId,
+          sound
+              ? 'Document Notification Alarm'
+              : normalSound
+              ? 'Document Notifications with Sound'
+              : 'Document Notifications',
+          importance: Importance.high,
+          priority: Priority.high,
+          visibility: NotificationVisibility.private,
+          playSound: sound || normalSound,
+          sound:
+              sound
+                  ? const RawResourceAndroidNotificationSound('work_assigned')
+                  : null,
+          audioAttributesUsage:
+              sound
+                  ? AudioAttributesUsage.alarm
+                  : AudioAttributesUsage.notification,
+          onlyAlertOnce: false,
+          icon: 'ic_notification',
+        ),
+      ),
+      payload: jsonEncode(_notificationTapData(message)),
+    );
+  }
+
+  return DocumentNotificationAlerts.deliver(
+    data: message.data,
+    receipt: _documentReceipt(message),
+    notify: () async {
+      await _initializeLocalNotifications();
+      await show(
+        sound: !nativeAlarm && notification.alarmEnabled && !playAlarm,
+      );
+      await NotificationInbox.capture(message);
+    },
+    playSound: () async {
+      if (nativeAlarm) {
+        if (!await EventAssignmentAlarm.play()) await show(sound: true);
+      } else if (playAlarm) {
+        await PendingWorkAlarmPlayer.play();
+      }
+    },
+  );
+}
+
+Map<String, dynamic> _notificationTapData(RemoteMessage message) => {
+  ...message.data,
+  '_genie_site': dotenv.env['SITE_URL'],
+  if (message.messageId != null) '_genie_message_id': message.messageId,
+  if (message.sentTime != null)
+    '_genie_sent_at': message.sentTime!.toIso8601String(),
+  if (message.notification?.title != null)
+    '_genie_title': message.notification!.title,
+  if (message.notification?.body != null)
+    '_genie_body': message.notification!.body,
+};
+
+Future<void> _openNotificationPayload(String payload) async {
+  try {
+    final decoded = jsonDecode(payload);
+    if (decoded is! Map) return;
+    final data = Map<String, dynamic>.from(decoded);
+    await NotificationInboxTaps.open(
+      RemoteMessage(
+        data: data,
+        messageId: data['_genie_message_id']?.toString(),
+        sentTime: DateTime.tryParse(data['_genie_sent_at']?.toString() ?? ''),
+        notification:
+            data['_genie_title'] != null || data['_genie_body'] != null
+                ? RemoteNotification(
+                  title: data['_genie_title']?.toString(),
+                  body: data['_genie_body']?.toString(),
+                )
+                : null,
+      ),
+    );
+  } catch (error) {
+    debugPrint('Could not open notification: ${error.runtimeType}');
+  }
+}
+
+/// Android uses native alarm-stream playback in both foreground and background.
+/// The plugin is registered in Firebase's engine as well as the Activity engine.
+Future<bool> showEventAssignmentNotification(
+  RemoteMessage message, {
+  bool playAlarm = false,
+}) async {
+  if (EventAssignmentNotification.fromData(message.data) == null) return false;
+  await _initializeLocalNotifications();
+  final nativeAlarm =
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  // The sender derives this flag from the assignee's ERP roles. Missing or
+  // unrecognized flags keep the push visible without starting alarm audio.
+  final alarmEnabled = message.data['alarm_enabled'] == '1';
+  Future<void> Function()? playSound;
+  if (alarmEnabled) {
+    if (nativeAlarm) {
+      playSound = () async {
+        if (!await EventAssignmentAlarm.play()) {
+          await _showEventAssignmentAlert(message, sound: true);
+        }
+      };
+    } else if (playAlarm) {
+      playSound = () => PendingWorkAlarmPlayer.play();
+    }
+  }
+  return EventAssignmentAlerts.deliver(
+    data: message.data,
+    notify: () async {
+      if (nativeAlarm) {
+        await _showEventAssignmentAlert(message, sound: false);
+      } else {
+        await showPendingWorkNotification(
+          message,
+          playChannelSound: alarmEnabled && !playAlarm,
+        );
+      }
+      await NotificationInbox.capture(message);
+    },
+    playSound: playSound,
+  );
+}
+
+Future<void> _showEventAssignmentAlert(
+  RemoteMessage message, {
+  required bool sound,
+}) async {
+  final assignment = EventAssignmentNotification.fromData(message.data)!;
+  final id =
+      'event:${assignment.eventId}:${assignment.assignmentId}'.hashCode &
+      0x7fffffff;
+  await _localNotifications.show(
+    id,
+    message.data['title']?.toString() ?? 'New event assigned',
+    message.data['body']?.toString() ?? 'A new visit has been assigned to you.',
+    NotificationDetails(
+      android: AndroidNotificationDetails(
+        sound
+            ? _eventAssignmentAlarmChannelId
+            : _eventAssignmentVisualChannelId,
+        sound ? 'Visit Assignment Alarm' : 'Visit Assignments',
+        importance: Importance.high,
+        priority: Priority.high,
+        category: AndroidNotificationCategory.alarm,
+        visibility: NotificationVisibility.private,
+        playSound: sound,
+        sound:
+            sound
+                ? const RawResourceAndroidNotificationSound('work_assigned')
+                : null,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
+        enableVibration: true,
+        icon: 'ic_notification',
+      ),
+    ),
+    payload: jsonEncode(_notificationTapData(message)),
+  );
 }
 
 Future<void> showPendingWorkNotification(
@@ -212,7 +472,6 @@ Future<void> showPendingWorkNotification(
     await showBrowserNotification(title, body);
     return;
   }
-
   final notificationId =
       message.messageId?.hashCode ?? DateTime.now().microsecondsSinceEpoch;
 
@@ -238,10 +497,22 @@ Future<void> showPendingWorkNotification(
     title,
     body,
     NotificationDetails(android: androidDetails),
-    payload: jsonEncode(data),
+    payload: jsonEncode(_notificationTapData(message)),
   );
 
   debugPrint('Displayed pending-work alarm notification: $title');
+}
+
+/// Same session/recipient rule as lead-call and inbox notifications: drop
+/// pushes that arrive after sign-out or are addressed to another user.
+Future<bool> _isForSignedInUser(RemoteMessage message) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.reload();
+  final user = prefs.getString('session_username');
+  if (user == null || prefs.getString('session_sid') == null) return false;
+  final recipient = message.data['for_user'] ?? message.data['recipient'];
+  return recipient == null ||
+      recipient.toString().trim().toLowerCase() == user.trim().toLowerCase();
 }
 
 Future<void> showLeadCallNotification(RemoteMessage message) async {
@@ -276,43 +547,9 @@ Future<void> showLeadCallNotification(RemoteMessage message) async {
         icon: 'ic_notification',
       ),
     ),
-    payload: jsonEncode({...message.data, '_genie_user': user}),
+    payload: jsonEncode({
+      ..._notificationTapData(message),
+      '_genie_user': user,
+    }),
   );
-}
-
-Future<void> _openRemoteLeadCall(RemoteMessage message) async {
-  final recipient = message.data['for_user'] ?? message.data['recipient'];
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.reload();
-  final user = prefs.getString('session_username');
-  if (user == null ||
-      (recipient != null &&
-          recipient.toString().toLowerCase() != user.toLowerCase())) {
-    return;
-  }
-  await _openLeadCallPayload(
-    jsonEncode({...message.data, '_genie_user': user}),
-  );
-}
-
-Future<void> _openLeadCallPayload(String payload) async {
-  try {
-    final decoded = jsonDecode(payload);
-    if (decoded is! Map) return;
-    final data = Map<String, dynamic>.from(decoded);
-    final lead = LeadCallNotification.fromData(data);
-    if (lead == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload();
-    if (prefs.getString('session_sid') == null ||
-        prefs.getString('session_username') != data['_genie_user']) {
-      return;
-    }
-    // Only a notification tap opens the dialer. Push receipt never places a call.
-    if (!await launchUrl(lead.dialUri, mode: LaunchMode.externalApplication)) {
-      debugPrint('Could not open the assigned customer dialer.');
-    }
-  } catch (error) {
-    debugPrint('Could not open lead notification: ${error.runtimeType}');
-  }
 }

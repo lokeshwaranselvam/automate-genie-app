@@ -63,8 +63,7 @@ void main() {
           fileInput:
               'SITE_URL=https://erp.example.test\nURL=https://erp.example.test/api/method/hrms.api',
         );
-        final date =
-            DateTime.now().add(const Duration(days: 1)).toIso8601String();
+        final date = DateTime.now().toIso8601String();
         await http.runWithClient(
           () async {
             await tester.pumpWidget(
@@ -81,7 +80,7 @@ void main() {
               ),
             );
             await tester.pumpAndSettle();
-            expect(find.text('Total travelled'), findsOneWidget);
+            expect(find.text('This month travelled'), findsOneWidget);
             expect(find.text('1.75 km'), findsOneWidget);
             expect(find.text('Travelled: 1.25 km'), findsOneWidget);
             expect(find.text('Travelled: Not recorded'), findsOneWidget);
@@ -105,7 +104,11 @@ void main() {
             expect(find.text('Travelled: 500.00 m'), findsOneWidget);
             expect(find.text('1.75 km'), findsOneWidget);
             expect(find.text('Travelled: 99.00 km'), findsNothing);
-            expect(find.text('Navigate'), findsOneWidget);
+            expect(find.text('View report'), findsOneWidget);
+            await tester.tap(find.text('Overdue (0)'));
+            await tester.pumpAndSettle();
+            expect(find.text('1.75 km'), findsOneWidget);
+
             expect(tester.takeException(), isNull);
             await tester.pumpWidget(const SizedBox.shrink());
           },
@@ -160,7 +163,15 @@ void main() {
                   {
                     'name': 'D1',
                     'subject': 'Completed One',
-                    'starts_on': date,
+                    'custom_check_out': date,
+                    // Completion date, not this older scheduled date, determines
+                    // the month for a completed visit's travelled distance.
+                    'starts_on':
+                        DateTime(
+                          DateTime.now().year,
+                          DateTime.now().month - 1,
+                          1,
+                        ).toIso8601String(),
                     'custom_distance': '500 m',
                   },
                 ],

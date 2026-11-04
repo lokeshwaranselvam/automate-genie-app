@@ -9,13 +9,41 @@ from frappe.utils import nowdate,getdate
 from frappe.core.doctype.user.user import generate_keys
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
-def login(usr, pwd, device_key=None, platform=None):
+def login(usr, pwd, device_key=None, platform=None, android_id=None):
     from itgenie.mobile_auth import login as mobile_login
-    return mobile_login(usr, pwd, device_key, platform=platform)
+    return mobile_login(usr, pwd, device_key, platform=platform, android_id=android_id)
+
+
+# Roles that may read another employee's mobile data (for example HR reviewing attendance).
+OTHER_USER_READ_ROLES = ("System Manager", "HR Manager")
+
+
+def _ensure_own_user(user, allow_managers=False):
+    session_user = frappe.session.user
+    if user and user == session_user:
+        return
+    if allow_managers and set(OTHER_USER_READ_ROLES) & set(frappe.get_roles(session_user)):
+        return
+    frappe.throw("You can only access your own records.", frappe.PermissionError)
+
+
+def _ensure_event_access(event):
+    session_user = frappe.session.user
+    if event.get("owner") == session_user:
+        return
+    if set(OTHER_USER_READ_ROLES) & set(frappe.get_roles(session_user)):
+        return
+    if frappe.db.exists("ToDo", {
+        "reference_type": "Event", "reference_name": event.get("name"),
+        "allocated_to": session_user, "status": ["!=", "Cancelled"],
+    }):
+        return
+    frappe.throw("You are not assigned to this visit.", frappe.PermissionError)
 
 
 @frappe.whitelist(allow_guest = False)
 def event_list(user):
+    _ensure_own_user(user, allow_managers=True)
     assigned_todos = frappe.get_all("ToDo",
         filters={"status":"Open","reference_type": "Event", "allocated_to": user},
         fields=["reference_name"]
@@ -36,6 +64,7 @@ def event_list(user):
 def history_list(user, from_date=None, to_date=None):
     if not user:
         frappe.throw("User is required.")
+    _ensure_own_user(user, allow_managers=True)
 
     filters = {
         "status": "Open",
@@ -65,9 +94,13 @@ def history_list(user, from_date=None, to_date=None):
 @frappe.whitelist(allow_guest = False)
 def event_details(id):
     doc = frappe.get_doc("Event",id)
+    _ensure_event_access(doc)
     response = {
     "event": doc.as_dict(),
-    "requires_geofence": (doc.get("event_category") or "").strip().lower() not in ("installation", "measurement"),
+    "requires_geofence": (doc.get("event_category") or "").strip().lower() not in (
+        "installation", "measurement", "other", "others", "bank",
+        "head office ch", "timbe / bioman office ch", "collection",
+    ),
     "reference_details": []
     }
 
@@ -111,6 +144,7 @@ def send_notification():
 
 @frappe.whitelist(allow_guest = False)
 def officetype(user):
+    _ensure_own_user(user, allow_managers=True)
     employee = frappe.get_doc("Employee",{"user_id":user,"status":"Active"})
     if employee:
         office_type_list = []
@@ -134,12 +168,27 @@ def head_office_details(head_office):
 
 @frappe.whitelist(allow_guest = False)
 def checkin(user, lat, lng, address=None, office_type=None, photo_url=None, face_verification=None, include_timings=None):
+    _ensure_own_user(user)
+    import hashlib
+    attendance_lock = None
     try:
         employeeid = frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, "name")
         if not employeeid:
             frappe.local.response["message"] = "Employee not found or inactive"
             frappe.local.response["http_status_code"] = 404
             return
+
+        # Serialize retried/concurrent requests for this employee so the
+        # existence checks below cannot race (connection-scoped MariaDB lock).
+        attendance_lock = hashlib.sha256((frappe.local.site + ":genie-attendance:" + employeeid).encode()).hexdigest()
+        locked = frappe.db.sql("SELECT GET_LOCK(%s, 10)", (attendance_lock,))
+        if not locked or locked[0][0] != 1:
+            attendance_lock = None
+            frappe.local.response["message"] = "Another attendance request is being processed. Please retry."
+            frappe.local.response["http_status_code"] = 409
+            return
+        # Discard any snapshot read before the lock so the checks see committed rows.
+        frappe.db.commit()
 
         existing_checkin = frappe.db.exists("Employee Checkin", {
             "employee": employeeid,
@@ -183,10 +232,14 @@ def checkin(user, lat, lng, address=None, office_type=None, photo_url=None, face
         frappe.log_error(title = f"Error on checkin-{user}",message = frappe.get_traceback())
         frappe.local.response["message"] = "Check In Denied,Check Error Log"
         frappe.local.response["http_status_code"] = 500
+    finally:
+        if attendance_lock:
+            frappe.db.sql("SELECT RELEASE_LOCK(%s)", (attendance_lock,))
 
 
 @frappe.whitelist(allow_guest = False)
 def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,distance=None, office_type=None,location_logs=None,with_event=None,last_lat_lng=None, photo_url=None, face_verification=None, include_timings=None):
+    _ensure_own_user(user)
     # Genie checkout performance v1
     from time import perf_counter
 
@@ -218,12 +271,26 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
                 raise RuntimeError("Google distance lookup timed out. Please retry checkout.") from None
         return route_responses[url]
 
+    import hashlib
+    attendance_lock = None
     try:
         employeeid = checkout_timed("checkout_employee_lookup", frappe.db.get_value, "Employee", {"user_id": user, "status": "Active"}, "name")
         if not employeeid:
             frappe.local.response["message"] = "Employee not found or inactive"
             frappe.local.response["http_status_code"] = 404
             return
+
+        # Serialize retried/concurrent requests for this employee so the
+        # existence checks below cannot race (connection-scoped MariaDB lock).
+        attendance_lock = hashlib.sha256((frappe.local.site + ":genie-attendance:" + employeeid).encode()).hexdigest()
+        locked = frappe.db.sql("SELECT GET_LOCK(%s, 10)", (attendance_lock,))
+        if not locked or locked[0][0] != 1:
+            attendance_lock = None
+            frappe.local.response["message"] = "Another attendance request is being processed. Please retry."
+            frappe.local.response["http_status_code"] = 409
+            return
+        # Discard any snapshot read before the lock so the checks see committed rows.
+        frappe.db.commit()
 
         # Block checkout if event visit is still in progress
         event_visit_in_progress = checkout_timed("checkout_active_visit", frappe.db.exists, "Visit", {
@@ -253,12 +320,16 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
             "log_type": "OUT"
         }, fields=["name", "time"], order_by="time desc", limit=1)
 
-        if latest_checkin:
-            in_time = latest_checkin[0]["time"]
-            if latest_checkout and latest_checkout[0]["time"] > in_time:
-                frappe.local.response["message"] = "Employee Already checked out!"
-                frappe.local.response["http_status_code"] = 200
-                return
+        if not latest_checkin:
+            frappe.local.response["message"] = "No check-in found to check out from."
+            frappe.local.response["http_status_code"] = 400
+            return
+
+        in_time = latest_checkin[0]["time"]
+        if latest_checkout and latest_checkout[0]["time"] > in_time:
+            frappe.local.response["message"] = "Employee Already checked out!"
+            frappe.local.response["http_status_code"] = 200
+            return
 
         
 
@@ -329,7 +400,7 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
             origin = f"{lat_str},{lng_str}"
             destination = f"{lat},{lng}"
             
-            api_key = "AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI"
+            api_key = frappe.conf.get("google_maps_api_key") or frappe.throw("Google Maps is not configured on the server. Contact your administrator.")
             visit.custom_from_google_api = 1
             url = (
                     f"https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -395,7 +466,7 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
             origin = f"{visit.latitude},{visit.longitude}"
             destination = f"{lat},{lng}"
             
-            api_key = "AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI"
+            api_key = frappe.conf.get("google_maps_api_key") or frappe.throw("Google Maps is not configured on the server. Contact your administrator.")
             visit.custom_from_google_api = 1
             url = (
                     f"https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -431,6 +502,8 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
         frappe.local.response["message"] = str(e)
         frappe.local.response["http_status_code"] = 500
     finally:
+        if attendance_lock:
+            frappe.db.sql("SELECT RELEASE_LOCK(%s)", (attendance_lock,))
         if timing_enabled:
             timings = frappe.local.response.setdefault("attendance_timings_ms", {})
             timings["checkout_total"] = round((perf_counter() - checkout_started) * 1000, 3)
@@ -438,6 +511,7 @@ def checkout(user, lat=None, lng=None, address=None,lastCheckoutAddress= None,di
 
 @frappe.whitelist(allow_guest = False)
 def checkin_status(user):
+    _ensure_own_user(user, allow_managers=True)
     employeeid = frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, "name")
     if not employeeid:
         return False
@@ -453,6 +527,7 @@ def checkin_status(user):
 
 @frappe.whitelist(allow_guest = False)
 def checkout_status(user):
+    _ensure_own_user(user, allow_managers=True)
     employeeid = frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, "name")
     if not employeeid:
         return False
@@ -483,6 +558,7 @@ def checkout_status(user):
 
 @frappe.whitelist(allow_guest = False)
 def event_list_date(user,date):
+    _ensure_own_user(user, allow_managers=True)
     event_list = []
     doc_list = frappe.db.get_all("ToDo",filters={'allocated_to':user,"reference_type":"Event"},pluck="reference_name")
     for doc in doc_list:
@@ -498,55 +574,13 @@ def event_checkin(user, event_id, lat=None, lng=None, address= None):
     try:
         employeeid = frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, "name")
 
-        existing_event_visit = frappe.db.exists("Visit", {
-            "employee": employeeid,
-            "event_id": ["!=", event_id],
-            "custom_check_in_time": ["is", "set"],
-            "custom_check_out_time": ["is", "not set"]
-        })
-
-        if existing_event_visit:
-            return {
-                "status": "error",
-                "message": "You are already checked in to another event. Please check out before starting a new event."
-            }
-
-        
+        from frappe.utils.safe_exec import call_whitelisted_function
+        decision = call_whitelisted_function("mobile_business_policy", feature="visit", action="get", event_id=event_id)["policy"]
+        action = decision["actions"]["check_in"]
+        if user != frappe.session.user or not action["allowed"]:
+            return {"status": "error", "message": action["reason"] or "This action is unavailable for your user."}
         doc = frappe.get_doc("Event", event_id)
 
-        employee_checked_in = frappe.db.exists("Employee Checkin", {
-            "employee": employeeid,
-            "log_type": "IN",
-            "time": ["between", [f"{frappe.utils.nowdate()} 00:00:00", f"{frappe.utils.nowdate()} 23:59:59"]]
-        })
-
-        if not employee_checked_in:
-            return {
-                "status": "error",
-                "message": "You must check in as an employee before checking into an event."
-            }
-
-        latest_checkin = frappe.get_all("Employee Checkin", filters={
-            "employee": employeeid,
-            "log_type": "IN",
-            "time": ["between", [f"{frappe.utils.nowdate()} 00:00:00", f"{frappe.utils.nowdate()} 23:59:59"]]
-        }, fields=["name", "time"], order_by="time desc", limit=1)
-
-        latest_checkout = frappe.get_all("Employee Checkin", filters={
-            "employee": employeeid,
-            "log_type": "OUT",
-            "time": ["between", [f"{frappe.utils.nowdate()} 00:00:00", f"{frappe.utils.nowdate()} 23:59:59"]]
-        }, fields=["name", "time"], order_by="time desc", limit=1)
-
-        if latest_checkin and latest_checkout:
-            if latest_checkout[0]["time"] > latest_checkin[0]["time"]:
-                return {
-                    "status": "error",
-                    "message": "Already checked out. You cannot check into an event."
-                }
-        
-        if doc.custom_check_in:
-            return {"status": "error", "message": "Already Checked In"}
         current_time = now_datetime().strftime("%Y-%m-%d %H:%M:%S")
         doc.custom_location = address
         doc.custom_check_in = current_time
@@ -581,6 +615,11 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
     try:
 
 
+        from frappe.utils.safe_exec import call_whitelisted_function
+        decision = call_whitelisted_function("mobile_business_policy", feature="visit", action="get", event_id=event_id)["policy"]
+        action = decision["actions"]["check_out"]
+        if user != frappe.session.user or not action["allowed"]:
+            return {"status": "error", "message": action["reason"] or "This action is unavailable for your user."}
         doc = frappe.get_doc("Event", event_id)
         
         if not doc.custom_check_in:
@@ -590,15 +629,7 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
             return {"status": "error", "message": "Already Checked Out"}
 
         # OTP is no longer required. Keep the optional argument for older
-        # callers, but require an actual saved Event attachment before writes.
-        if not frappe.db.exists("File", {
-            "attached_to_doctype": "Event",
-            "attached_to_name": event_id,
-            "is_folder": 0,
-            "file_url": ["is", "set"],
-        }):
-            return {"status": "error", "message": "Attach a visit photo before checking out."}
-
+        # callers. Temporarily allow checkout without a photo; uploads remain available.
         current_time = now_datetime().strftime("%Y-%m-%d %H:%M:%S")
 
         existing_visit_record = frappe.db.exists("Visit", {
@@ -608,8 +639,11 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
         if existing_visit_record:
             visit = frappe.get_doc("Visit",existing_visit_record)
 
+            lat_str, lng_str = None, None
             if last_lat_lng:
-                lat_str, lng_str = last_lat_lng.split(',') if ',' in last_lat_lng else (None, None)
+                parts = str(last_lat_lng).split(',')
+                if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+                    lat_str, lng_str = parts[0].strip(), parts[1].strip()
 
             else:
                 previous_visit = frappe.db.sql("""
@@ -650,14 +684,16 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
             # visit.destination = f"{address}\n{logs_str}"
             
             visit.custom_check_out_time = current_time
-            if visit.latitude and visit.longitude and lat and lng:
+            # Distance is best effort: without a valid origin the Google call is
+            # skipped so the visit can still be checked out.
+            if visit.latitude and visit.longitude and lat and lng and lat_str and lng_str:
                 origin = f"{lat_str},{lng_str}"
                 destination = f"{lat},{lng}"
                 
-                api_key = "AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI"
+                api_key = frappe.conf.get("google_maps_api_key") or frappe.throw("Google Maps is not configured on the server. Contact your administrator.")
                 visit.custom_from_google_api = 1
 
-                # url = f"https://maps.googleapis.com/maps/api/distancematrix/json?origins={origin}&destinations={destination}&key=AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI&mode=driving"
+                # url = f"https://maps.googleapis.com/maps/api/distancematrix/json?origins={origin}&destinations={destination}&key={api_key}&mode=driving"
 
                 url = (
                     f"https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -666,9 +702,12 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
                 payload = {}
                 headers = {}
 
-                response = requests.request("GET", url, headers=headers, data=payload)
-
-                data = json.loads(response.text)
+                try:
+                    response = requests.request("GET", url, headers=headers, data=payload, timeout=(3.05, 10))
+                    data = json.loads(response.text)
+                except (requests.exceptions.RequestException, ValueError):
+                    frappe.log_error(title='Google Api Error', message=frappe.get_traceback())
+                    data = {}
                 
                 employeeid = frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, "name")
                 if not employeeid:
@@ -680,9 +719,14 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
                     
                 current_date = now_datetime().strftime("%Y-%m-%d")
                 if visit_checkon == current_date:
-                    visit.custom_distance = data['rows'][0]['elements'][0]['distance']['text']
+                    element = ((data.get('rows') or [{}])[0].get('elements') or [{}])[0] if data.get('status') == 'OK' else {}
+                    if element.get('status') == 'OK':
+                        visit.custom_distance = element['distance']['text']
 
-                    doc.custom_distance = data['rows'][0]['elements'][0]['distance']['text']
+                        doc.custom_distance = element['distance']['text']
+                    else:
+                        # Unroutable/denied lookups must not leave the visit open.
+                        frappe.log_error(title='Google Api Error', message=data)
 
 
 
@@ -711,6 +755,7 @@ def event_checkout(user, event_id, lat=None, lng=None , address= None,working_hr
 
 @frappe.whitelist(methods=["POST"])
 def generate_keys(user: str):
+        frappe.only_for("System Manager")
         user_details: User = frappe.get_doc("User", user)
         api_secret = frappe.generate_hash(length=15)
         # if api key is not set generate api key
@@ -725,7 +770,7 @@ def generate_keys(user: str):
 
 # @frappe.whitelist()
 # def test():
-#     url = "https://maps.googleapis.com/maps/api/distancematrix/json?origins=11.0226671,76.9986953&destinations=11.0226688,76.9986842&key=AIzaSyCEkjoOnXRf6c9Xzml2QPNvZoq2LuG06JI&mode=driving"
+#     url = "https://maps.googleapis.com/maps/api/distancematrix/json?origins=11.0226671,76.9986953&destinations=11.0226688,76.9986842&key={api_key}&mode=driving"
 
 #     payload = {}
 #     headers = {}
@@ -740,16 +785,19 @@ def generate_keys(user: str):
 def send_otp(event_id):
     try:
         event = frappe.get_doc("Event", event_id)
+        _ensure_event_access(event)
         otp = random.randint(1000, 9999)
         event.custom_otp = otp
         event.save(ignore_permissions = True)
         # frappe.db.set_value("Event",event_id,'custom_otp',otp)
         frappe.db.commit()
-        frappe.msgprint(f"OTP sent: {otp}")
+        # Never echo the OTP back to the caller; it is delivered out of band.
         return {"status": "success", "message": "OTP sent"}
     
     except frappe.DoesNotExistError:
         return {"status": "error", "message": "Event not found"}
+    except frappe.PermissionError:
+        return {"status": "error", "message": "You are not assigned to this visit."}
     except Exception as e:
         frappe.log_error( title = f"OTP Verification Failed",message = frappe.get_traceback())
         return {"status": "error", "message": f"Server error: {e}"}
@@ -782,6 +830,7 @@ def verify_otp(otp,event_id):
 
 @frappe.whitelist()
 def get_checkin_checkout_status(user):
+    _ensure_own_user(user, allow_managers=True)
     from frappe.utils import getdate, nowdate
 
     employeeid = frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, "name")

@@ -1,3 +1,4 @@
+import '../utils/api/notification_inbox.dart';
 import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
@@ -14,6 +15,7 @@ import 'package:month_picker_dialog/month_picker_dialog.dart';
 import '../utils/api/event.dart';
 import '../utils/widget/event_list.dart';
 import '../utils/widget/home_back_button.dart';
+import '../utils/widget/load_failed_view.dart';
 
 class EventsPage extends StatefulWidget {
   const EventsPage({super.key});
@@ -35,14 +37,38 @@ class _EventsPageState extends State<EventsPage> {
   List<String> days = [];
   List<String> weekDays = [];
   bool isLoading = true;
+  String? _loadError;
+  // Incremented per fetch so a slower, older response cannot overwrite the
+  // events of the day the user selected last.
+  int _eventRequestId = 0;
 
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(_onSearchChanged);
     _checkPing();
   }
 
-  Future<void> _checkPing() async {
+  void _showLoadError(String message) {
+    if (!mounted) return;
+    setState(() {
+      isLoading = false;
+      _loadError = message;
+    });
+    Warning.show(context, message, 'Error');
+  }
+
+  void _retryLoad() {
+    setState(() {
+      isLoading = true;
+      _loadError = null;
+    });
+    _checkPing();
+  }
+
+  /// [resetToToday] is false for pull-to-refresh, which keeps the selected
+  /// date and fetches it once after re-verifying connectivity and session.
+  Future<void> _checkPing({bool resetToToday = true}) async {
     try {
       var connectivity = await Connectivity().checkConnectivity();
 
@@ -57,19 +83,14 @@ class _EventsPageState extends State<EventsPage> {
       }
 
       if (noInternet) {
-        Warning.show(
-          context,
-          'No Internet Connection! Please check your network.',
-          'Error',
-        );
+        _showLoadError('No Internet Connection! Please check your network.');
         return;
       }
       var pingResult = await Check.pingpong();
+      if (!mounted) return;
       if (pingResult == false) {
-        Warning.show(
-          context,
+        _showLoadError(
           'ERP Site is not in working condition! Please try again later.',
-          'Error',
         );
       } else {
         final prefs = await SharedPreferences.getInstance();
@@ -77,6 +98,7 @@ class _EventsPageState extends State<EventsPage> {
         final email = prefs.getString('email') ?? "";
 
         final sessionValid = await Check.sessionActive(token, email);
+        if (!mounted) return;
 
         if (!sessionValid) {
           Warning.show(
@@ -85,14 +107,21 @@ class _EventsPageState extends State<EventsPage> {
             'Error',
           );
           await LiveLocationService.stopForSignOut();
-          await prefs.clear();
+          await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
+          if (!mounted) return;
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
             (route) => false,
           );
           return;
         }
-        _searchController.addListener(_onSearchChanged);
+
+        if (!resetToToday) {
+          await getEventDataForDate(
+            DateFormat('yyyy-MM-dd').format(selectedDate),
+          );
+          return;
+        }
 
         DateTime now = DateTime.now();
         selectedMonth = DateTime(now.year, now.month, 1);
@@ -113,6 +142,7 @@ class _EventsPageState extends State<EventsPage> {
       }
     } catch (e) {
       print('Error during ping: $e');
+      _showLoadError('Could not reach ERP. Please try again.');
     }
   }
 
@@ -164,24 +194,31 @@ class _EventsPageState extends State<EventsPage> {
   }
 
   Future<void> getEventDataForDate(String date) async {
+    if (!mounted) return;
+    final requestId = ++_eventRequestId;
     setState(() {
       isLoading = true;
     });
     try {
       prefs = await SharedPreferences.getInstance();
+      if (!mounted || requestId != _eventRequestId) return;
       List<Map<String, dynamic>> response = await Event.fetchEventListByDate(
         prefs.getString("email") ?? '',
         date,
         context,
       );
+      // A newer day was selected while this request was in flight.
+      if (requestId != _eventRequestId) return;
       eventList = response;
       filteredEventList = eventList;
     } catch (e) {
       print("❌ Error: $e");
     } finally {
-      setState(() {
-        isLoading = false;
-      });
+      if (mounted && requestId == _eventRequestId) {
+        setState(() {
+          isLoading = false;
+        });
+      }
     }
   }
 
@@ -243,12 +280,11 @@ class _EventsPageState extends State<EventsPage> {
       body:
           isLoading
               ? Center(child: AgPathLoadingIndicator())
+              : _loadError != null
+              ? LoadFailedView(message: _loadError!, onRetry: _retryLoad)
               : PullToRefresh(
                 onRefresh: () async {
-                  await _checkPing();
-                  await getEventDataForDate(
-                    DateFormat('yyyy-MM-dd').format(selectedDate),
-                  );
+                  await _checkPing(resetToToday: false);
                 },
                 color: BrandColors.ink,
                 child: SingleChildScrollView(
@@ -267,19 +303,29 @@ class _EventsPageState extends State<EventsPage> {
                                 showMonthPicker(
                                   context: context,
                                   initialDate: DateTime.now(),
-                                ).then((date) {
-                                  if (date != null) {
-                                    setState(() {
-                                      selectedMonth = date;
-                                      selectedDate = DateTime(
-                                        date.year,
-                                        date.month,
-                                        1,
-                                      );
-                                      selectedDateIndex = 0;
-                                      _generateDays();
-                                    });
-                                  }
+                                ).then((date) async {
+                                  if (date == null || !mounted) return;
+                                  setState(() {
+                                    selectedMonth = date;
+                                    selectedDate = DateTime(
+                                      date.year,
+                                      date.month,
+                                      1,
+                                    );
+                                    selectedDateIndex = 0;
+                                    _generateDays();
+                                  });
+                                  await getEventDataForDate(
+                                    DateFormat(
+                                      'yyyy-MM-dd',
+                                    ).format(selectedDate),
+                                  );
+                                  if (!mounted) return;
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    if (mounted) _scrollToSelectedDate();
+                                  });
                                 });
                               },
                               child: Row(
@@ -347,12 +393,10 @@ class _EventsPageState extends State<EventsPage> {
                                     selectedMonth.month,
                                     int.parse(days[index]),
                                   );
-                                  getEventDataForDate(
-                                    DateFormat(
-                                      'yyyy-MM-dd',
-                                    ).format(selectedDate),
-                                  );
                                 });
+                                getEventDataForDate(
+                                  DateFormat('yyyy-MM-dd').format(selectedDate),
+                                );
                               },
                               child: Container(
                                 width: 50,

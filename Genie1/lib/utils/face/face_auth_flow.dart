@@ -1,4 +1,3 @@
-import 'face_platform_capability.dart';
 import 'dart:convert';
 import 'package:homegenie/utils/platform/platform_file.dart';
 
@@ -93,6 +92,7 @@ class FaceAuthFlow {
     status.referenceName,
     status.referenceVersion,
     FaceAuthApi.modelVersion,
+    if (kIsWeb) 'mediapipe-0.10.21-five-point-v1',
   ]);
 
   Future<List<double>> _template(FaceEnrollmentStatus status) async {
@@ -133,7 +133,6 @@ class FaceAuthFlow {
   /// Background preparation on opening Attendance. Verification still obtains
   /// fresh ERP status; only the version-bound template/model are reused.
   Future<void> prepare() async {
-    if (kIsWeb) return;
     await Future.wait<void>([
       _warmUp(),
       (() async {
@@ -149,7 +148,6 @@ class FaceAuthFlow {
     FaceEnrollmentStatus status,
   ) async {
     if (status.enrolled) return status;
-    if (kIsWeb) throw StateError(webFaceUnavailable);
     _warmUp().ignore();
     final photo = await _capture(context, 'Set up your attendance selfie', (
       photo,
@@ -187,7 +185,6 @@ class FaceAuthFlow {
     required Future<FaceLocation> Function() refreshLocation,
     bool overlapLocationWithMatching = false,
   }) async {
-    if (kIsWeb) throw StateError(webFaceUnavailable);
     _warmUp().ignore();
     final status = await _timing.measure('ERP face status', api.status);
     if (!status.enrolled) {

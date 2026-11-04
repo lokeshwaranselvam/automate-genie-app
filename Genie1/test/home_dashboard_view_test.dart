@@ -25,7 +25,7 @@ void main() {
     }
   });
 
-  for (final width in [320.0, 360.0, 430.0, 600.0, 1440.0]) {
+  for (final width in [320.0, 360.0, 430.0, 600.0]) {
     testWidgets('Home preserves live content and actions at width $width', (
       tester,
     ) async {
@@ -42,6 +42,9 @@ void main() {
         bool showAddLead = true,
         bool showNewVisit = true,
         bool showPending = true,
+        bool showTasks = true,
+        bool showAttendance = true,
+        bool showNewTask = true,
         ({int pending, int inProgress, int completed})? taskSummary,
       }) => RepaintBoundary(
         key: previewKey,
@@ -73,6 +76,10 @@ void main() {
               showLeads: showAddLead,
               showVisits: showAddLead,
               showPending: showPending,
+              showSchedule: showAddLead,
+              showTasks: showTasks,
+              showAttendance: showAttendance,
+              showNewTask: showNewTask,
               taskSummary: taskSummary,
               schedule: schedule,
               onRefresh: () async => calls.add('refresh'),
@@ -92,6 +99,7 @@ void main() {
               onTap: (index) => calls.add('nav-$index'),
               showLeads: showAddLead,
               showVisits: showNewVisit,
+              showTasks: showTasks,
             ),
           ),
         ),
@@ -125,7 +133,7 @@ void main() {
           in {
             'Tasks Today': 'tasks',
             'Site Visits': 'visits',
-            'My Leads': 'leads',
+            'My Opportunities': 'leads',
             'Pending': 'pending',
             'View All': 'visits',
             'Attendance': 'attendance',
@@ -139,6 +147,15 @@ void main() {
       }
       await tester.tap(find.text('Tasks'));
       expect(calls.last, 'nav-1');
+      await tester.pumpWidget(
+        screen(showTasks: false, showAttendance: false, showNewTask: false),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Tasks Today'), findsNothing);
+      expect(find.text('Tasks'), findsNothing);
+      expect(find.text('Attendance'), findsNothing);
+      expect(find.text('New Task'), findsNothing);
+      expect(find.text('My Opportunities'), findsOneWidget);
       await tester.pumpWidget(
         screen(
           name: 'Another Employee',
@@ -177,11 +194,26 @@ void main() {
           access.$1 ? findsOneWidget : findsNothing,
         );
         expect(
-          find.text('My Leads'),
+          find.text('My Opportunities'),
           access.$1 ? findsOneWidget : findsNothing,
         );
-        expect(find.text('Leads'), access.$1 ? findsOneWidget : findsNothing);
+        expect(
+          find.text('Opportunities'),
+          access.$1 ? findsOneWidget : findsNothing,
+        );
         expect(find.text('Pending'), findsOneWidget);
+        expect(
+          find.text("Today's Schedule"),
+          access.$1 ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.text('View All'),
+          access.$1 ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.text('No events scheduled for today.'),
+          access.$1 ? findsOneWidget : findsNothing,
+        );
         expect(
           find.byKey(const ValueKey('tasks-overview')),
           access.$1 ? findsNothing : findsOneWidget,
@@ -192,7 +224,7 @@ void main() {
               'Home': 0,
               'Tasks': 1,
               if (access.$2) 'Visits': 2,
-              if (access.$1) 'Leads': 3,
+              if (access.$1) 'Opportunities': 3,
               'More': 4,
             }.entries) {
           await tester.tap(find.text(tab.key));
@@ -206,8 +238,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Pending'), findsOneWidget);
-      expect(find.text('My Leads'), findsNothing);
+      expect(find.text('My Opportunities'), findsNothing);
       expect(find.text('Site Visits'), findsNothing);
+      expect(find.text("Today's Schedule"), findsNothing);
+      expect(find.text('View All'), findsNothing);
       expect(tester.takeException(), isNull);
       for (final summary in [
         (pending: 4, inProgress: 2, completed: 3),

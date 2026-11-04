@@ -76,6 +76,119 @@ Widget screen(String type, {GlobalKey? previewKey, double scale = 1}) {
 }
 
 void main() {
+  for (final type in ['Lead', 'Opportunity']) {
+    testWidgets('$type status pill appears below its ID at narrow width', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 850);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var tapped = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CrmDocumentDetails(
+              documentType: type,
+              document: const {'name': 'DOC-1', 'status': 'Opportunity'},
+              onOpenOpportunity: type == 'Lead' ? () => tapped = true : null,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final id = find.text('DOC-1');
+      final chip = find.byType(RawChip);
+      expect(
+        tester.getTopLeft(chip).dy,
+        greaterThan(tester.getBottomLeft(id).dy),
+      );
+      expect(find.text('Opportunity'), findsOneWidget);
+      if (type == 'Lead') {
+        await tester.tap(chip);
+        expect(tapped, isTrue);
+      } else {
+        expect(tester.widget<RawChip>(chip).onPressed, isNull);
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final dated in [true, false]) {
+    for (final type in ['Opportunity', 'Lead']) {
+      testWidgets(
+        '$type notes ${dated ? 'sort by date' : 'use row order'} without changing saved rows',
+        (tester) async {
+          tester.view.physicalSize = const Size(600, 4000);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final notes = [
+            for (final day in [2, 5, 1, 4, 3])
+              {
+                'note': 'Note day $day',
+                'name': 'NOTE-ROW-$day',
+                'owner': 'note-author@example.test',
+                if (dated && day != 4)
+                  'added_on':
+                      '2026-10-${day.toString().padLeft(2, '0')} 10:00:00',
+                if (dated && day == 4) 'creation': '2026-10-04 10:00:00',
+              },
+          ];
+          final snapshot =
+              notes.map((row) => Map<String, String>.from(row)).toList();
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: CrmDocumentDetails(
+                  documentType: type,
+                  document: {'name': 'DOC-1', 'notes': notes},
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final visible =
+              type == 'Lead'
+                  ? [2, 5, 1, 4, 3]
+                  : dated
+                  ? [5, 4, 3]
+                  : [3, 4, 1];
+          if (type == 'Lead') {
+            for (var i = 1; i <= visible.length; i++) {
+              await tester.tap(find.text('Row $i'));
+              await tester.pumpAndSettle();
+            }
+          } else {
+            for (var i = 1; i <= 3; i++) {
+              expect(find.text('Note $i'), findsOneWidget);
+              expect(find.text('Row $i'), findsNothing);
+            }
+            expect(find.text('note-author@example.test'), findsNothing);
+            for (var day = 1; day <= 5; day++) {
+              expect(find.text('NOTE-ROW-$day'), findsNothing);
+            }
+          }
+          for (var day = 1; day <= 5; day++) {
+            expect(
+              find.text('Note day $day'),
+              visible.contains(day) ? findsOneWidget : findsNothing,
+            );
+          }
+          final rendered =
+              tester
+                  .widgetList<SelectableText>(find.byType(SelectableText))
+                  .map((widget) => widget.data)
+                  .where((text) => text?.startsWith('Note day') == true)
+                  .toList();
+          expect(rendered, visible.map((day) => 'Note day $day').toList());
+          expect(notes, snapshot);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
   testWidgets(
     'Opportunity audit and additional sections show only requested fields',
     (tester) async {
@@ -254,6 +367,92 @@ void main() {
       isNull,
     );
   });
+  for (final width in [320.0, 393.0]) {
+    testWidgets(
+      'Opportunity note author and time appear on the right at width $width',
+      (tester) async {
+        tester.view.physicalSize = Size(width, 850);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final capture = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: capture,
+            child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              theme: ThemeData(
+                useMaterial3: true,
+                fontFamily: 'DetailsPreview',
+              ),
+              builder:
+                  (context, child) => MediaQuery(
+                    data: MediaQuery.of(context).copyWith(
+                      textScaler: TextScaler.linear(width == 320 ? 1.5 : 1),
+                    ),
+                    child: child!,
+                  ),
+              home: Scaffold(
+                backgroundColor: CrmDocumentDetails.background,
+                appBar: brandAppBar(title: const Text('Opportunity Details')),
+                body: const CrmDocumentDetails(
+                  documentType: 'Opportunity',
+                  document: {
+                    'name': 'ROC-OPP-2026-00477',
+                    'status': 'Follow-up',
+                    'customer_name': 'Customer One',
+                    'notes': [
+                      {
+                        'note': '<p>Customer requested a follow-up call.</p>',
+                        'added_by': 'sales@example.test',
+                        'added_on': '2026-10-31 12:37:00',
+                      },
+                      {'note': '<p>Older note without audit details.</p>'},
+                    ],
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.text('sales@example.test'),
+          100,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(find.text('31 Oct 2026, 12:37 PM'), findsOneWidget);
+        expect(
+          tester.getTopLeft(find.text('sales@example.test')).dx,
+          greaterThan(
+            tester
+                .getTopLeft(find.text('Customer requested a follow-up call.'))
+                .dx,
+          ),
+        );
+        expect(find.text('Author unavailable'), findsOneWidget);
+        expect(find.text('Time unavailable'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        if (width == 393) {
+          await tester.runAsync(() async {
+            final boundary =
+                capture.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
+            final picture = await boundary.toImage(pixelRatio: 2);
+            final bytes = await picture.toByteData(
+              format: ui.ImageByteFormat.png,
+            );
+            await Directory('build/details_preview').create(recursive: true);
+            await File(
+              'build/details_preview/opportunity_note_audit.png',
+            ).writeAsBytes(bytes!.buffer.asUint8List());
+            picture.dispose();
+          });
+        }
+      },
+    );
+  }
+
   setUpAll(() async {
     for (final entry
         in {

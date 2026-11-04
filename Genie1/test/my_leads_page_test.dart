@@ -9,7 +9,12 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// ignore: depend_on_referenced_packages
+import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
+import 'fake_lead_webview_platform.dart';
+
 void main() {
+  setUp(() => WebViewPlatform.instance = FakeLeadWebPlatform());
   testWidgets(
     'phone and exact Lead status filters combine and clear without refetching',
     (tester) async {
@@ -20,6 +25,7 @@ void main() {
         () async {
           await tester.pumpWidget(const MaterialApp(home: MyLeadsPage()));
           await tester.pumpAndSettle();
+          expect(find.text('My Opportunities'), findsNothing);
           await tester.enterText(find.byType(TextField), '98765');
           await tester.pumpAndSettle();
           expect(find.text('Customer A'), findsOneWidget);
@@ -215,6 +221,12 @@ void main() {
           expect(tester.takeException(), isNull);
         },
         () => MockClient((request) async {
+          if (request.url.path.endsWith('get_logged_user')) {
+            return http.Response(
+              jsonEncode({'message': 'sales@example.test'}),
+              200,
+            );
+          }
           expect(request.url.path, '/api/method/create_lead_from_mobile');
           expect(request.method, 'GET');
           expect(request.headers['cookie'], 'sid=test-session');
@@ -261,11 +273,78 @@ void main() {
                 'lead_owner_name': 'Sales',
                 'source_options': ['Website'],
                 'product_category_options': ['Doors'],
+                'customer_category_options': ['B2B', 'B2C'],
+                'location_fields': {
+                  'custom_citytown': {
+                    'fieldtype': 'Select',
+                    'options': ['Chennai', 'Madurai'],
+                  },
+                  'custom_district': {
+                    'fieldtype': 'Select',
+                    'options': ['Chennai - TN', 'Madurai - TN'],
+                  },
+                },
                 'csrf_token': 'csrf-test',
               },
             }),
             200,
           );
+        }),
+      );
+    },
+  );
+  testWidgets(
+    'second section opens Opportunities lazily and preserves Leads filters',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'session_sid': 'sections-session',
+      });
+      dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
+      var leadLoads = 0;
+      var opportunityLoads = 0;
+      await http.runWithClient(
+        () async {
+          await tester.pumpWidget(
+            const MaterialApp(home: MyLeadsPage(showOpportunities: true)),
+          );
+          await tester.pumpAndSettle();
+          expect(find.byType(TabBar), findsOneWidget);
+          expect(find.text('My Opportunities'), findsOneWidget);
+          expect(opportunityLoads, 0);
+          await tester.enterText(find.byType(TextField), '98765');
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('My Opportunities'));
+          await tester.pumpAndSettle();
+          expect(opportunityLoads, 1);
+          expect(find.text('New Lead'), findsNothing);
+          expect(find.byType(AppBar), findsOneWidget);
+          await tester.tap(find.widgetWithText(Tab, 'My Leads'));
+          await tester.pumpAndSettle();
+          expect(find.text('98765'), findsOneWidget);
+          expect(find.text('New Lead'), findsOneWidget);
+          expect(leadLoads, 1);
+          await tester.tap(find.text('My Opportunities'));
+          await tester.pumpAndSettle();
+          expect(opportunityLoads, 1);
+          await tester.pumpWidget(const MaterialApp(home: MyLeadsPage()));
+          await tester.pumpAndSettle();
+          expect(find.text('My Opportunities'), findsNothing);
+          expect(find.text('98765'), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        },
+        () => MockClient((request) async {
+          if (request.url.path.endsWith('get_logged_user')) {
+            return http.Response('{"message":"sales@example.test"}', 200);
+          }
+          if (request.url.path == '/api/resource/Opportunity') {
+            opportunityLoads++;
+            return http.Response('{"data":[]}', 200);
+          }
+          if (request.url.path == '/api/method/create_lead_from_mobile') {
+            leadLoads++;
+            return http.Response('{"message":{"leads":[]}}', 200);
+          }
+          return http.Response('', 404);
         }),
       );
     },

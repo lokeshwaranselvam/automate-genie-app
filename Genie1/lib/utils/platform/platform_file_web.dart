@@ -66,6 +66,7 @@ class Directory {
   Future<bool> exists() async => true;
   Future<Directory> delete({bool recursive = false}) async {
     File._files.removeWhere((key, _) => key.startsWith('$path/'));
+    File._modified.removeWhere((key, _) => key.startsWith('$path/'));
     return this;
   }
 }

@@ -148,13 +148,21 @@ class FcmDeviceApi {
         final response = await (() async {
           final result = await client.send(
             http.Request('GET', uri)
-              ..followRedirects = false
+              // Fetch cannot expose manual redirects. Allow the read-only
+              // Desk bootstrap to follow, then validate its final origin.
+              ..followRedirects = kIsWeb
               ..headers.addAll({
-                'Cookie': 'sid=$sid',
+                if (!kIsWeb) 'Cookie': 'sid=$sid',
                 'Accept': 'text/html',
                 'Cache-Control': 'no-cache, no-store',
               }),
           );
+          if (result case http.BaseResponseWithUrl(
+            :final url,
+          ) when url.origin != endpoint.origin || url.userInfo.isNotEmpty) {
+            await result.stream.listen(null).cancel();
+            throw StateError('FCM token bootstrap redirected to another site.');
+          }
           return http.Response.fromStream(result);
         })().timeout(const Duration(seconds: 15));
         await _assertSession(sid);
@@ -233,7 +241,7 @@ class FcmDeviceApi {
         'fcm_token': fcmToken,
         'platform':
             kIsWeb
-                ? 'web'
+                ? 'ios'
                 : Platform.isAndroid
                 ? 'android'
                 : 'ios',
@@ -241,7 +249,10 @@ class FcmDeviceApi {
         'app_version': package.version,
         'build_version': int.tryParse(package.buildNumber) ?? 0,
       };
-      var csrf = useApiToken ? null : await _csrfToken(sessionId, endpoint);
+      // Browsers attach the ERP session cookie even with API authorization.
+      // Its CSRF token must therefore accompany browser writes as well.
+      final needsCsrf = kIsWeb || !useApiToken;
+      var csrf = needsCsrf ? await _csrfToken(sessionId, endpoint) : null;
       Future<http.Response> post() async {
         await _assertSession(sessionId);
         if (useApiToken &&
@@ -257,7 +268,7 @@ class FcmDeviceApi {
               http.Request('POST', endpoint)
                 ..followRedirects = false
                 ..headers.addAll({
-                  if (!useApiToken) 'Cookie': 'sid=$sessionId',
+                  if (!kIsWeb && !useApiToken) 'Cookie': 'sid=$sessionId',
                   'Content-Type': 'application/json',
                   'Accept': 'application/json',
                   if (csrf != null) 'X-Frappe-CSRF-Token': csrf,
@@ -277,7 +288,7 @@ class FcmDeviceApi {
       }
 
       var response = await post();
-      if (!useApiToken && _csrfRejected(response)) {
+      if (needsCsrf && _csrfRejected(response)) {
         csrf = await _csrfToken(sessionId, endpoint);
         response = await post();
       }

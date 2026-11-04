@@ -5,20 +5,27 @@ import 'package:http/http.dart' as http;
 
 import 'session_auth.dart';
 import '../lead_phone_number.dart';
+import '../api_business_policy.dart';
 
 class LeadFormOptions {
   final String leadOwner;
   final String leadOwnerName;
   final List<String> sourceOptions;
   final List<String> productCategoryOptions;
+  final List<String> customerCategoryOptions;
+  final Map<String, dynamic> locationFields;
   final String? csrfToken;
+  final ApiBusinessPolicy businessPolicy;
 
   const LeadFormOptions({
     required this.leadOwner,
     required this.leadOwnerName,
     required this.sourceOptions,
     required this.productCategoryOptions,
+    this.customerCategoryOptions = const [],
+    this.locationFields = const {},
     this.csrfToken,
+    this.businessPolicy = ApiBusinessPolicy.empty,
   });
 }
 
@@ -187,9 +194,16 @@ class LeadApi {
     await _assertSession(sid);
     final rawSources = message['source_options'];
     final rawCategories = message['product_category_options'];
+    final rawCustomerCategories = message['customer_category_options'];
     if (rawSources is! List || rawCategories is! List) {
       throw const FormatException(
         'The server did not return Lead Source and Product Enquired options.',
+      );
+    }
+    if (rawCustomerCategories is! List ||
+        rawCustomerCategories.any((value) => value is! String)) {
+      throw const FormatException(
+        'Update create_lead_from_mobile on ERP to return Customer Category options.',
       );
     }
 
@@ -214,16 +228,76 @@ class LeadApi {
       );
     }
 
+    final locationFields = message['location_fields'];
+    if (locationFields is! Map ||
+        ['custom_citytown', 'custom_district'].any((name) {
+          final field = locationFields[name];
+          return field is! Map ||
+              !['Select', 'Link'].contains(field['fieldtype']) ||
+              field['options'] is! List ||
+              (field['options'] as List).any((value) => value is! String);
+        })) {
+      throw const FormatException(
+        'Update create_lead_from_mobile on ERP to return City/Town and District options.',
+      );
+    }
     _formSession = sid;
     _formEndpoint = endpoint;
     _csrfToken = message['csrf_token']?.toString().trim();
+    final policy = ApiBusinessPolicy.fromApi(message['business_policy']);
     return LeadFormOptions(
+      businessPolicy: policy,
+      locationFields: Map<String, dynamic>.from(locationFields),
       leadOwner: message['lead_owner']?.toString() ?? '',
       leadOwnerName: message['lead_owner_name']?.toString() ?? '',
-      sourceOptions: sourceOptions,
-      productCategoryOptions: productCategoryOptions,
+      sourceOptions: policy.options('source', sourceOptions),
+      productCategoryOptions: policy.options(
+        'custom_product_enquired',
+        productCategoryOptions,
+      ),
+      customerCategoryOptions: policy.options(
+        'custom_customer_category',
+        rawCustomerCategories
+            .cast<String>()
+            .map((value) => value.trim())
+            .where((value) => value.isNotEmpty)
+            .toSet()
+            .toList(),
+      ),
       csrfToken: _csrfToken,
     );
+  }
+
+  static Future<List<String>> searchLocationOptions(
+    String field,
+    String query,
+  ) async {
+    if (!['custom_citytown', 'custom_district'].contains(field)) {
+      throw ArgumentError('Invalid Lead location field');
+    }
+    final sid = await _sessionId();
+    if (_formSession != sid || _formEndpoint != _endpoint()) {
+      throw StateError('Your session changed. Reopen the Lead form.');
+    }
+    final response = await http
+        .get(
+          _endpoint().replace(
+            queryParameters: {
+              'view': 'location_options',
+              'fieldname': field,
+              'txt': query,
+            },
+          ),
+          headers: {'Accept': 'application/json', 'Cookie': 'sid=$sid'},
+        )
+        .timeout(const Duration(seconds: 20));
+    await _assertSession(sid);
+    final rows = _message(response)['options'];
+    if (rows is! List ||
+        rows.any((row) => row is! Map || row['value'] is! String)) {
+      throw const FormatException('ERP returned invalid location options.');
+    }
+    return rows.map((row) => row['value'] as String).toSet().toList();
   }
 
   static Future<List<Map<String, dynamic>>> getMyLeads() async {
@@ -283,8 +357,16 @@ class LeadApi {
     required String address,
     required String csrfToken,
     String whatsappNo = '',
+    String customerCategory = '',
+    String cityTown = '',
+    String district = '',
+    ApiBusinessPolicy businessPolicy = ApiBusinessPolicy.empty,
   }) async {
-    final whatsappError = LeadPhoneNumber.validateWhatsApp(whatsappNo);
+    final whatsappError =
+        whatsappNo.trim().isEmpty &&
+                !businessPolicy.required('whatsapp_no', true)
+            ? null
+            : LeadPhoneNumber.validateWhatsApp(whatsappNo);
     if (whatsappError != null) throw FormatException(whatsappError);
     final sid = await _sessionId();
     final endpoint = _endpoint();
@@ -315,7 +397,11 @@ class LeadApi {
               'custom_requirement': requirement.trim(),
               'source': source.trim(),
               'custom_product_enquired': productCategory.trim(),
+              if (customerCategory.trim().isNotEmpty)
+                'custom_customer_category': customerCategory.trim(),
               'custom_address': address.trim(),
+              'custom_citytown': cityTown.trim(),
+              'custom_district': district.trim(),
               'csrf_token': currentToken,
             },
           )

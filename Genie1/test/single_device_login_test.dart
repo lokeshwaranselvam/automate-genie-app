@@ -4,6 +4,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:homegenie/utils/api/login_api.dart';
 import 'package:homegenie/utils/api/mobile_login_device.dart';
 import 'package:homegenie/utils/api/session_auth.dart';
@@ -17,6 +18,7 @@ const api = '/api/method/ts_homegenie.ts_homegenie.utils.api';
 http.Response loggedIn({
   bool guarded = true,
   String? token = 'token key:secret',
+  bool androidBinding = true,
 }) => http.Response(
   jsonEncode({
     'message': 'Logged In',
@@ -25,6 +27,7 @@ http.Response loggedIn({
     'employee_id': 'EMP-1',
     'token': token,
     'single_device_login': guarded,
+    'android_device_binding': androidBinding,
   }),
   200,
   headers: {'set-cookie': 'sid=mobile-sid; HttpOnly; Path=/'},
@@ -42,6 +45,11 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('ai.automategenie.app/mobile_device'),
+          (_) async => 'a1b2c3d4e5f67890',
+        );
     dotenv.testLoad(
       fileInput:
           'SITE_URL=https://erp.example.test\nURL=https://erp.example.test$api',
@@ -64,6 +72,10 @@ void main() {
               platform == TargetPlatform.iOS ? 'ios' : 'android',
             );
             expect(body['device_key'], matches(RegExp(r'^[A-Za-z0-9_-]{43}$')));
+            expect(
+              body['android_id'],
+              platform == TargetPlatform.android ? 'a1b2c3d4e5f67890' : isNull,
+            );
             return loggedIn();
           }
           return http.Response(jsonEncode({'message': user}), 200);
@@ -286,4 +298,92 @@ void main() {
     expect(keys.length, 2);
     expect(keys[0], keys[1]);
   });
+
+  test('reinstall keeps Android ID but generates a new private key', () async {
+    final requests = <Map>[];
+    await http.runWithClient(
+      () async {
+        expect((await LoginApi.login(user, 'password'))['error'], isNull);
+        FlutterSecureStorage.setMockInitialValues({});
+        SharedPreferences.setMockInitialValues({});
+        expect((await LoginApi.login(user, 'password'))['error'], isNull);
+      },
+      () => MockClient((request) async {
+        if (request.method == 'POST') {
+          requests.add(jsonDecode(request.body) as Map);
+          return loggedIn();
+        }
+        return http.Response(jsonEncode({'message': user}), 200);
+      }),
+    );
+    expect(requests, hasLength(2));
+    expect(requests[0]['android_id'], requests[1]['android_id']);
+    expect(requests[0]['device_key'], isNot(requests[1]['device_key']));
+  });
+
+  test('Android below 8 retains the installation-only request', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('ai.automategenie.app/mobile_device'),
+          (_) async => null,
+        );
+    await http.runWithClient(
+      () async {
+        expect((await LoginApi.login(user, 'password'))['error'], isNull);
+      },
+      () => MockClient((request) async {
+        if (request.method == 'POST') {
+          expect(jsonDecode(request.body), isNot(contains('android_id')));
+          return loggedIn(androidBinding: false);
+        }
+        return http.Response(jsonEncode({'message': user}), 200);
+      }),
+    );
+  });
+
+  test('Android binding requires updated ERP response', () async {
+    await http.runWithClient(() async {
+      final result = await LoginApi.login(user, 'password');
+      expect(result['error'], contains('Android device-binding update'));
+      expect(await SessionAuthApi.getSessionId(), isNull);
+    }, () => MockClient((_) async => loggedIn(androidBinding: false)));
+  });
+
+  test(
+    'invalid or unavailable Android ID never sends login credentials',
+    () async {
+      for (final value in [
+        '',
+        '0000000000000000',
+        'not-an-id',
+        '9774d56d682e549c',
+      ]) {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('ai.automategenie.app/mobile_device'),
+              (_) async => value,
+            );
+        await http.runWithClient(
+          () async {
+            expect(
+              (await LoginApi.login(user, 'password'))['error'],
+              isNotNull,
+            );
+          },
+          () => MockClient((_) async {
+            fail('Invalid Android ID must not make a login request');
+          }),
+        );
+      }
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('ai.automategenie.app/mobile_device'),
+            (_) async => throw PlatformException(code: 'DEVICE_ID_UNAVAILABLE'),
+          );
+      await expectLater(
+        MobileLoginDevice.androidId(),
+        throwsA(isA<PlatformException>()),
+      );
+    },
+  );
 }

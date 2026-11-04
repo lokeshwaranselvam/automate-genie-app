@@ -1,4 +1,4 @@
-import '../platform/multipart_file.dart';
+import 'package:homegenie/utils/platform/multipart_file.dart';
 import 'package:homegenie/utils/platform/platform_file.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -50,24 +50,34 @@ class ImageUploadApi {
       request.fields['doctype'] = 'Event';
       request.fields['docname'] = docname;
       request.fields['fieldname'] = 'custom_event_images';
-      request.fields['is_private'] = '0';
+      // Visit photos are customer-site images; keep them private. Every
+      // in-app viewer (site_visit_report_page, completed_visit_attachments)
+      // already sends the Authorization token that private files require.
+      request.fields['is_private'] = '1';
 
       request.headers['Authorization'] = token;
 
       request.files.add(
-        await platformMultipartFile('file', filePath,
-          filename: fileName,
-        ),
+        await platformMultipartFile('file', filePath, filename: fileName),
       );
 
       debugPrint('📤 Uploading image "$fileName" to Event: $docname ...');
 
-      final streamedResponse = await request.send();
-      final responseBody = await streamedResponse.stream.bytesToString();
+      final streamedResponse = await request.send().timeout(
+        const Duration(seconds: 60),
+      );
+      final responseBody = await streamedResponse.stream
+          .bytesToString()
+          .timeout(const Duration(seconds: 60));
 
       if (streamedResponse.statusCode == 200) {
         final jsonResponse = jsonDecode(responseBody);
-        final fileUrl = jsonResponse['message']?['file_url'];
+        final message = jsonResponse is Map ? jsonResponse['message'] : null;
+        final fileUrl = message is Map ? message['file_url'] : null;
+        if (fileUrl is! String || fileUrl.isEmpty) {
+          debugPrint('❌ Upload response had no file_url: $responseBody');
+          return null;
+        }
         debugPrint('✅ Image uploaded successfully: $fileUrl');
         return fileUrl;
       } else {
@@ -108,15 +118,15 @@ class ImageUploadApi {
       request.fields['folder'] = 'Home/Attachments';
       request.headers['Authorization'] = token;
       request.files.add(
-        await platformMultipartFile('file', filePath,
-          filename: fileName,
-        ),
+        await platformMultipartFile('file', filePath, filename: fileName),
       );
 
       final streamedResponse = await request.send().timeout(
         const Duration(seconds: 60),
       );
-      final responseBody = await streamedResponse.stream.bytesToString();
+      final responseBody = await streamedResponse.stream
+          .bytesToString()
+          .timeout(const Duration(seconds: 60));
       if (streamedResponse.statusCode != 200) {
         debugPrint(
           '[ImageUploadApi] Attendance photo upload failed '

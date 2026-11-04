@@ -1,0 +1,399 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:homegenie/utils/api/document_notification.dart';
+import 'package:homegenie/utils/api/fcm_notification_service.dart';
+import 'package:homegenie/utils/api/notification_inbox.dart';
+import 'package:homegenie/utils/api/notification_inbox_taps.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const channel = MethodChannel('dexterous.com/flutter/local_notifications');
+  const alarm = MethodChannel('ai.automategenie/event_assignment_alarm');
+  const data = <String, dynamic>{
+    'type': 'DOCUMENT_NOTIFICATION',
+    'doctype': 'Lead',
+    'docname': 'CRM-1',
+    'for_user': 'staff@example.test',
+    'title': 'New lead assigned',
+    'body': 'Please contact the customer.',
+    'alarm_enabled': '1',
+  };
+  final shows = <Map>[];
+  var alarms = 0;
+  var alarmStarts = true;
+  Completer<bool>? playbackConfirmation;
+  var playbackRequested = Completer<void>();
+  final owner = Object();
+  setUp(() {
+    dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
+    SharedPreferences.setMockInitialValues({
+      'session_sid': 'sid',
+      'session_username': 'staff@example.test',
+    });
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    AndroidFlutterLocalNotificationsPlugin.registerWith();
+    shows.clear();
+    alarms = 0;
+    alarmStarts = true;
+    playbackConfirmation = null;
+    playbackRequested = Completer<void>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'initialize') return true;
+          if (call.method == 'show') shows.add(call.arguments as Map);
+          return null;
+        });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(alarm, (call) async {
+          alarms++;
+          if (!playbackRequested.isCompleted) playbackRequested.complete();
+          if (playbackConfirmation != null) {
+            return await playbackConfirmation!.future;
+          }
+          return alarmStarts;
+        });
+  });
+  tearDown(() {
+    DocumentNotificationTaps.unregister(owner);
+    NotificationInboxTaps.unregister(owner);
+    debugDefaultTargetPlatformOverride = null;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(alarm, null);
+  });
+
+  Future<bool> send({
+    String id = 'push-1',
+    Map<String, dynamic> changes = const {},
+  }) => showDocumentNotification(
+    RemoteMessage(messageId: id, data: {...data, ...changes}),
+  );
+
+  test(
+    'local notification tap requests inbox without opening ERP or replaying audio',
+    () async {
+      final opened = Completer<void>();
+      NotificationInboxTaps.register(owner, () {
+        if (!opened.isCompleted) opened.complete();
+      });
+      DocumentNotificationTaps.register(
+        owner,
+        (_) => fail('Push must not open the ERP document'),
+      );
+      expect(await send(), isTrue);
+      final previousAlarms = alarms;
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+            channel.name,
+            const StandardMethodCodec().encodeMethodCall(
+              MethodCall('didReceiveNotificationResponse', {
+                'notificationResponseType': 0,
+                'id': 1,
+                'payload': shows.single['payload'],
+              }),
+            ),
+            (_) {},
+          );
+      await opened.future.timeout(const Duration(seconds: 2));
+      expect(alarms, previousAlarms);
+      expect(await NotificationInbox.cached(), hasLength(1));
+    },
+  );
+
+  test('displays mapped fields and rings once for repeat deliveries', () async {
+    expect(await Future.wait([send(), send()]), [true, false]);
+    expect(shows, hasLength(1));
+    expect(shows.single['title'], data['title']);
+    expect(shows.single['body'], data['body']);
+    expect(jsonDecode(shows.single['payload'])['docname'], 'CRM-1');
+    expect(alarms, 1);
+    expect(await send(id: 'push-2'), isTrue);
+    expect(alarms, 2); // Another rule/update for the same document is allowed.
+  });
+
+  test(
+    'daily summary retries use the same receipt even with a different FCM ID',
+    () async {
+      final summary = <String, dynamic>{
+        'notification_kind': 'SALES_SUMMARY',
+        'doctype': 'Notification Log',
+        'docname': 'sales-summary-123',
+        'notification_log': 'sales-summary-123',
+        'page_route': '/genie-sales-summary',
+        'sound_mode': 'default',
+        'alarm_enabled': '0',
+      };
+      expect(await send(id: 'provider-one', changes: summary), isTrue);
+      expect(await send(id: 'provider-two', changes: summary), isFalse);
+      expect(shows, hasLength(1));
+      expect(alarms, 0);
+      final items = await NotificationInbox.cached();
+      expect(items.single.isSalesSummary, isTrue);
+    },
+  );
+
+  test(
+    'Client Script pushes from the unchanged server remain compatible',
+    () async {
+      for (final foreground in [false, true]) {
+        for (final alarmFlag in ['0', '1']) {
+          final previousShows = shows.length;
+          final previousAlarms = alarms;
+          final payload = <String, dynamic>{
+            ...data,
+            'doctype': 'Client Script',
+            'docname': 'Employee form notification',
+            'title': 'Client Script saved',
+            'body': 'The employee form script was updated.',
+            'alarm_enabled': alarmFlag,
+            // The previous server does not include sound_mode.
+          };
+          expect(
+            await showDocumentNotification(
+              RemoteMessage(
+                messageId: 'client-script-$foreground-$alarmFlag',
+                data: payload,
+              ),
+              playAlarm: foreground,
+            ),
+            isTrue,
+          );
+          expect(shows, hasLength(previousShows + 1));
+          expect(shows.last['title'], payload['title']);
+          expect(shows.last['body'], payload['body']);
+          expect(jsonDecode(shows.last['payload'])['doctype'], 'Client Script');
+          expect(alarms, previousAlarms + (alarmFlag == '1' ? 1 : 0));
+        }
+      }
+    },
+  );
+
+  test('legacy zero uses normal sound; invalid flags remain silent', () async {
+    for (final flag in ['0', '', 'true']) {
+      await send(id: flag, changes: {'alarm_enabled': flag});
+    }
+    expect(shows, hasLength(3));
+    expect(alarms, 0);
+    expect(
+      shows.first['platformSpecifics']['channelId'],
+      'document_notification_default_v1',
+    );
+    expect(shows.first['platformSpecifics']['playSound'], isTrue);
+    for (final show in shows.skip(1)) {
+      expect(show['platformSpecifics']['playSound'], isFalse);
+    }
+  });
+
+  test(
+    'API default uses system sound without custom alarm and deduplicates',
+    () async {
+      final changes = {'sound_mode': 'default', 'alarm_enabled': '0'};
+      expect(
+        await Future.wait([send(changes: changes), send(changes: changes)]),
+        [true, false],
+      );
+      expect(shows, hasLength(1));
+      final details = shows.single['platformSpecifics'] as Map;
+      expect(details['channelId'], 'document_notification_default_v1');
+      expect(details['playSound'], isTrue);
+      expect(details['sound'], isNull);
+      expect(
+        details['audioAttributesUsage'],
+        AudioAttributesUsage.notification.value,
+      );
+      expect(alarms, 0);
+    },
+  );
+
+  test('API silent overrides the legacy alarm flag', () async {
+    await send(changes: {'sound_mode': 'silent'});
+    expect(shows, hasLength(1));
+    expect(
+      shows.single['platformSpecifics']['channelId'],
+      'document_notification_visual_v1',
+    );
+    expect(shows.single['platformSpecifics']['playSound'], isFalse);
+    expect(alarms, 0);
+  });
+
+  test(
+    'API alarm controls playback and keeps the visual channel silent',
+    () async {
+      await send(changes: {'sound_mode': 'alarm', 'alarm_enabled': '0'});
+      expect(shows, hasLength(1));
+      expect(shows.single['platformSpecifics']['playSound'], isFalse);
+      expect(alarms, 1);
+    },
+  );
+
+  test('missing or invalid sound policy cannot start an alarm', () async {
+    for (final mode in ['', 'unknown', 1]) {
+      await send(id: 'mode-$mode', changes: {'sound_mode': mode});
+    }
+    await send(id: 'missing', changes: {'alarm_enabled': null});
+    expect(shows, hasLength(4));
+    expect(alarms, 0);
+    for (final show in shows) {
+      expect(show['platformSpecifics']['playSound'], isFalse);
+    }
+  });
+
+  test('normal sound never starts a requested custom alarm', () async {
+    await showDocumentNotification(
+      RemoteMessage(
+        messageId: 'background-default',
+        data: {...data, 'sound_mode': 'default', 'alarm_enabled': '0'},
+      ),
+      playAlarm: true,
+    );
+    expect(shows.single['platformSpecifics']['playSound'], isTrue);
+    expect(alarms, 0);
+  });
+
+  test(
+    'native failure uses alarm channel with the same notification ID',
+    () async {
+      alarmStarts = false;
+      await send();
+      expect(shows, hasLength(2));
+      expect(shows.first['id'], shows.last['id']);
+      expect(
+        shows.last['platformSpecifics']['channelId'],
+        'document_notification_alarm_v1',
+      );
+    },
+  );
+
+  test('delayed native failure triggers one alarm-channel fallback', () async {
+    playbackConfirmation = Completer<bool>();
+    final delivery = send(changes: {'sound_mode': 'alarm'});
+    await playbackRequested.future;
+    expect(alarms, 1);
+    expect(shows, hasLength(1));
+    expect(shows.single['platformSpecifics']['playSound'], isFalse);
+
+    playbackConfirmation!.complete(false);
+    expect(await delivery, isTrue);
+    expect(shows, hasLength(2));
+    expect(shows.first['id'], shows.last['id']);
+    final fallback = shows.last['platformSpecifics'] as Map;
+    expect(fallback['channelId'], 'document_notification_alarm_v1');
+    expect(fallback['playSound'], isTrue);
+    expect(fallback['audioAttributesUsage'], AudioAttributesUsage.alarm.value);
+    expect(await send(changes: {'sound_mode': 'alarm'}), isFalse);
+    expect(shows, hasLength(2));
+    expect(alarms, 1);
+  });
+
+  test(
+    'confirmed native playback does not add a second audible alert',
+    () async {
+      playbackConfirmation = Completer<bool>();
+      final delivery = send(changes: {'sound_mode': 'alarm'});
+      await playbackRequested.future;
+      expect(alarms, 1);
+      expect(shows, hasLength(1));
+      playbackConfirmation!.complete(true);
+      expect(await delivery, isTrue);
+      expect(shows, hasLength(1));
+      expect(shows.single['platformSpecifics']['playSound'], isFalse);
+    },
+  );
+
+  test(
+    'rejects wrong recipients, malformed payloads and logged-out users',
+    () async {
+      for (final change in [
+        {'for_user': 'other@example.test'},
+        {'for_user': ''},
+        {'docname': ''},
+        {'doctype': ''},
+        {'type': 'EVENT_ASSIGNED'},
+      ]) {
+        expect(await send(changes: change), isFalse);
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('session_sid');
+      expect(await send(), isFalse);
+      expect(shows, isEmpty);
+      expect(alarms, 0);
+    },
+  );
+
+  test(
+    'delivery failure remains retryable; logout during display suppresses alarm',
+    () async {
+      await expectLater(
+        DocumentNotificationAlerts.deliver(
+          data: data,
+          receipt: 'retry',
+          notify: () async => throw StateError('failed'),
+        ),
+        throwsStateError,
+      );
+      expect(
+        await DocumentNotificationAlerts.deliver(
+          data: data,
+          receipt: 'retry',
+          notify: () async {},
+        ),
+        isTrue,
+      );
+      await DocumentNotificationAlerts.deliver(
+        data: data,
+        receipt: 'logout',
+        notify: () async {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove('session_sid');
+        },
+        playSound: () async => fail('Alarm after logout'),
+      );
+    },
+  );
+
+  test('tap waits for Home and rejects a changed account or site', () async {
+    final opened = <DocumentNotification>[];
+    await DocumentNotificationTaps.open(data);
+    expect(opened, isEmpty);
+    DocumentNotificationTaps.register(owner, opened.add);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(opened.single.docname, 'CRM-1');
+    await DocumentNotificationTaps.open({
+      ...data,
+      '_genie_site': 'https://other.test',
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('session_username', 'other@example.test');
+    await DocumentNotificationTaps.open(data);
+    expect(opened, hasLength(1));
+  });
+
+  test(
+    'queued tap cannot cross sessions and document URLs encode path segments',
+    () async {
+      await DocumentNotificationTaps.open(data);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('session_sid', 'new-session');
+      DocumentNotificationTaps.register(owner, (_) => fail('Old session tap'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final uri =
+          DocumentNotification.fromData({
+            ...data,
+            'doctype': 'Expense Claim',
+            'docname': 'EXP/1?#test',
+          })!.documentUri!;
+      expect(uri.host, 'erp.example.test');
+      expect(uri.pathSegments, ['app', 'expense-claim', 'EXP/1?#test']);
+      expect(uri.query, isEmpty);
+    },
+  );
+}

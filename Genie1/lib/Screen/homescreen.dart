@@ -1,15 +1,20 @@
 import 'package:flutter/foundation.dart';
+import 'package:firebase_core/firebase_core.dart';
+import '../utils/api/notification_inbox.dart';
 import 'notifications_page.dart';
+import '../utils/api/notification_inbox_taps.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
+import '../utils/widget/load_failed_view.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 import 'package:homegenie/utils/widget/live_location_service.dart';
 import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'attendance_page.dart';
 import 'home_dashboard_view.dart';
-import 'leave_application_page.dart';
+import 'leave_application_webview_page.dart';
 import 'site_visits_page.dart';
 import 'new_site_visit_page.dart';
 import '../utils/api/site_visit_creation_api.dart';
@@ -24,23 +29,23 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:homegenie/Screen/history_list.dart';
 import 'package:homegenie/Screen/session_webview.dart';
 import 'pending_work_page.dart';
-import 'pending_work_overview_page.dart';
+import 'pending_work_webview_page.dart';
 import 'lead_creation_page.dart';
-import 'my_leads_page.dart';
-import 'my_opportunities_page.dart';
+import 'opportunities_webview_page.dart';
 import 'my_performance_page.dart';
-import 'expense_claim_page.dart';
+import 'expense_claim_webview_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../utils/widget/action_bottom.dart';
 import '../utils/widget/warning.dart';
+import '../utils/widget/attendance_session_notice.dart';
 import '../utils/api/check_in_out.dart';
 import '../utils/api/session_auth.dart';
 import '../utils/api/session_web_links_api.dart';
 import '../utils/api/pending_work_monitor.dart';
 import '../utils/api/pending_work_api.dart';
 import '../utils/api/event.dart';
-import '../utils/api/lead_api.dart';
+import '../utils/api/opportunity_api.dart';
 import '../utils/api/location_api.dart';
 import '../utils/face/face_auth_flow.dart';
 import '../utils/face/face_performance_trace.dart';
@@ -83,12 +88,17 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   List eventData = [];
   List<String> officeTypes = [];
   List<Map<String, String>> _sessionWebLinks = [];
-  bool _showOpportunities = false;
   bool _showHomeAddLead = false;
   bool _showHomeNewVisit = false;
+  // Visits navigation is available to every signed-in user.
+  Map<String, bool> _featureVisibility = {};
+  bool _featureVisible(String name, [bool fallback = true]) =>
+      _featureVisibility[name] ?? fallback;
+  bool get _showBottomVisits => _featureVisible('visits');
+  bool get _showLeads => _featureVisible('leads', _showHomeAddLead);
   bool _showHomePending = false;
+  bool _showPendingDrawer = false;
   int _homeActionAccessRequest = 0;
-  int _opportunityAccessRequest = 0;
   bool _webLinksLoading = false;
   String? _webLinksError;
   int _webLinksRequestId = 0;
@@ -107,18 +117,23 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   bool _attendanceStatusVerified = false;
   bool _attendanceStatusRefreshing = false;
   String? _attendanceStatusError;
+  final _attendanceSessionNotice = AttendanceSessionNotice();
   int _attendanceStatusRequestId = 0;
   int _attendanceActionRevision = 0;
   Timer? _attendanceStatusRefreshTimer;
   bool _isActionLoading = false;
   bool _attendanceChooserOpen = false;
   bool _attendancePageOpen = false;
+  final _leaveApplicationWebViewKey =
+      GlobalKey<LeaveApplicationWebViewPageState>();
   bool _leaveApplicationOpen = false;
   bool _prefsInitialized = false;
+  String? _startupError;
   Map<String, dynamic> _attendanceStatusDetails = {};
   int _selectedTab = 0;
+  final _opportunitiesWebViewKey = GlobalKey<OpportunitiesWebViewPageState>();
   int? _homePendingCount;
-  int? _homeLeadCount;
+  int? _homeOpportunityCount;
   int? _homeTaskTodayCount;
   ({int pending, int inProgress, int completed})? _homeTaskSummary;
   final GlobalKey<PendingWorkPageState> _pendingWorkPageKey =
@@ -128,6 +143,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   Timer? _homeScheduleRefreshTimer;
   bool _appIsResumed = true;
   bool _refreshingHomeSchedule = false;
+  bool _openingScheduleVisit = false;
   Set<String> _clearedHomeScheduleIds = {};
   List<Map<String, dynamic>> _cachedHomeScheduleEvents = [];
 
@@ -255,7 +271,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     );
     unawaited(_loadHomePendingCount());
     unawaited(_loadHomeTaskTodayCount());
-    unawaited(_loadHomeLeadCount());
+    unawaited(_loadHomeOpportunityCount());
     unawaited(_loadHomeQuickActionAccess());
     _homeScheduleRefreshTimer = Timer.periodic(const Duration(seconds: 30), (
       _,
@@ -279,11 +295,18 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
               ? (pageContext) => HomeNavigationBar(
                 currentIndex: _selectedTab,
                 onTap: (index) => HomeNavigation.goToTab(pageContext, index),
-                showVisits: _showHomeNewVisit,
-                showLeads: _showHomeAddLead,
+                showVisits: _showBottomVisits,
+                showLeads: _showLeads,
               )
               : null,
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      NotificationInboxTaps.register(this, () {
+        if (!mounted) return;
+        _openNotifications();
+      });
+    });
   }
 
   void _returnToHome() {
@@ -297,20 +320,24 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       _selectedTab = 0;
     });
     unawaited(_loadHomeTaskTodayCount());
-    unawaited(_loadHomeLeadCount());
+    unawaited(_loadHomeOpportunityCount());
     if (shouldRefresh) unawaited(_refreshHomeSchedule());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!_prefsInitialized) return;
+    if (!_prefsInitialized) {
+      if (state == AppLifecycleState.resumed && _startupError != null) {
+        _retryStartup();
+      }
+      return;
+    }
     if (state == AppLifecycleState.resumed) {
       _appIsResumed = true;
       PendingWorkMonitor.start();
       if (!_isActionLoading) unawaited(_getStatusFromServer(force: true));
       if (_selectedTab == 0) unawaited(_refreshHomeSchedule());
       if (_selectedTab == 0) unawaited(_loadHomeQuickActionAccess());
-      if (_selectedTab == 4) unawaited(_loadOpportunityVisibility());
     } else {
       _appIsResumed = false;
       PendingWorkMonitor.stop();
@@ -320,6 +347,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     HomeNavigation.unregister(this);
+    NotificationInboxTaps.unregister(this);
     WidgetsBinding.instance.removeObserver(this);
     PendingWorkMonitor.stop();
     _homeScheduleRefreshTimer?.cancel();
@@ -329,6 +357,18 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     final subscription = _pendingWorkUpdatesSubscription;
     if (subscription != null) unawaited(subscription.cancel());
     super.dispose();
+  }
+
+  void _retryStartup() {
+    if (!mounted) return;
+    setState(() => _startupError = null);
+    _checkPing();
+  }
+
+  void _showStartupError(String message) {
+    if (!mounted) return;
+    setState(() => _startupError = message);
+    Warning.show(context, message, 'Error');
   }
 
   Future<void> _checkPing() async {
@@ -345,20 +385,15 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         noInternet = true;
       }
       if (noInternet) {
-        Warning.show(
-          context,
-          'No Internet Connection! Please check your network.',
-          'Error',
-        );
+        _showStartupError('No Internet Connection! Please check your network.');
         return;
       }
 
       var pingResult = await Check.pingpong();
+      if (!mounted) return;
       if (pingResult == false) {
-        Warning.show(
-          context,
+        _showStartupError(
           'ERP Site is not in working condition! Please try again later.',
-          'Error',
         );
       } else {
         final prefs = await SharedPreferences.getInstance();
@@ -366,6 +401,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         final email = prefs.getString('email') ?? "";
 
         final sessionValid = await Check.sessionActive(token, email);
+        if (!mounted) return;
 
         if (!sessionValid) {
           Warning.show(
@@ -375,7 +411,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           );
           await LiveLocationService.stopForSignOut();
           await SessionAuthApi.clearSession();
-          await prefs.clear();
+          await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
+          if (!mounted) return;
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
             (route) => false,
@@ -387,6 +424,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       }
     } catch (e) {
       print('Error during ping: $e');
+      _showStartupError('Could not reach ERP. Please try again.');
     }
   }
 
@@ -572,27 +610,43 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _loadHomeLeadCount() async {
+  Future<void> _loadHomeOpportunityCount() async {
     try {
-      final leads = await LeadApi.getMyLeads();
-      if (mounted) setState(() => _homeLeadCount = leads.length);
+      final count = await OpportunityApi.getMyOpportunityCount();
+      if (mounted) setState(() => _homeOpportunityCount = count);
     } catch (error) {
-      debugPrint('Home lead count refresh failed: $error');
+      debugPrint('Home opportunity count refresh failed: $error');
     }
   }
 
+  Route<void>? _notificationsRoute;
+
   void _openNotifications() {
-    Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => const NotificationsPage()),
+    final existing = _notificationsRoute;
+    if (existing != null) {
+      Navigator.of(context).popUntil((route) => identical(route, existing));
+      return;
+    }
+    final route = MaterialPageRoute<void>(
+      builder: (_) => const NotificationsPage(),
     );
+    _notificationsRoute = route;
+    Navigator.of(context).push<void>(route).whenComplete(() {
+      if (identical(_notificationsRoute, route)) _notificationsRoute = null;
+    });
   }
 
-  Future<void> _openMyLeads() async {
-    if (!_showHomeAddLead) return;
-    await Navigator.of(
-      context,
-    ).push<void>(MaterialPageRoute<void>(builder: (_) => const MyLeadsPage()));
-    if (mounted) unawaited(_loadHomeLeadCount());
+  Future<void> _openMyOpportunities() async {
+    if (!_showLeads) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder:
+            (_) => OpportunitiesWebViewPage(
+              canCreateLead: _featureVisible('add_lead', _showHomeAddLead),
+            ),
+      ),
+    );
+    if (mounted) unawaited(_loadHomeOpportunityCount());
   }
 
   Future<bool> _safeCheckPing() async {
@@ -635,11 +689,13 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }) async {
     if (!mounted ||
         !_prefsInitialized ||
+        _attendanceSessionNotice.isShown ||
         (_attendanceStatusRefreshing && !force)) {
       return;
     }
     final email = prefs.getString('email');
     if (email == null || email.isEmpty) return;
+    final requestToken = prefs.getString('token');
     final requestId = ++_attendanceStatusRequestId;
     final actionRevision = _attendanceActionRevision;
     _attendanceStatusRefreshing = true;
@@ -647,9 +703,14 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         mounted &&
         requestId == _attendanceStatusRequestId &&
         actionRevision == _attendanceActionRevision &&
-        prefs.getString('email') == email;
+        prefs.getString('email') == email &&
+        prefs.getString('token') == requestToken;
     try {
-      final response = await Check.getStatus(email, recordsFirst: recordsFirst);
+      final response = await Check.getStatus(
+        email,
+        recordsFirst: recordsFirst,
+        includeShift: _attendancePageOpen,
+      );
       if (!isCurrent()) return;
       if (response['attendance_records_verified'] != true) {
         throw StateError('Attendance records could not be verified.');
@@ -692,6 +753,18 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         // native service as well as updating the UI and cached attendance.
         unawaited(LiveLocationService().stopTracking());
       }
+    } on AttendanceAuthenticationException {
+      if (!isCurrent()) return;
+      setState(() {
+        _attendanceStatusVerified = false;
+        _attendanceStatusError = null;
+      });
+      _attendanceSessionNotice.show(
+        context,
+        onAcknowledged: () {
+          unawaited(_returnToLoginAfterAttendanceExpiry(email, requestToken));
+        },
+      );
     } catch (_) {
       if (!isCurrent()) return;
       // An unavailable/malformed response is not evidence of deleted records.
@@ -705,6 +778,34 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         _attendanceStatusRefreshing = false;
       }
     }
+  }
+
+  Future<void> _returnToLoginAfterAttendanceExpiry(
+    String email,
+    String? rejectedToken,
+  ) async {
+    bool sameLogin() =>
+        mounted &&
+        prefs.getString('email') == email &&
+        prefs.getString('token') == rejectedToken;
+    if (!sameLogin()) return;
+    _attendanceStatusRefreshTimer?.cancel();
+    try {
+      await LiveLocationService.stopForSignOut();
+    } catch (_) {
+      debugPrint('Could not stop tracking while returning to login.');
+    }
+    if (!sameLogin()) return;
+    // Clear only this app's local login. A remote logout could revoke a newer
+    // valid session belonging to the same account on the other installation.
+    await SessionAuthApi.clearSession();
+    if (!sameLogin()) return;
+    await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const Login()),
+      (route) => false,
+    );
   }
 
   Future<void> _saveAttendanceCompletion(bool completed) async {
@@ -997,12 +1098,12 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   void _selectBottomTab(int index) {
-    if (index == 2 && !_showHomeNewVisit) return;
-    if (index == 3 && !_showHomeAddLead) return;
+    if (index == 1 && !_featureVisible('tasks')) return;
+    if (index == 2 && !_showBottomVisits) return;
+    if (index == 3 && !_showLeads) return;
     if (index == 0) unawaited(_loadHomeQuickActionAccess());
-    if (index == 4) unawaited(_loadOpportunityVisibility());
     if (index == 0) unawaited(_loadHomeTaskTodayCount());
-    if (index == 0) unawaited(_loadHomeLeadCount());
+    if (index == 0) unawaited(_loadHomeOpportunityCount());
     if (_attendancePageOpen || _leaveApplicationOpen) {
       setState(() {
         _attendancePageOpen = false;
@@ -1021,8 +1122,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openPendingWork() async {
+    if (!_showHomePending) return;
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const PendingWorkOverviewPage()),
+      MaterialPageRoute<void>(builder: (_) => const PendingWorkWebViewPage()),
     );
     if (mounted) unawaited(_loadHomePendingCount());
   }
@@ -1034,7 +1136,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       _showHomeAddLead = false;
       _showHomeNewVisit = false;
       _showHomePending = false;
-      if (_selectedTab == 2 || _selectedTab == 3) _selectedTab = 0;
+      _showPendingDrawer = false;
+      if (_selectedTab == 2 || _selectedTab == 3) {
+        _selectedTab = 0;
+      }
     });
     try {
       final access = await SiteVisitCreationApi.homeQuickActionAccess();
@@ -1043,25 +1148,24 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         _showHomeAddLead = access.canAddLead;
         _showHomeNewVisit = access.canCreateVisit;
         _showHomePending = access.canViewPending;
+        _featureVisibility = access.featureVisibility;
+        if (_selectedTab == 1 && !_featureVisible('tasks')) _selectedTab = 0;
       });
+      unawaited(_loadPendingDrawerVisibility(request));
     } catch (_) {
       // Hide sales actions until the active ERP session can verify its roles.
     }
   }
 
-  Future<void> _loadOpportunityVisibility() async {
-    final request = ++_opportunityAccessRequest;
-    if (!mounted) return;
-    setState(() => _showOpportunities = false);
+  Future<void> _loadPendingDrawerVisibility(int request) async {
     try {
-      // This existing server check requires the exact Sales Manager role.
-      // It is scoped to the authenticated session, not locally saved roles.
-      final allowed = await SiteVisitCreationApi.canCreateVisit();
-      if (mounted && request == _opportunityAccessRequest) {
-        setState(() => _showOpportunities = allowed);
-      }
+      final policy = await Event.getBusinessPolicy('navigation');
+      if (!mounted || request != _homeActionAccessRequest) return;
+      setState(
+        () => _showPendingDrawer = policy.rules['pending_drawer'] == true,
+      );
     } catch (_) {
-      // Keep the entry hidden when the role cannot be verified.
+      // A missing/unavailable drawer policy leaves only this entry hidden.
     }
   }
 
@@ -1072,7 +1176,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       if (!allowed) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Only Sales Managers can create site visits.'),
+            content: Text(
+              'Only Sales Managers, Accounts Users, SCM Managers, or Delivery Managers can create site visits.',
+            ),
           ),
         );
         return;
@@ -1096,10 +1202,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       MaterialPageRoute<void>(
         builder:
             (_) => const SessionWebView(
-              url:
-                  kIsWeb
-                      ? 'https://erp.homegeniegroup.in/TG'
-                      : 'https://16.itgenie.online/TGC',
+              url: 'https://erp.homegeniegroup.in/TG',
               title: 'New Task',
             ),
       ),
@@ -1126,25 +1229,23 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             style: TextStyle(color: Colors.black54),
           ),
           const SizedBox(height: 14),
-          GlassCard(
-            margin: const EdgeInsets.only(bottom: 10),
-            child: ListTile(
-              leading: const Icon(
-                Icons.restaurant_outlined,
-                color: BrandColors.ink,
+          if (_featureVisible('canteen'))
+            GlassCard(
+              margin: const EdgeInsets.only(bottom: 10),
+              child: ListTile(
+                leading: const Icon(
+                  Icons.restaurant_outlined,
+                  color: BrandColors.ink,
+                ),
+                title: const Text('Genieone Canteen'),
+                trailing: const Icon(Icons.open_in_new, size: 18),
+                onTap:
+                    () => _openSessionWebLink(const {
+                      'title': 'Genieone Canteen',
+                      'url': 'https://erp.homegeniegroup.in/Genieone-Canteen',
+                    }),
               ),
-              title: const Text('Genieone Canteen'),
-              trailing: const Icon(
-                kIsWeb ? Icons.chevron_right_rounded : Icons.open_in_new,
-                size: 18,
-              ),
-              onTap:
-                  () => _openSessionWebLink(const {
-                    'title': 'Genieone Canteen',
-                    'url': 'https://erp.homegeniegroup.in/Genieone-Canteen',
-                  }),
             ),
-          ),
           if (_webLinksLoading)
             const Center(
               child: Padding(
@@ -1178,10 +1279,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                   color: BrandColors.ink,
                 ),
                 title: Text(link['title'] ?? 'Dashboard'),
-                trailing: const Icon(
-                  kIsWeb ? Icons.chevron_right_rounded : Icons.open_in_new,
-                  size: 18,
-                ),
+                trailing: const Icon(Icons.open_in_new, size: 18),
                 onTap: () => _openSessionWebLink(link),
               ),
             ),
@@ -1190,6 +1288,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       ),
     );
   }
+
+  bool _isLoggingOut = false;
 
   void _showLogoutDialog(BuildContext context) {
     showDialog(
@@ -1208,65 +1308,91 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             TextButton(
               child: Text("Logout", style: TextStyle(color: BrandColors.ink)),
               onPressed: () async {
-                var connectivity = await Connectivity().checkConnectivity();
+                // Set before any await so a double tap cannot run logout twice
+                // or pop the dialog twice.
+                if (_isLoggingOut) return;
+                _isLoggingOut = true;
+                try {
+                  var connectivity = await Connectivity().checkConnectivity();
 
-                bool noInternet = false;
+                  bool noInternet = false;
 
-                if (connectivity == ConnectivityResult.none) {
-                  noInternet = true;
-                }
+                  if (connectivity == ConnectivityResult.none) {
+                    noInternet = true;
+                  }
 
-                if (connectivity.contains(ConnectivityResult.none)) {
-                  noInternet = true;
-                }
+                  if (connectivity.contains(ConnectivityResult.none)) {
+                    noInternet = true;
+                  }
 
-                if (noInternet) {
-                  Warning.show(
-                    context,
-                    'No Internet Connection! Please check your network.',
-                    'Error',
-                  );
-                  return;
-                }
-                var pingResult = await Check.pingpong();
-
-                Navigator.of(alertContext).pop();
-
-                if (pingResult == false) {
-                  Warning.show(
-                    context,
-                    'ERP Site is not in working condition! Please try again later.',
-                    'Error',
-                  );
-                  return;
-                } else {
-                  try {
-                    await SessionAuthApi.logout();
-                  } catch (error) {
+                  if (noInternet) {
                     if (mounted) {
                       Warning.show(
                         this.context,
-                        kIsWeb && error is StateError
-                            ? error.message.toString()
-                            : 'Could not sign out on ERP. Check your connection and retry before using another phone.',
-                        'Sign-out failed',
+                        'No Internet Connection! Please check your network.',
+                        'Error',
                       );
                     }
                     return;
                   }
-                  SharedPreferences prefs =
-                      await SharedPreferences.getInstance();
-                  await LiveLocationService.stopForSignOut();
-                  await prefs.clear();
+                  var pingResult = await Check.pingpong();
 
-                  await Future.delayed(Duration(milliseconds: 300));
-
-                  if (mounted) {
-                    Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (_) => const Login()),
-                      (route) => false,
-                    );
+                  if (alertContext.mounted) {
+                    Navigator.of(alertContext).pop();
                   }
+                  if (!mounted) return;
+
+                  if (pingResult == false) {
+                    Warning.show(
+                      this.context,
+                      'ERP Site is not in working condition! Please try again later.',
+                      'Error',
+                    );
+                    return;
+                  } else {
+                    try {
+                      await SessionAuthApi.logout();
+                    } catch (_) {
+                      if (mounted) {
+                        Warning.show(
+                          this.context,
+                          'Could not sign out on ERP. Check your connection and retry before using another phone.',
+                          'Sign-out failed',
+                        );
+                      }
+                      return;
+                    }
+                    SharedPreferences prefs =
+                        await SharedPreferences.getInstance();
+                    await LiveLocationService.stopForSignOut();
+                    await NotificationInbox.clearPreferencesPreservingDismissals(
+                      prefs,
+                    );
+                    // Best-effort: invalidate this device's push token so the
+                    // signed-out user stops receiving notifications here. A
+                    // fresh token is registered on the next login.
+                    try {
+                      if (!kIsWeb || Firebase.apps.isNotEmpty)
+                        await FirebaseMessaging.instance.deleteToken().timeout(
+                          const Duration(seconds: 10),
+                        );
+                    } catch (error) {
+                      debugPrint(
+                        'Unable to delete FCM token on logout: $error',
+                      );
+                    }
+
+                    await Future.delayed(Duration(milliseconds: 300));
+
+                    if (mounted) {
+                      Navigator.of(this.context).pushAndRemoveUntil(
+                        MaterialPageRoute(builder: (_) => const Login()),
+                        (route) => false,
+                      );
+                    }
+                  }
+                } finally {
+                  _isLoggingOut = false;
                 }
               },
             ),
@@ -1525,15 +1651,19 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       taskCount: _homeTaskTodayCount?.toString().padLeft(2, '0') ?? '?',
       taskSummary: _homeTaskSummary,
       visitCount: _assignedIncompleteSiteVisitCount.toString().padLeft(2, '0'),
-      leadCount: _homeLeadCount?.toString().padLeft(2, '0') ?? '?',
+      leadCount: _homeOpportunityCount?.toString().padLeft(2, '0') ?? '?',
       pendingCount: _homePendingCount?.toString().padLeft(2, '0') ?? '—',
       loading: _isLoading,
       attendanceBusy: _isActionLoading,
-      showAddLead: _showHomeAddLead,
-      showNewVisit: _showHomeNewVisit,
-      showLeads: _showHomeAddLead,
-      showVisits: _showHomeAddLead,
-      showPending: _showHomePending,
+      showAddLead: _featureVisible('add_lead', _showHomeAddLead),
+      showNewVisit: _featureVisible('new_visit', _showHomeNewVisit),
+      showLeads: _showLeads,
+      showVisits: _showBottomVisits,
+      showPending: _featureVisible('pending', _showHomePending),
+      showSchedule: _featureVisible('schedule', _showHomeAddLead),
+      showTasks: _featureVisible('tasks'),
+      showAttendance: _featureVisible('attendance'),
+      showNewTask: _featureVisible('new_task'),
       schedule: [
         for (var i = 0; i < milestones.length; i++)
           _buildScheduleRow(milestones[i], isLast: i == milestones.length - 1),
@@ -1543,7 +1673,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           _fetchData(),
           _loadHomePendingCount(),
           _loadHomeTaskTodayCount(),
-          _loadHomeLeadCount(),
+          _loadHomeOpportunityCount(),
           _loadHomeQuickActionAccess(),
           _loadSessionWebLinks(forceRefresh: true),
         ]);
@@ -1563,7 +1693,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           );
         }
       },
-      onLeads: _openMyLeads,
+      onLeads: _openMyOpportunities,
       onPending: _openPendingWork,
       onAttendance: _openAttendance,
       onAddLead:
@@ -1597,7 +1727,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     required bool isLast,
   }) {
     const rowHeight = 56.0;
-    return SizedBox(
+    final row = SizedBox(
       height: rowHeight,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1683,6 +1813,32 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         ],
       ),
     );
+    return InkWell(
+      onTap:
+          milestone.eventId.isEmpty
+              ? null
+              : () => _openScheduleVisit(milestone.eventId),
+      child: row,
+    );
+  }
+
+  Future<void> _openScheduleVisit(String eventId) async {
+    if (_openingScheduleVisit) return;
+    _openingScheduleVisit = true;
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder:
+              (_) => SiteVisitsPage(
+                initialEventId: eventId,
+                onVisitsUpdated: _onSiteVisitsUpdated,
+              ),
+        ),
+      );
+      if (mounted) await _refreshHomeSchedule();
+    } finally {
+      _openingScheduleVisit = false;
+    }
   }
 
   Future<void> _openAttendance() async {
@@ -1721,7 +1877,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         'attendance records before camera',
         () => _getStatusFromServer(force: true, recordsFirst: true),
       );
-      if (!mounted) return null;
+      if (!mounted || _attendanceSessionNotice.isShown) return null;
       if (!_attendanceStatusVerified) {
         Warning.show(
           context,
@@ -1739,9 +1895,27 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   }
 
   Future<void> _performAttendanceAction() async {
-    if (_isActionLoading || _attendanceChooserOpen) return;
+    if (_isActionLoading ||
+        _attendanceChooserOpen ||
+        _attendanceSessionNotice.isShown) {
+      return;
+    }
     _attendanceChooserOpen = true;
     try {
+      if (officeTypes.isEmpty) {
+        setState(() => _isActionLoading = true);
+        try {
+          await _fetchOfficeType().timeout(const Duration(seconds: 20));
+        } finally {
+          if (mounted) setState(() => _isActionLoading = false);
+        }
+        if (!mounted) return;
+        if (officeTypes.isEmpty) {
+          throw StateError(
+            'No attendance locations are available. Please refresh and try again.',
+          );
+        }
+      }
       await Action_Bottom.show(
         context: context,
         title: 'Choose Location',
@@ -1763,6 +1937,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
             (isNowCheckedIn) =>
                 unawaited(_handleAttendanceStatusUpdate(isNowCheckedIn)),
       );
+    } catch (error) {
+      if (mounted) {
+        Warning.show(context, error.toString(), 'Attendance unavailable');
+      }
     } finally {
       _attendanceChooserOpen = false;
     }
@@ -1780,7 +1958,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       completedToday: _attendanceCompletedToday,
       statusError: _attendanceStatusError,
       loading: _isLoading,
-      actionLoading: _isActionLoading,
+      statusLoading:
+          !_attendanceStatusVerified && _attendanceStatusError == null,
+      actionLoading: _isActionLoading || _attendanceSessionNotice.isShown,
       status: _attendanceStatusDetails,
       position: mapPosition,
       accuracy: _position?.accuracy,
@@ -1811,48 +1991,60 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
       body: ListView(
         padding: const EdgeInsets.all(14),
         children: [
-          _moreTile(
-            Icons.bar_chart_rounded,
-            'My Performance',
-            'View your sales performance and attendance',
-            () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => const MyPerformancePage(),
+          if (_featureVisible('performance'))
+            _moreTile(
+              Icons.bar_chart_rounded,
+              'My Performance',
+              'View your sales performance and attendance',
+              () => Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) => const MyPerformancePage(),
+                ),
               ),
             ),
-          ),
-          _moreTile(
-            Icons.space_dashboard_outlined,
-            'Dashboards',
-            'Open assigned dashboards',
-            () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder:
-                      (_) => Scaffold(
-                        appBar: brandAppBar(
-                          leading: const HomeBackButton(),
-                          title: const Text('Dashboards'),
+          if (_featureVisible('dashboards'))
+            _moreTile(
+              Icons.space_dashboard_outlined,
+              'Dashboards',
+              'Open assigned dashboards',
+              () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder:
+                        (_) => Scaffold(
+                          appBar: brandAppBar(
+                            leading: const HomeBackButton(),
+                            title: const Text('Dashboards'),
+                          ),
+                          body: _buildDashboardsTab(),
                         ),
-                        body: _buildDashboardsTab(),
-                      ),
-                ),
-              );
-            },
-          ),
-          _moreTile(
-            Icons.receipt_long_outlined,
-            'Expense Claim',
-            'Submit an expense with its bill photo',
-            () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ExpenseClaimPage()),
-              );
-            },
-          ),
-          if (_showHomeAddLead)
+                  ),
+                );
+              },
+            ),
+          if (_featureVisible('leave'))
+            _moreTile(
+              Icons.event_available_outlined,
+              'Leave Application',
+              'Apply for leave',
+              () => setState(() => _leaveApplicationOpen = true),
+            ),
+          if (_featureVisible('expenses'))
+            _moreTile(
+              Icons.receipt_long_outlined,
+              'Expense Claim',
+              'Submit an expense with its bill photo',
+              () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ExpenseClaimWebViewPage(),
+                  ),
+                );
+              },
+            ),
+          if (_showBottomVisits)
             _moreTile(
               Icons.event_available_outlined,
               'All Visits',
@@ -1868,17 +2060,6 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                   ),
                 );
               },
-            ),
-          if (_showOpportunities)
-            _moreTile(
-              Icons.handshake_outlined,
-              'Opportunities',
-              'View opportunities created by you',
-              () => Navigator.of(context).push<void>(
-                MaterialPageRoute<void>(
-                  builder: (_) => const MyOpportunitiesPage(),
-                ),
-              ),
             ),
           _moreTile(
             Icons.logout_rounded,
@@ -1912,24 +2093,48 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     if (!_prefsInitialized) {
-      return const Scaffold(body: Center(child: AgPathLoadingIndicator()));
+      final startupError = _startupError;
+      return Scaffold(
+        body:
+            startupError == null
+                ? const Center(child: AgPathLoadingIndicator())
+                : SafeArea(
+                  child: LoadFailedView(
+                    message: startupError,
+                    onRetry: _retryStartup,
+                  ),
+                ),
+      );
     }
 
     return WillPopScope(
       onWillPop: () async {
         if (_leaveApplicationOpen) {
-          setState(() => _leaveApplicationOpen = false);
+          final page = _leaveApplicationWebViewKey.currentState;
+          if (page != null) {
+            await page.handleBack();
+          } else {
+            setState(() => _leaveApplicationOpen = false);
+          }
           return false;
         }
         if (_attendancePageOpen) {
           setState(() => _attendancePageOpen = false);
           return false;
         }
+        // The Tasks webpage must ignore phone/system Back. Its visible
+        // app-bar Back button returns Home through its explicit callback.
+        if (_selectedTab == 1) return false;
+        if (_selectedTab == 3 &&
+            _opportunitiesWebViewKey.currentState != null) {
+          await _opportunitiesWebViewKey.currentState!.handleBack();
+          return false;
+        }
         if (_selectedTab != 0) {
           setState(() => _selectedTab = 0);
           return false;
         }
-        SystemNavigator.pop();
+        if (!kIsWeb) SystemNavigator.pop();
         return false;
       },
       child: Scaffold(
@@ -1977,22 +2182,53 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                       title: Text('Home'),
                       onTap: () => Navigator.pop(context),
                     ),
-                    ListTile(
-                      leading: Icon(Icons.event, color: BrandColors.ink),
-                      title: Text('Events'),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder:
-                                (context) => SiteVisitsPage(
-                                  onVisitsUpdated: _onSiteVisitsUpdated,
-                                ),
-                          ),
-                        );
-                      },
-                    ),
-                    if (_showHomeAddLead)
+                    if (_featureVisible('canteen'))
+                      ListTile(
+                        leading: const Icon(
+                          Icons.restaurant_outlined,
+                          color: BrandColors.ink,
+                        ),
+                        title: const Text('Genieone Canteen'),
+                        trailing: const Icon(Icons.open_in_new, size: 18),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _openSessionWebLink(const {
+                            'title': 'Genieone Canteen',
+                            'url':
+                                'https://erp.homegeniegroup.in/Genieone-Canteen',
+                          });
+                        },
+                      ),
+                    if (_featureVisible('pending', _showHomePending) &&
+                        _showPendingDrawer)
+                      ListTile(
+                        leading: Icon(
+                          Icons.work_outline,
+                          color: BrandColors.ink,
+                        ),
+                        title: Text('Pending Work'),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _openPendingWork();
+                        },
+                      ),
+                    if (_showBottomVisits)
+                      ListTile(
+                        leading: Icon(Icons.event, color: BrandColors.ink),
+                        title: Text('Events'),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder:
+                                  (context) => SiteVisitsPage(
+                                    onVisitsUpdated: _onSiteVisitsUpdated,
+                                  ),
+                            ),
+                          );
+                        },
+                      ),
+                    if (_featureVisible('add_lead', _showHomeAddLead))
                       ListTile(
                         leading: Icon(
                           Icons.person_add_alt_1_outlined,
@@ -2039,9 +2275,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                         ),
                         title: Text(link['title'] ?? 'Web page'),
                         trailing: const Icon(
-                          kIsWeb
-                              ? Icons.chevron_right_rounded
-                              : Icons.open_in_new,
+                          Icons.open_in_new,
                           size: 18,
                           color: Colors.black45,
                         ),
@@ -2071,7 +2305,8 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         ),
         body:
             _leaveApplicationOpen
-                ? LeaveApplicationPage(
+                ? LeaveApplicationWebViewPage(
+                  key: _leaveApplicationWebViewKey,
                   onBack: () => setState(() => _leaveApplicationOpen = false),
                   onNotifications: _openNotifications,
                 )
@@ -2081,12 +2316,22 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                   index: _selectedTab,
                   children: [
                     _buildHomeDashboard(),
-                    PendingWorkPage(key: _pendingWorkPageKey),
-                    _selectedTab == 2 && _showHomeNewVisit
+                    PendingWorkPage(
+                      key: _pendingWorkPageKey,
+                      onBack: () => setState(() => _selectedTab = 0),
+                    ),
+                    _selectedTab == 2 && _showBottomVisits
                         ? SiteVisitsPage(onVisitsUpdated: _onSiteVisitsUpdated)
                         : const SizedBox.shrink(),
-                    _selectedTab == 3 && _showHomeAddLead
-                        ? const MyLeadsPage()
+                    _selectedTab == 3 && _showLeads
+                        ? OpportunitiesWebViewPage(
+                          key: _opportunitiesWebViewKey,
+                          onExit: () => _selectBottomTab(0),
+                          canCreateLead: _featureVisible(
+                            'add_lead',
+                            _showHomeAddLead,
+                          ),
+                        )
                         : const SizedBox.shrink(),
                     _buildMoreTab(),
                   ],
@@ -2094,8 +2339,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
         bottomNavigationBar: HomeNavigationBar(
           currentIndex: _selectedTab,
           onTap: _selectBottomTab,
-          showVisits: _showHomeNewVisit,
-          showLeads: _showHomeAddLead,
+          showVisits: _showBottomVisits,
+          showLeads: _showLeads,
+          showTasks: _featureVisible('tasks'),
         ),
       ),
     );

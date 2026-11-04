@@ -56,3 +56,6 @@ app.*.map.json
 /pwa_browser_tests.log
 /pwa_tests.log
 /pwa_analysis.log
+
+# Reproducible browser vision assets: tool/prepare_face_assets.py
+/web/face/vendor/

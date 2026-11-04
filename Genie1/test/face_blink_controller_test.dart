@@ -30,6 +30,47 @@ void openEyes(FaceBlinkController controller, {int start = 0, int id = 1}) {
 }
 
 void main() {
+  test('browser accepts measured phone eye closure and still requires reopening', () {
+    final controller = FaceBlinkController(
+      config: const FaceBlinkConfig.browser(),
+    )..reset(Duration.zero);
+    openEyes(controller);
+    controller.observe(
+      sample(left: 0.4368, right: 0.4472),
+      const Duration(milliseconds: 300),
+    );
+    expect(controller.progress.stage, FaceBlinkStage.reopenEyes);
+    expect(controller.progress.canCapture, isFalse);
+    controller.observe(
+      sample(left: 0.3780, right: 0.3780),
+      const Duration(milliseconds: 440),
+    );
+    controller.observe(sample(), const Duration(milliseconds: 600));
+    expect(controller.progress.canCapture, isFalse);
+    controller.observe(sample(), const Duration(milliseconds: 760));
+    expect(controller.progress.canCapture, isTrue);
+  });
+
+  test('browser rejects a wink and partial closure while native cutoff is unchanged', () {
+    final browser = FaceBlinkController(config: const FaceBlinkConfig.browser())
+      ..reset(Duration.zero);
+    final native = FaceBlinkController()..reset(Duration.zero);
+    openEyes(browser);
+    openEyes(native);
+    var timestamp = 300;
+    for (final eyes in [(0.4, 0.95), (0.95, 0.4), (0.55, 0.55)]) {
+      browser.observe(
+        sample(left: eyes.$1, right: eyes.$2),
+        Duration(milliseconds: timestamp),
+      );
+      expect(browser.progress.stage, FaceBlinkStage.blink);
+      timestamp += 100;
+    }
+    native.observe(sample(left: 0.4, right: 0.4), const Duration(milliseconds: 300));
+    expect(native.progress.stage, FaceBlinkStage.blink);
+    expect(native.config.closedProbability, 0.30);
+  });
+
   test(
     'captures exactly after stable open, closed, and stable reopened eyes',
     () {

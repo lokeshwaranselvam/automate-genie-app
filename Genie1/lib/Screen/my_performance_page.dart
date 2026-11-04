@@ -4,14 +4,12 @@ import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart' show DateFormat;
 
 import '../utils/api/performance_api.dart';
 import 'session_webview.dart';
 import '../utils/connection_notice.dart';
 import '../utils/widget/warning.dart';
-import '../utils/navigation/home_navigation.dart';
 
 const _blue = BrandColors.ink;
 const _ink = Color(0xFF202936);
@@ -169,12 +167,10 @@ class _MyPerformancePageState extends State<MyPerformancePage>
     secondLabel: 'Conversions',
     metrics: const [
       ('Leads Created', 'leads'),
-      ('Site Visits', 'site_visits'),
-      ('Quotations', 'quotations'),
-      ('Orders', 'orders'),
+      ('Completed Visits', 'site_visits'),
     ],
     definition:
-        'Leads Created counts records whose Lead Owner is your user, matching My Leads, grouped by creation date. Conversions counts those same leads currently marked Converted, grouped by lead creation date. Site Visits counts actual event visits for your Employee. Quotations and Orders count your submitted documents by transaction date; drafts and cancellations are excluded.',
+        'Leads Created counts records whose Lead Owner is your user, matching My Leads, grouped by creation date. Conversions counts completed site visits, matching Completed Visits and Visits > Completed, grouped by completion date.',
   );
 
   void _showDefinitions() {
@@ -306,7 +302,7 @@ class _MyPerformancePageState extends State<MyPerformancePage>
               ),
       bottomNavigationBar:
           widget.onNavigate == null
-              ? (kIsWeb ? HomeNavigation.navigationBar(context) : null)
+              ? null
               : brandBottomNavigationBar(
                 currentIndex: 4,
                 onTap: widget.onNavigate,
@@ -520,11 +516,12 @@ class _MyPerformancePageState extends State<MyPerformancePage>
                     ),
                   ],
                 ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 16,
+                  runSpacing: 8,
                   children: [
                     _legend(section.firstLabel, _leadColor),
-                    const SizedBox(width: 16),
                     _legend(section.secondLabel, _conversionColor),
                   ],
                 ),

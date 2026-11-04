@@ -12,6 +12,7 @@ class AttendancePage extends StatelessWidget {
   final bool completedToday;
   final String? statusError;
   final bool loading;
+  final bool? statusLoading;
   final bool actionLoading;
   final Map<String, dynamic> status;
   final LatLng? position;
@@ -30,6 +31,7 @@ class AttendancePage extends StatelessWidget {
     this.completedToday = false,
     this.statusError,
     required this.loading,
+    this.statusLoading,
     required this.actionLoading,
     required this.status,
     required this.position,
@@ -74,6 +76,10 @@ class AttendancePage extends StatelessWidget {
   }
 
   String _shift() {
+    // The business-policy API owns Shift Request/default-shift selection.
+    if (status.containsKey('attendance_shift')) {
+      return _firstValue(['attendance_shift'], fallback: 'Not assigned');
+    }
     final direct = _firstValue([
       'default_shift',
       'shift_time',
@@ -139,7 +145,7 @@ class AttendancePage extends StatelessWidget {
       'office_name',
       'location_name',
       'office',
-    ], fallback: checkedIn ? 'Office' : 'Select at check-in');
+    ], fallback: checkedIn ? 'Location unavailable' : 'Select at check-in');
     final address = _firstValue(
       ['check_in_address', 'checkin_address', 'address'],
       fallback:
@@ -385,14 +391,14 @@ class AttendancePage extends StatelessWidget {
               height: 54,
               child: ElevatedButton.icon(
                 onPressed:
-                    loading ||
+                    (statusLoading ?? loading) ||
                             actionLoading ||
                             completedToday ||
                             statusError != null
                         ? null
                         : onAttendanceAction,
                 icon:
-                    actionLoading
+                    actionLoading || (statusLoading ?? loading)
                         ? const SizedBox(
                           width: 17,
                           height: 17,
@@ -412,6 +418,8 @@ class AttendancePage extends StatelessWidget {
                 label: Text(
                   completedToday
                       ? 'Completed'
+                      : (statusLoading ?? loading)
+                      ? 'Checking attendance...'
                       : previousDayPendingCheckout
                       ? 'Previous Day Checkout'
                       : checkedIn || previousDayPendingCheckout
@@ -432,23 +440,6 @@ class AttendancePage extends StatelessWidget {
                   foregroundColor: Colors.white,
                   shape: const StadiumBorder(),
                 ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 52,
-              child: ElevatedButton.icon(
-                onPressed: onLeaveApplication,
-                icon: const Icon(Icons.event_available_outlined, size: 19),
-                label: const Text(
-                  'Leave Application',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: BrandColors.ink,
-                  foregroundColor: Colors.white,
-                  shape: const StadiumBorder(),
-                ).copyWith(backgroundBuilder: BrandColors.buttonBackground),
               ),
             ),
           ],

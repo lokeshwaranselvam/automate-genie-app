@@ -1,549 +1,447 @@
-import '../utils/widget/pull_to_refresh.dart';
-import '../utils/widget/ag_path_loading_indicator.dart';
-import 'package:homegenie/utils/theme/brand_theme.dart';
-import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
+import '../utils/widget/webview_pull_to_refresh.dart';
+import 'dart:async';
+import 'dart:convert';
 
-import '../utils/api/lead_api.dart';
-import '../utils/lead_phone_number.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:homegenie/utils/platform/erp_webview.dart';
+
 import '../utils/api/location_api.dart';
+import '../utils/api/session_auth.dart';
+import '../utils/theme/brand_theme.dart';
+import '../utils/widget/ag_path_loading_indicator.dart';
 import '../utils/widget/home_back_button.dart';
 import '../utils/widget/warning.dart';
 
-const _leadBlue = BrandColors.ink;
-const _leadInk = Color(0xFF202B3C);
+const leadCreationRoute = '/create_lead_from_mobile';
 
+bool isLeadCreationWebPageLocation(Uri page, String? value) {
+  final uri = Uri.tryParse(value ?? '');
+  return uri != null &&
+      isTrustedErpPageUri(uri) &&
+      uri.host.isNotEmpty &&
+      uri.userInfo.isEmpty &&
+      uri.origin == page.origin &&
+      uri.path.replaceFirst(RegExp(r'/$'), '') == page.path;
+}
+
+/// Existing Lead routes open the ERP Web Page, as Expense Claim does.
 class LeadCreationPage extends StatefulWidget {
   const LeadCreationPage({super.key});
-
   @override
   State<LeadCreationPage> createState() => _LeadCreationPageState();
 }
 
 class _LeadCreationPageState extends State<LeadCreationPage> {
-  final _formKey = GlobalKey<FormState>();
-  final _firstNameController = TextEditingController();
-  final _mobileController = TextEditingController();
-  final _whatsappController = TextEditingController();
-  final _locationController = TextEditingController();
-  final _requirementController = TextEditingController();
-
-  LeadFormOptions? _options;
-  String? _selectedCategory;
-  String? _selectedSource;
-  bool _checkDuplicates = true;
-  bool _loadingOptions = true;
-  bool _gettingLocation = false;
-  bool _submitting = false;
+  WebViewController? _controller;
+  Uri? _page;
+  String? _sid;
+  String? _user;
+  String? _site;
   String? _error;
+  bool _loading = true;
+  bool _pageReady = false;
+  bool _initializing = false;
+  bool _submitting = false;
+  bool _locating = false;
+  int _generation = 0;
+  int _document = 0;
+  int? _bindingDocument;
+  int? _boundDocument;
+  Timer? _loadTimer;
 
   @override
   void initState() {
     super.initState();
-    _loadOptions();
+    unawaited(_initialize());
   }
 
   @override
   void dispose() {
-    _firstNameController.dispose();
-    _mobileController.dispose();
-    _whatsappController.dispose();
-    _locationController.dispose();
-    _requirementController.dispose();
+    _generation++;
+    _loadTimer?.cancel();
+    _controller = null;
     super.dispose();
   }
 
-  Future<void> _loadOptions() async {
-    if (_submitting) return;
-    setState(() {
-      _loadingOptions = true;
-      _error = null;
-    });
-    try {
-      final options = await LeadApi.getFormOptions();
-      if (!mounted) return;
-      setState(() {
-        _options = options;
-        if (!options.productCategoryOptions.contains(_selectedCategory)) {
-          _selectedCategory = null;
-        }
-        if (!options.sourceOptions.contains(_selectedSource)) {
-          _selectedSource = null;
-        }
-        _loadingOptions = false;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _loadingOptions = false;
-        _error = error.toString().replaceFirst('Bad state: ', '');
-      });
-    }
-  }
+  bool _current(int generation, WebViewController controller) =>
+      mounted &&
+      generation == _generation &&
+      identical(controller, _controller);
+  bool _isPage(String? url) =>
+      _page != null && isLeadCreationWebPageLocation(_page!, url);
+  String _message(Object error) => error.toString().replaceFirst(
+    RegExp(r'^(Bad state|StateError|FormatException):\s*'),
+    '',
+  );
 
-  Future<void> _submit() async {
-    if (_submitting || _loadingOptions || _options == null) return;
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-    setState(() {
-      _submitting = true;
-      _error = null;
-    });
-
-    try {
-      await LeadApi.createLead(
-        firstName: _firstNameController.text,
-        mobileNo: _mobileController.text,
-        whatsappNo: _whatsappController.text,
-        requirement: _requirementController.text,
-        source: _selectedSource ?? '',
-        productCategory: _selectedCategory ?? '',
-        address: _locationController.text,
-        csrfToken: _options!.csrfToken ?? '',
+  Future<void> _assertSession() async {
+    if (_sid == null ||
+        await SessionAuthApi.getSessionId() != _sid ||
+        dotenv.env['SITE_URL']?.trim() != _site) {
+      throw StateError(
+        'Your ERP session or site changed. Sign in again and reopen Create Lead.',
       );
-      if (!mounted) return;
-
-      _firstNameController.clear();
-      _mobileController.clear();
-      _whatsappController.clear();
-      _locationController.clear();
-      _requirementController.clear();
-      Warning.show(context, 'Lead created successfully!', 'Success');
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _error = error.toString().replaceFirst('Bad state: ', ''));
-    } finally {
-      if (mounted) setState(() => _submitting = false);
     }
   }
 
-  Future<void> _getCurrentLocation() async {
-    if (_gettingLocation) return;
-    setState(() => _gettingLocation = true);
+  void _fail(String message, int generation) {
+    if (!mounted || generation != _generation) return;
+    _loadTimer?.cancel();
+    setState(() {
+      _error =
+          _submitting
+              ? '$message Check My Leads before submitting again.'
+              : message;
+      _pageReady = false;
+      _loading = false;
+      _submitting = false;
+    });
+  }
+
+  Future<void> _initialize() async {
+    if (_initializing || _submitting || _locating) return;
+    final generation = ++_generation;
+    _loadTimer?.cancel();
+    setState(() {
+      _initializing = true;
+      _loading = true;
+      _pageReady = false;
+      _error = null;
+      _controller = null;
+      _document = 0;
+      _boundDocument = null;
+      _bindingDocument = null;
+    });
     try {
-      if (!await Geolocator.isLocationServiceEnabled()) {
-        throw StateError('Turn on location services and try again.');
+      _site = dotenv.env['SITE_URL']?.trim();
+      final base = Uri.tryParse(_site ?? '');
+      if (base == null ||
+          !isTrustedErpPageUri(base) ||
+          base.host.isEmpty ||
+          base.userInfo.isNotEmpty) {
+        throw StateError('The ERP site URL is not configured.');
       }
+      final user = await SessionAuthApi.getActiveSessionUser();
+      final sid = await SessionAuthApi.getSessionId();
+      if (!mounted || generation != _generation) return;
+      if (user == null || user == 'Guest' || sid == null || sid.isEmpty) {
+        throw StateError(
+          'Your Frappe session has expired. Please sign in again.',
+        );
+      }
+      _user = user;
+      _sid = sid;
+      _page = erpWebPageUri(base, leadCreationRoute);
+      final controller = WebViewController();
+      _controller = controller;
+      await controller.setJavaScriptMode(JavaScriptMode.unrestricted);
+      await controller.setBackgroundColor(Colors.white);
+      await controller.addJavaScriptChannel(
+        'GenieLead',
+        onMessageReceived: (message) {
+          unawaited(_handle(message.message, generation, controller));
+        },
+      );
+      await controller.setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest:
+              (request) =>
+                  _current(generation, controller) &&
+                          _error == null &&
+                          !_submitting &&
+                          !_locating &&
+                          _isPage(request.url)
+                      ? NavigationDecision.navigate
+                      : NavigationDecision.prevent,
+          onPageStarted: (url) {
+            if (!_current(generation, controller)) return;
+            if (!_isPage(url)) {
+              _fail(
+                'Only the Create Lead webpage can be opened here.',
+                generation,
+              );
+              return;
+            }
+            setState(() {
+              _document++;
+              _boundDocument = null;
+              _bindingDocument = null;
+              _pageReady = false;
+              _loading = true;
+            });
+          },
+          onPageFinished: (url) async {
+            if (_current(generation, controller) && _isPage(url)) {
+              await _bindPage(controller, generation, requireMarker: true);
+            }
+          },
+          onWebResourceError: (error) {
+            if (_current(generation, controller) &&
+                error.isForMainFrame == true) {
+              _fail(
+                'The Create Lead webpage could not be loaded. Check your connection and ERP page publication.',
+                generation,
+              );
+            }
+          },
+        ),
+      );
+      await _assertSession();
+      if (!_current(generation, controller)) return;
+      // Preserve all other WebViews' cookies; set only this ERP login cookie.
+      await WebViewCookieManager().setCookie(
+        WebViewCookie(name: 'sid', value: sid, domain: base.host, path: '/'),
+      );
+      await _assertSession();
+      if (!_current(generation, controller)) return;
+      setState(() {});
+      _loadTimer = Timer(const Duration(seconds: 35), () {
+        if (_current(generation, controller) && !_pageReady) {
+          _fail(
+            erpPageLoadMessage('Create Lead did not finish loading. Publish the updated create_lead_from_mobile Web Page in ERP, then retry.'),
+            generation,
+          );
+        }
+      });
+      await controller.loadRequest(_page!, headers: {'Cookie': 'sid=$sid'});
+    } catch (error) {
+      _fail(_message(error), generation);
+    } finally {
+      if (mounted && generation == _generation) {
+        setState(() => _initializing = false);
+      }
+    }
+  }
 
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
+  Future<void> _bindPage(
+    WebViewController controller,
+    int generation, {
+    bool requireMarker = false,
+  }) async {
+    final document = _document;
+    bool valid() =>
+        _current(generation, controller) &&
+        _error == null &&
+        document == _document;
+    if (!valid() ||
+        _bindingDocument == document ||
+        _boundDocument == document) {
+      return;
+    }
+    _bindingDocument = document;
+    try {
+      if (!_isPage(await controller.currentUrl()) || !valid()) return;
+      await _assertSession();
+      if (!valid()) return;
+      final ready = await controller.runJavaScriptReturningResult(
+        "window.LeadForm?.version === 'hosted-v1' && document.getElementById('lc-app')?.dataset.started === 'true'",
+      );
+      if (!valid()) return;
+      if (ready != true && ready.toString() != 'true') {
+        if (requireMarker) {
+          throw StateError(
+            erpPageLoadMessage('Publish the updated create_lead_from_mobile Web Page in ERP, then retry.'),
+          );
+        }
+        return;
       }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        throw StateError('Location permission is required.');
+      // Only identity crosses this bridge; the webpage verifies its cookie user.
+      await controller.runJavaScript(
+        "window.dispatchEvent(new CustomEvent('genie-lead-session', {detail: {user: ${jsonEncode(_user)}}}));",
+      );
+      if (!valid()) return;
+      _boundDocument = document;
+      _loadTimer?.cancel();
+      setState(() {
+        _pageReady = true;
+        _loading = false;
+      });
+    } catch (error) {
+      if (valid()) _fail(_message(error), generation);
+    } finally {
+      if (_current(generation, controller) && _bindingDocument == document) {
+        _bindingDocument = null;
       }
+    }
+  }
 
+  Future<void> _handle(
+    String raw,
+    int generation,
+    WebViewController controller,
+  ) async {
+    String? id;
+    String? action;
+    try {
+      if (!_current(generation, controller) ||
+          _error != null ||
+          raw.length > 8192 ||
+          !_isPage(await controller.currentUrl())) {
+        return;
+      }
+      final data = jsonDecode(raw);
+      if (data is! Map || data['action'] is! String) return;
+      action = data['action'] as String;
+      if (action == 'ready') {
+        await _bindPage(controller, generation);
+        return;
+      }
+      if (!_pageReady) return;
+      await _assertSession();
+      if (!_current(generation, controller)) return;
+      if (action == 'busy') {
+        if (data['value'] is bool) {
+          setState(() => _submitting = data['value'] == true);
+        }
+      } else if (action == 'session_expired') {
+        _fail(
+          'Your ERP session expired or changed. Sign in again and reopen Create Lead.',
+          generation,
+        );
+      } else if (action == 'success') {
+        if (mounted) {
+          Warning.show(context, 'Lead created successfully!', 'Success');
+          WidgetsBinding.instance.scheduleFrame();
+        }
+      } else if (action == 'close') {
+        if (mounted && !_submitting && !_locating) {
+          Navigator.of(context).maybePop();
+        }
+      } else if (action == 'location' && data['id'] is String) {
+        id = data['id'] as String;
+        if (id.length > 80) return;
+        if (_locating || _submitting) {
+          throw StateError('A Lead request is already in progress.');
+        }
+        _locating = true;
+        try {
+          final address = await _getCurrentLocation();
+          await _assertSession();
+          await _respond(controller, generation, {'id': id, 'result': address});
+        } finally {
+          _locating = false;
+        }
+      }
+    } catch (error) {
+      if (id != null) {
+        if (mounted && _current(generation, controller)) {
+          Warning.show(context, _message(error), 'Location');
+          WidgetsBinding.instance.scheduleFrame();
+        }
+        await _respond(controller, generation, {
+          'id': id,
+          'error': _message(error),
+          'shown': true,
+        });
+      } else if (action != null) {
+        _fail(_message(error), generation);
+      }
+    }
+  }
+
+  Future<void> _respond(
+    WebViewController controller,
+    int generation,
+    Map data,
+  ) async {
+    try {
+      if (!_current(generation, controller) ||
+          _error != null ||
+          !_isPage(await controller.currentUrl())) {
+        return;
+      }
+      if (!_current(generation, controller)) return;
+      await controller.runJavaScript(
+        'window.LeadForm.receive(${jsonEncode(data)});',
+      );
+    } catch (_) {
+      /* Ignore a disposed document. */
+    }
+  }
+
+  Future<String> _getCurrentLocation() async {
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      throw StateError('Turn on location services and try again.');
+    }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      throw StateError('Location permission is required.');
+    }
+    try {
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
         ),
       );
-      final address = await LocationHelper.getAddressFromCoordinates(
+      return await LocationHelper.getAddressFromCoordinates(
         position.latitude,
         position.longitude,
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout:
+            () =>
+                throw StateError(
+                  'Could not find the address in time. Try again or type it.',
+                ),
       );
-      if (!mounted) return;
-      _locationController.text = address;
-    } catch (error) {
-      if (mounted) {
-        Warning.show(
-          context,
-          error.toString().replaceFirst('Bad state: ', ''),
-          'Location',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _gettingLocation = false);
-    }
-  }
-
-  Widget _fieldLabel(String label, {bool required = true}) => Padding(
-    padding: const EdgeInsets.only(bottom: 6),
-    child: Text.rich(
-      TextSpan(
-        text: label,
-        style: const TextStyle(
-          color: _leadInk,
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-        ),
-        children: [
-          if (required)
-            const TextSpan(
-              text: ' *',
-              style: TextStyle(color: Color(0xFFE34B56)),
-            ),
-        ],
-      ),
-    ),
-  );
-
-  InputDecoration _fieldDecoration({
-    String? hint,
-    Widget? suffixIcon,
-  }) => InputDecoration(
-    hintText: hint,
-    hintStyle: const TextStyle(color: Color(0xFF858D98), fontSize: 13),
-    isDense: true,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
-    suffixIcon: suffixIcon,
-    suffixIconConstraints: const BoxConstraints(minWidth: 42, minHeight: 42),
-    filled: true,
-    fillColor: Colors.white,
-    border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(9),
-      borderSide: const BorderSide(color: Color(0xFFD8DEE7)),
-    ),
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(9),
-      borderSide: const BorderSide(color: Color(0xFFD8DEE7)),
-    ),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(9),
-      borderSide: const BorderSide(color: _leadBlue, width: 1.4),
-    ),
-    errorBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(9),
-      borderSide: const BorderSide(color: Colors.redAccent),
-    ),
-  );
-
-  Widget _dropdownField({
-    required String label,
-    required String? value,
-    required List<String> options,
-    required bool enabled,
-    required ValueChanged<String?> onChanged,
-    required FormFieldValidator<String> validator,
-  }) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      _fieldLabel(label),
-      DropdownButtonFormField<String>(
-        initialValue: value,
-        isExpanded: true,
-        icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
-        decoration: _fieldDecoration(
-          hint: enabled ? 'Select $label' : 'Options unavailable',
-        ),
-        items:
-            options
-                .map(
-                  (option) => DropdownMenuItem(
-                    value: option,
-                    child: Text(option, overflow: TextOverflow.ellipsis),
-                  ),
-                )
-                .toList(),
-        onChanged: enabled ? onChanged : null,
-        validator: validator,
-      ),
-    ],
-  );
-
-  Widget _optionsLoadState() {
-    if (_loadingOptions) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 72),
-        child: Column(
-          children: [
-            AgPathLoadingIndicator(),
-            SizedBox(height: 16),
-            Text(
-              'Loading Lead Source and Product Enquired…',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: _leadInk, fontSize: 14),
-            ),
-          ],
-        ),
+    } on TimeoutException {
+      throw StateError(
+        'Could not get your GPS location in time. Move to an open area and try again.',
       );
     }
-
-    return Container(
-      margin: const EdgeInsets.only(top: 28),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF4F2),
-        border: Border.all(color: const Color(0xFFF2C7C1)),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Could not load form options',
-            style: TextStyle(
-              color: _leadInk,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _error ?? 'The server did not return Lead form options.',
-            style: const TextStyle(
-              color: Color(0xFF9D3028),
-              fontSize: 14,
-              height: 1.45,
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Ask your Frappe administrator to configure the named Lead field, then retry.',
-            style: TextStyle(color: _leadInk, fontSize: 13, height: 1.4),
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    );
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: brandAppBar(
-        leading: const HomeBackButton(color: Colors.white),
-        elevation: 0,
-        title: const Text(
-          'Create Lead',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-          ),
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.white,
+    appBar: brandAppBar(
+      leading: const HomeBackButton(color: Colors.white),
+      elevation: 0,
+      title: const Text(
+        'Create Lead',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 17,
+          fontWeight: FontWeight.w700,
         ),
       ),
-      body: PullToRefresh(
-        enabled: !_loadingOptions && !_submitting,
-        onRefresh: _loadOptions,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(
-            parent: ClampingScrollPhysics(),
-          ),
-          padding: const EdgeInsets.fromLTRB(20, 13, 20, 24),
-          children: [
-            if (_options == null)
-              _optionsLoadState()
-            else
-              Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _fieldLabel('Customer Name'),
-                    TextFormField(
-                      controller: _firstNameController,
-                      textCapitalization: TextCapitalization.words,
-                      decoration: _fieldDecoration(hint: 'ABC Constructions'),
-                      validator:
-                          (value) =>
-                              value == null || value.trim().isEmpty
-                                  ? 'Enter the customer name.'
-                                  : null,
-                    ),
-                    const SizedBox(height: 15),
-                    _fieldLabel('Phone Number'),
-                    TextFormField(
-                      controller: _mobileController,
-                      keyboardType: TextInputType.phone,
-                      decoration: _fieldDecoration(
-                        hint: '+91 98765 43210',
-                        suffixIcon: const Icon(
-                          Icons.search_rounded,
-                          color: _leadBlue,
-                          size: 22,
-                        ),
-                      ),
-                      validator:
-                          (value) =>
-                              value == null || value.trim().isEmpty
-                                  ? 'Enter the phone number.'
-                                  : null,
-                    ),
-                    const SizedBox(height: 15),
-                    _fieldLabel('WhatsApp Number'),
-                    TextFormField(
-                      controller: _whatsappController,
-                      keyboardType: TextInputType.phone,
-                      autofillHints: const [AutofillHints.telephoneNumber],
-                      decoration: _fieldDecoration(hint: '+91 98765 43210'),
-                      validator: LeadPhoneNumber.validateWhatsApp,
-                    ),
-                    const SizedBox(height: 15),
-                    _dropdownField(
-                      label: 'Product Enquired',
-                      value: _selectedCategory,
-                      options: _options!.productCategoryOptions,
-                      enabled: !_loadingOptions,
-                      onChanged:
-                          (value) => setState(() => _selectedCategory = value),
-                      validator:
-                          (value) =>
-                              value == null
-                                  ? 'Select a product enquired.'
-                                  : null,
-                    ),
-                    const SizedBox(height: 15),
-                    _dropdownField(
-                      label: 'Lead Source',
-                      value: _selectedSource,
-                      options: _options!.sourceOptions,
-                      enabled: !_loadingOptions,
-                      onChanged:
-                          (value) => setState(() => _selectedSource = value),
-                      validator:
-                          (value) =>
-                              value == null ? 'Select a lead source.' : null,
-                    ),
-                    const SizedBox(height: 15),
-                    _fieldLabel('Location'),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _locationController,
-                            textCapitalization: TextCapitalization.words,
-                            decoration: _fieldDecoration(hint: 'Chennai'),
-                            validator:
-                                (value) =>
-                                    value == null || value.trim().isEmpty
-                                        ? 'Enter or get the location.'
-                                        : null,
-                          ),
-                        ),
-                        const SizedBox(width: 7),
-                        OutlinedButton.icon(
-                          onPressed:
-                              _gettingLocation ? null : _getCurrentLocation,
-                          icon:
-                              _gettingLocation
-                                  ? const SizedBox(
-                                    width: 15,
-                                    height: 15,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                  : const Icon(
-                                    Icons.my_location_rounded,
-                                    size: 16,
-                                  ),
-                          label: const Text('Get Location'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: _leadBlue,
-                            side: const BorderSide(color: Color(0xFFDCE4EE)),
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            minimumSize: const Size(0, 47),
-                            textStyle: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                            shape: const StadiumBorder(),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 15),
-                    _fieldLabel('Requirement'),
-                    TextFormField(
-                      controller: _requirementController,
-                      minLines: 2,
-                      maxLines: 3,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: _fieldDecoration(
-                        hint: '200 KLD STP for residential project',
-                      ),
-                      validator:
-                          (value) =>
-                              value == null || value.trim().isEmpty
-                                  ? 'Enter the requirement.'
-                                  : null,
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        SizedBox(
-                          width: 28,
-                          height: 32,
-                          child: Checkbox(
-                            value: _checkDuplicates,
-                            activeColor: _leadBlue,
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                            onChanged:
-                                (value) => setState(
-                                  () => _checkDuplicates = value ?? false,
-                                ),
-                          ),
-                        ),
-                        const SizedBox(width: 5),
-                        const Text(
-                          'Check for duplicates',
-                          style: TextStyle(
-                            color: _leadInk,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_error != null && _options != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        _error!,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontSize: 13,
-                        ),
+    ),
+    body: WebViewPullToRefresh(
+      controller: _error == null ? _controller : null,
+      enabled: !_loading && !_initializing && !_submitting && !_locating,
+      onRefresh: _initialize,
+      child:
+          _error != null
+              ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_error!, textAlign: TextAlign.center),
+                      const SizedBox(height: 12),
+                      FilledButton(
+                        onPressed: _initialize,
+                        child: const Text('Retry'),
                       ),
                     ],
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      height: 48,
-                      child: FilledButton(
-                        onPressed:
-                            _options == null || _loadingOptions || _submitting
-                                ? null
-                                : _submit,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _leadBlue,
-                          foregroundColor: Colors.white,
-                          shape: const StadiumBorder(),
-                        ).copyWith(
-                          backgroundBuilder: BrandColors.buttonBackground,
-                        ),
-                        child:
-                            _submitting
-                                ? const SizedBox(
-                                  width: 19,
-                                  height: 19,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                                : const Text(
-                                  'Create Lead',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                      ),
-                    ),
-                    if (_loadingOptions)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 12),
-                        child: LinearProgressIndicator(minHeight: 2),
-                      ),
-                  ],
+                  ),
                 ),
+              )
+              : Stack(
+                children: [
+                  if (_controller != null)
+                    WebViewWidget(controller: _controller!),
+                  if (_loading) const Center(child: AgPathLoadingIndicator()),
+                ],
               ),
-          ],
-        ),
-      ),
-    );
-  }
+    ),
+  );
 }

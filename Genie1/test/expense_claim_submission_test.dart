@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/utils/api/expense_claim_api.dart';
+import 'package:homegenie/utils/api_business_policy.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -107,6 +108,53 @@ void main() {
       }
       return handler(request);
     }),
+  );
+
+  test(
+    'API can permit an expense without description or bill attachments',
+    () async {
+      await run(
+        () async {
+          final result = await ExpenseClaimApi.submitExpenses(
+            employee: 'EMP-1',
+            expenseApprover: 'approver@example.test',
+            expenses: const [
+              ExpenseClaimLine(
+                expenseType: 'Food',
+                amount: '10',
+                expenseDate: '2026-10-26',
+                description: '',
+              ),
+            ],
+            csrfToken: 'form-token',
+            billPaths: [],
+            supportsMultipleExpenses: true,
+            businessPolicy: ApiBusinessPolicy.fromApi({
+              'fields': {
+                'description': {'required': false},
+              },
+              'rules': {},
+              'uploads': {'min_count': 0},
+            }),
+          );
+          expect(result.name, 'EXP-OPTIONAL');
+        },
+        (request) async {
+          expect(request.body, isNot(contains('filename=')));
+          return http.Response(
+            jsonEncode({
+              'message': {
+                'name': 'EXP-OPTIONAL',
+                'expenses': [{}],
+                'bill_files': [],
+                'bill_file_url': '',
+              },
+            }),
+            200,
+          );
+        },
+      );
+    },
   );
 
   void checkMultipart(http.Request request, String token) {
