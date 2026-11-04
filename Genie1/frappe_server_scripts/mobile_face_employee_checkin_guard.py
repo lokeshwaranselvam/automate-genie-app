@@ -31,17 +31,11 @@ if expected_action:
     )
     if not employee_record or employee_record.user_id != current_user or doc.log_type != expected_log_type:
         frappe.throw("The attendance employee or action does not match your face scan.")
-    # Read the authenticated User's email and this check-in's linked Employee.
-    # Match markers only before @, never in the email domain.
-    user_email = str(frappe.db.get_value("User", current_user, "email") or "").strip().lower()
-    email_local_part = user_email.split("@", 1)[0] if "@" in user_email else ""
-    face_required = (
-        user_email == "murugan.finance@homegeniegroup.com"
-        or (
-            (".trainee" in email_local_part or ".itdigital" in email_local_part)
-            and employee_record.department == "IT And Digital - HBPPL"
-        )
-    )
+    # Only the exact IOS User role exempts the authenticated user.
+    face_required = not bool(frappe.db.exists("Has Role", {
+        "parent": current_user, "parenttype": "User", "parentfield": "roles",
+        "role": "IOS User",
+    }))
     if face_required:
         record_id = frappe.form_dict.get("face_verification")
         if not isinstance(record_id, str):

@@ -121,6 +121,27 @@ void main() {
   });
 
   test(
+    'daily summary retries use the same receipt even with a different FCM ID',
+    () async {
+      final summary = <String, dynamic>{
+        'notification_kind': 'SALES_SUMMARY',
+        'doctype': 'Notification Log',
+        'docname': 'sales-summary-123',
+        'notification_log': 'sales-summary-123',
+        'page_route': '/genie-sales-summary',
+        'sound_mode': 'default',
+        'alarm_enabled': '0',
+      };
+      expect(await send(id: 'provider-one', changes: summary), isTrue);
+      expect(await send(id: 'provider-two', changes: summary), isFalse);
+      expect(shows, hasLength(1));
+      expect(alarms, 0);
+      final items = await NotificationInbox.cached();
+      expect(items.single.isSalesSummary, isTrue);
+    },
+  );
+
+  test(
     'Client Script pushes from the unchanged server remain compatible',
     () async {
       for (final foreground in [false, true]) {

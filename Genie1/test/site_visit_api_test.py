@@ -473,6 +473,30 @@ class SiteVisitApiTest(unittest.TestCase):
         self.reference_rows["Measurement"][0].docstatus = 2
         self.assertEqual(self.run_api(action="get_references", category="Measurement")["references"], [])
 
+    def test_head_office_ch_assigns_session_user_when_assignee_is_blank(self):
+        self.metas["Event"].get_field("event_category").options += "\nHead Office CH"
+        self.run_api(category="Head Office CH", opportunity="", location_row="", product_enquired="", assigned_to="")
+        self.assertEqual(self.event.assigned_to, self.user)
+        self.assertEqual(self.event.event_participants[-1].reference_docname, self.user)
+        self.assertEqual(self.created[-1].allocated_to, self.user)
+
+    def test_head_office_ch_rejects_other_assignee_even_with_spoofed_user(self):
+        self.metas["Event"].get_field("event_category").options += "\nHead Office CH"
+        with self.assertRaisesRegex(ValueError, "only be assigned to your logged-in user"):
+            self.run_api(category="Head Office CH", opportunity="", location_row="", product_enquired="",
+                         assigned_to="installer@example.test", current_user="installer@example.test", user="installer@example.test")
+        self.frappe.new_doc.assert_not_called()
+        self.assertEqual(self.created, [])
+
+    def test_other_direct_categories_preserve_assignment_to_other_users(self):
+        for category in ["Bank", "Other", "Timbe / Bioman Office CH", "Collection"]:
+            self.metas["Event"].get_field("event_category").options += "\n" + category
+            with self.subTest(category=category):
+                self.run_api(category=category, opportunity="", location_row="", product_enquired="",
+                             assigned_to="installer@example.test")
+                self.assertEqual(self.event.assigned_to, "installer@example.test")
+                self.assertEqual(self.created[-1].allocated_to, "installer@example.test")
+
     def test_direct_categories_create_without_location_or_coordinate_comment(self):
         self.metas["Event"].fields[:] = [f for f in self.metas["Event"].fields
             if f.fieldname not in ["location", "custom_location_type", "custom_validate", "custom_location"]]

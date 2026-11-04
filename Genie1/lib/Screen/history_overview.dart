@@ -1,3 +1,4 @@
+import '../utils/api/notification_inbox.dart';
 import '../utils/widget/pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
@@ -92,7 +93,7 @@ class _HistoryOverviewState extends State<HistoryOverview> {
             'Error',
           );
           await LiveLocationService.stopForSignOut();
-          await prefs.clear();
+          await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
           if (!mounted) return;
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),

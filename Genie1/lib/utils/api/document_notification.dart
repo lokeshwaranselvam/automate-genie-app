@@ -15,11 +15,16 @@ class DocumentNotification {
     final doctype = data['doctype']?.toString().trim() ?? '';
     final docname = data['docname']?.toString().trim() ?? '';
     final user = data['for_user']?.toString().trim().toLowerCase() ?? '';
-    if (doctype.isEmpty || docname.isEmpty || user.isEmpty || user == 'guest') {
-      return null;
-    }
+    // doctype/docname are optional (e.g. test or summary pushes with no
+    // linked ERP document). A valid recipient is still required.
+    if (user.isEmpty || user == 'guest') return null;
+    // A reference must be complete or absent, never half-filled.
+    if (doctype.isEmpty != docname.isEmpty) return null;
     return DocumentNotification(Map.of(data), doctype, docname, user);
   }
+
+  /// True when the push points at a real ERP document.
+  bool get hasDocument => doctype.isNotEmpty && docname.isNotEmpty;
 
   String get title => data['title']?.toString() ?? 'New notification';
   String get body => data['body']?.toString() ?? '';
@@ -39,6 +44,7 @@ class DocumentNotification {
   bool get alarmEnabled => soundMode == 'alarm';
 
   Uri? get documentUri {
+    if (!hasDocument) return null;
     final site = Uri.tryParse(dotenv.env['SITE_URL']?.trim() ?? '');
     if (site == null || site.scheme != 'https' || site.host.isEmpty) {
       return null;

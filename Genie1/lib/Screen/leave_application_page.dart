@@ -56,6 +56,18 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
     super.dispose();
   }
 
+  Future<void> _refreshForm() async {
+    if (_loading || _submitting) return;
+    setState(() {
+      _reasonController.clear();
+      _leaveType = null;
+      _halfDay = false;
+      _fromDate = DateUtils.dateOnly(DateTime.now());
+      _toDate = _fromDate;
+    });
+    await _loadOptions();
+  }
+
   String _errorMessage(Object error) => error.toString().replaceFirst(
     RegExp(r'^(Bad state|StateError|FormatException):\s*'),
     '',
@@ -507,7 +519,7 @@ class _LeaveApplicationPageState extends State<LeaveApplicationPage> {
     ),
     body: PullToRefresh(
       enabled: !_loading && !_submitting,
-      onRefresh: _loadOptions,
+      onRefresh: _refreshForm,
       child: SafeArea(
         top: false,
         child:

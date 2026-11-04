@@ -1,0 +1,1433 @@
+<!-- ERP Web Page route: create_lead_from_mobile. Existing API is unchanged. -->
+<style>
+  #lc-app * {
+    box-sizing: border-box;
+  }
+  #lc-app {
+    margin: 0;
+    background: #fff;
+    color: #202b3c;
+    font-family: Roboto, Arial, sans-serif;
+    font-size: 16px;
+  }
+  #lc-app {
+    padding: 13px 20px 24px;
+    overflow-wrap: anywhere;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #lc-app [hidden] {
+    display: none !important;
+  }
+  #lc-app button,
+  #lc-app input,
+  #lc-app textarea {
+    font: inherit;
+  }
+  #lc-app button {
+    cursor: pointer;
+  }
+  #lc-app button:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+  #lc-app .field {
+    margin-bottom: 15px;
+    position: relative;
+  }
+  #lc-app label.caption {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 19px;
+  }
+  #lc-app .star {
+    color: #e34b56;
+  }
+  #lc-app .input-wrap {
+    position: relative;
+  }
+  #lc-app input:not([type="checkbox"]),
+  #lc-app textarea {
+    display: block;
+    width: 100%;
+    border: 1px solid #d8dee7;
+    border-radius: 9px;
+    padding: 13px 12px;
+    background: #fff;
+    color: #202b3c;
+    outline: none;
+    line-height: 22px;
+    min-width: 0;
+  }
+  #lc-app input::placeholder,
+  #lc-app textarea::placeholder {
+    color: #858d98;
+    font-size: 13px;
+    opacity: 1;
+  }
+  #lc-app input:focus,
+  #lc-app textarea:focus {
+    border: 1.4px solid #442fef;
+    padding: 12.6px 11.6px;
+  }
+  #lc-app input[aria-invalid="true"],
+  #lc-app textarea[aria-invalid="true"] {
+    border-color: #ff5252;
+  }
+  #lc-app input:disabled,
+  #lc-app textarea:disabled {
+    opacity: 1;
+    color: #202b3c;
+    -webkit-text-fill-color: #202b3c;
+  }
+  #lc-app textarea {
+    resize: none;
+    min-height: 74px;
+    max-height: 100px;
+    line-height: 23px;
+  }
+  #lc-app .choice input {
+    padding-right: 42px;
+  }
+  #lc-app .choice input:focus {
+    padding-right: 41.6px;
+  }
+  #lc-app .icon {
+    position: absolute;
+    right: 12px;
+    top: 13px;
+    width: 20px;
+    height: 20px;
+    pointer-events: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+  }
+  #lc-app .choices {
+    position: absolute;
+    z-index: 5;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 220px;
+    overflow-y: auto;
+    background: white;
+    border-radius: 9px;
+    box-shadow: 0 3px 9px #0003;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  #lc-app .up .choices {
+    top: auto;
+    bottom: 100%;
+  }
+  #lc-app .choices button {
+    display: block;
+    border: 0;
+    background: #fff;
+    color: #202b3c;
+    text-align: left;
+    width: 100%;
+    padding: 16px;
+    font-size: 16px;
+  }
+  #lc-app .choices button:hover,
+  #lc-app .choices button:focus,
+  #lc-app .choices button.active {
+    background: #efebff;
+    outline: 0;
+  }
+  #lc-app .helper,
+  #lc-app .validation {
+    font-size: 12px;
+    line-height: 17px;
+    margin: 5px 12px 0;
+  }
+  #lc-app .helper {
+    color: #606975;
+  }
+  #lc-app .validation {
+    color: #ff5252;
+  }
+  #lc-app .same {
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-height: 56px;
+    margin: 0 0 15px;
+    font-size: 13px;
+    line-height: 19px;
+  }
+  #lc-app .same input {
+    width: 18px;
+    height: 18px;
+    margin: 0 11px;
+    accent-color: #442fef;
+    flex-shrink: 0;
+  }
+  #lc-app .location {
+    display: flex;
+    gap: 7px;
+    align-items: flex-start;
+  }
+  #lc-app .location .input-wrap {
+    flex: 1;
+    min-width: 0;
+  }
+  #lc-app .location button {
+    height: 47px;
+    border-radius: 999px;
+    border: 1px solid #dce4ee;
+    background: #fff;
+    color: #442fef;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  #lc-app .location svg {
+    height: 16px;
+    width: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+  }
+  #lc-app .submit {
+    display: block;
+    width: 100%;
+    height: 48px;
+    border: 0;
+    border-radius: 999px;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    background: linear-gradient(90deg, #0055ff, #442fef, #8000e5);
+    margin-top: 18px;
+  }
+  #lc-app .submit:disabled {
+    background: #dde0e5;
+  }
+  #lc-app .lead-spinner {
+    display: inline-block;
+    width: 19px;
+    height: 19px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: lead-spin 0.8s linear infinite;
+  }
+  #lc-app .loading {
+    text-align: center;
+    padding: 72px 0;
+    font-size: 14px;
+  }
+  #lc-app .loading p {
+    margin-top: 16px;
+  }
+  #lc-app .error-card {
+    margin-top: 28px;
+    padding: 16px;
+    border: 1px solid #f2c7c1;
+    background: #fff4f2;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  #lc-app .error-card strong {
+    font-size: 16px;
+  }
+  #lc-app .error-card p {
+    color: #9d3028;
+  }
+  #lc-app .error-card small {
+    font-size: 13px;
+  }
+  #lc-app .retry {
+    margin-top: 12px;
+    padding: 10px 20px;
+    border: 0;
+    border-radius: 999px;
+    color: #fff;
+    background: #442fef;
+  }
+  #lc-app .form-error {
+    font-size: 13px;
+    color: #ff5252;
+    margin: 8px 0;
+    white-space: pre-wrap;
+  }
+  #lc-app .refreshing {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 8;
+    height: 2px;
+    background: linear-gradient(90deg, #0055ff, #8000e5);
+    margin-top: 0;
+  }
+  #lc-app .count {
+    font-size: 12px;
+    color: #606975;
+    text-align: right;
+    margin: 5px 12px 0;
+  }
+  #lc-app .location-error {
+    margin-top: 6px;
+    color: #9d3028;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  @keyframes lead-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #lc-app .lead-spinner {
+      animation-duration: 1.8s;
+    }
+  }
+  #lc-app {
+    position: fixed;
+    inset: 0;
+    z-index: 1035;
+    overflow: auto;
+    padding: 0;
+    color-scheme: light;
+  }
+  #lc-app .lc-content {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 13px 20px 24px;
+  }
+  #lc-app .lc-header {
+    position: sticky;
+    top: 0;
+    z-index: 9;
+    min-height: 56px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 8px 16px;
+    color: white;
+    background: linear-gradient(90deg, #0055ff, #442fef, #8000e5);
+  }
+  #lc-app .lc-header h1 {
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.4;
+    margin: 0;
+    padding: 0;
+    color: white;
+  }
+  #lc-app .lc-header button {
+    border: 0;
+    background: transparent;
+    color: white;
+    font-size: 24px;
+    min-width: 36px;
+    min-height: 40px;
+    padding: 0;
+  }
+  #lc-app.lc-native .lc-header {
+    display: none;
+  }
+  #lc-app .refreshing {
+    position: sticky;
+    top: 0;
+  }
+  #lc-app .lc-dialog {
+    color: #202b3c;
+    border: 0;
+    border-radius: 20px;
+    max-width: 400px;
+    width: calc(100% - 64px);
+    padding: 24px;
+    text-align: center;
+    box-shadow: 0 10px 32px #0003;
+  }
+  #lc-app .lc-dialog::backdrop {
+    background: #0008;
+  }
+  #lc-app .lc-dialog h2 {
+    font-size: 20px;
+    margin: 12px 0;
+  }
+  #lc-app .lc-dialog button {
+    border: 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #0055ff, #442fef, #8000e5);
+    color: white;
+    padding: 12px 24px;
+    min-width: 120px;
+  }
+  #lc-app input,
+  #lc-app textarea {
+    box-shadow: none;
+  }
+  #lc-app .same {
+    font-weight: 400;
+  }
+</style>
+<div id="lc-app">
+  <header class="lc-header">
+    <button id="lc-back" type="button" aria-label="Back">&#8592;</button>
+    <h1>Create Lead</h1>
+  </header>
+  <main class="lc-content">
+    <div id="loading" class="loading" role="status">
+      <span class="spinner" aria-hidden="true"></span>
+      <p>Loading Lead form options...</p>
+    </div>
+    <div id="load-error" class="error-card" hidden role="alert">
+      <strong>Could not load form options</strong>
+      <p id="load-message"></p>
+      <small
+        >Ask your Frappe administrator to configure the named Lead field, then
+        retry.</small
+      ><br /><button id="retry" class="retry" type="button">Retry</button>
+    </div>
+    <form id="lead-form" hidden novalidate autocomplete="off">
+      <div id="fields"></div>
+      <p id="form-error" class="form-error" role="alert" hidden></p>
+      <button id="submit" class="submit" type="submit">Create Lead</button>
+      <div
+        id="refreshing"
+        class="refreshing"
+        hidden
+        role="status"
+        aria-label="Refreshing options"
+      ></div>
+    </form>
+  </main>
+  <dialog id="lc-success" class="lc-dialog">
+    <span style="color: #18864b; font-size: 36px" aria-hidden="true"
+      >&#10003;</span
+    >
+    <h2>Success</h2>
+    <p>Lead created successfully!</p>
+    <button id="lc-success-ok" type="button">OK</button>
+  </dialog>
+</div>
+<script>
+  "use strict";
+  (() => {
+    const root = document.getElementById("lc-app");
+    if (!root || root.dataset.started) return;
+    root.dataset.started = "true";
+    const $ = (id) => root.querySelector('[id="' + id + '"]');
+    const nativeMode = typeof window.GenieLead?.postMessage === "function";
+    root.classList.toggle("lc-native", nativeMode);
+    const API = "/api/method/create_lead_from_mobile";
+    const definitions = [
+      ["first_name", "Customer Name", "ABC Constructions", "text", true],
+      ["mobile_no", "Phone Number", "+91 98765 43210", "tel", true],
+      ["whatsapp_no", "WhatsApp Number", "+91 98765 43210", "tel", true],
+      [
+        "custom_product_enquired",
+        "Product Enquired",
+        "Select Product Enquired",
+        "choice",
+        true,
+      ],
+      ["source", "Lead Source", "Select Lead Source", "choice", true],
+      [
+        "custom_customer_category",
+        "Customer Category",
+        "Select Customer Category",
+        "choice",
+        false,
+      ],
+      ["custom_citytown", "City/Town", "Search City/Town", "location", true],
+      ["custom_district", "District", "Search District", "location", true],
+      ["custom_address", "Location", "Chennai", "text", false],
+      [
+        "custom_requirement",
+        "Requirement",
+        "200 KLD STP for residential project",
+        "textarea",
+        true,
+      ],
+    ];
+    const state = {
+      options: null,
+      user: null,
+      expectedUser: null,
+      stopped: false,
+      uncertain: false,
+      csrf: null,
+      fields: {},
+      pending: new Map(),
+      sequence: 0,
+      loading: false,
+      submitting: false,
+      locating: false,
+      same: false,
+      separate: "",
+      started: false,
+    };
+    const text = (tag, value, cls) => {
+      const el = document.createElement(tag);
+      el.textContent = value;
+      if (cls) el.className = cls;
+      return el;
+    };
+    const svg = (search) => {
+      const el = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      el.setAttribute("viewBox", "0 0 24 24");
+      el.setAttribute("class", "icon");
+      el.setAttribute("aria-hidden", "true");
+      el.innerHTML = search
+        ? '<circle cx="10" cy="10" r="6"></circle><path d="m15 15 5 5"></path>'
+        : '<path d="m6 9 6 6 6-6"></path>';
+      return el;
+    };
+    function nativeRpc(action, args = {}) {
+      return new Promise((resolve, reject) => {
+        if (
+          !window.GenieLead ||
+          typeof window.GenieLead.postMessage !== "function"
+        )
+          return reject(Error("Open this form inside the app."));
+        const id = String(++state.sequence);
+        // Native RPC is used only for the existing device location helper.
+        const timeout = setTimeout(
+          () => {
+            state.pending.delete(id);
+            reject(
+              Error(
+                action === "submit"
+                  ? "Could not confirm Lead creation. Check My Leads before trying again."
+                  : "The request timed out. Please try again.",
+              ),
+            );
+          },
+          action === "submit" ? 100000 : 60000,
+        );
+        state.pending.set(id, { resolve, reject, timeout });
+        window.GenieLead.postMessage(JSON.stringify({ id, action, args }));
+      });
+    }
+
+    function notify(action, extra = {}) {
+      if (nativeMode)
+        window.GenieLead.postMessage(JSON.stringify({ action, ...extra }));
+    }
+    class ApiError extends Error {
+      constructor(message, status = 0, uncertain = false) {
+        super(message);
+        this.status = status;
+        this.uncertain = uncertain;
+      }
+    }
+    function plain(value) {
+      const node = document.createElement("textarea");
+      node.innerHTML = String(value ?? "").replace(/<[^>]*>/g, "");
+      return node.value.trim();
+    }
+    function stopSession(message) {
+      state.stopped = true;
+      state.options = null;
+      state.csrf = null;
+      $("lead-form").hidden = true;
+      $("loading").hidden = true;
+      $("load-error").hidden = false;
+      $("load-message").textContent = message;
+      $("retry").disabled = true;
+      notify("session_expired");
+    }
+    async function raw(path, { query, body, token, html = false } = {}) {
+      const url = new URL(path, window.location.origin);
+      if (url.origin !== window.location.origin || url.username || url.password)
+        throw new Error("Invalid ERP request.");
+      for (const [name, value] of Object.entries(query || {}))
+        url.searchParams.set(name, value);
+      const controller = new AbortController(),
+        timer = setTimeout(() => controller.abort(), body ? 30000 : 20000);
+      try {
+        const headers = {
+          Accept: html ? "text/html" : "application/json",
+          "Cache-Control": "no-cache",
+        };
+        if (body) {
+          headers["Content-Type"] = "application/x-www-form-urlencoded";
+          headers["X-Frappe-CSRF-Token"] = token;
+        }
+        const response = await fetch(url.href, {
+          method: body ? "POST" : "GET",
+          credentials: "same-origin",
+          cache: "no-store",
+          redirect: html ? "follow" : "error",
+          headers,
+          body,
+          signal: controller.signal,
+        });
+        if (html) {
+          if (
+            new URL(response.url || url.href).origin !== window.location.origin
+          )
+            throw new ApiError("ERP redirected to a different site.");
+          if (!response.ok)
+            throw new ApiError(
+              "Could not initialize the Lead session token.",
+              response.status,
+            );
+          return await response.text();
+        }
+        let data;
+        try {
+          data = await response.json();
+        } catch (_) {
+          throw new ApiError(
+            body
+              ? "ERP did not confirm Lead creation. Check My Leads before trying again."
+              : "The server returned an invalid response.",
+            response.status,
+            !!body,
+          );
+        }
+        if (!response.ok || data.exc_type || data.exception) {
+          const csrf =
+            data.exc_type === "CSRFTokenError" ||
+            String(data.exception || "").startsWith(
+              "frappe.exceptions.CSRFTokenError:",
+            );
+          let message =
+            response.status === 401
+              ? "Your ERP session expired. Sign in again."
+              : response.status === 403
+                ? "You do not have permission to create this Lead."
+                : `Lead request failed (${response.status}).`;
+          if (response.status < 500 || csrf) {
+            try {
+              const entries =
+                typeof data._server_messages === "string"
+                  ? JSON.parse(data._server_messages)
+                  : data._server_messages;
+              const messages = (entries || [])
+                .map((row) => (typeof row === "string" ? JSON.parse(row) : row))
+                .map((row) => plain(row.message))
+                .filter(Boolean);
+              if (messages.length) message = messages.join("\n");
+              else if (typeof data.message === "string")
+                message = plain(data.message);
+            } catch (_) {}
+          }
+          const error = new ApiError(
+            message,
+            response.status,
+            !!body && response.status >= 500,
+          );
+          error.csrf = csrf;
+          throw error;
+        }
+        return data;
+      } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(
+          body
+            ? "Could not confirm Lead creation. Check My Leads before trying again."
+            : "ERP could not be reached. Check your connection and retry.",
+          0,
+          !!body,
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    async function session() {
+      if (state.stopped)
+        throw new Error("Sign in again and reopen Create Lead.");
+      if (nativeMode && !state.expectedUser)
+        throw new Error("Wait for the app to initialize your Lead session.");
+      let data;
+      try {
+        data = await raw("/api/method/frappe.auth.get_logged_user");
+      } catch (error) {
+        if (error.status === 401 || error.status === 403)
+          stopSession(
+            "Your ERP session expired. Sign in again and reopen Create Lead.",
+          );
+        throw error;
+      }
+      const user = data.message;
+      if (
+        typeof user !== "string" ||
+        !user ||
+        user === "Guest" ||
+        (state.user && state.user !== user) ||
+        (state.expectedUser && state.expectedUser !== user)
+      ) {
+        stopSession(
+          "Your ERP session expired or the signed-in account changed. Sign in again and reopen Create Lead.",
+        );
+        throw new Error("Your session changed.");
+      }
+      state.user = user;
+      return user;
+    }
+    async function csrf(force = false) {
+      if (force) state.csrf = null;
+      if (state.csrf) return state.csrf;
+      let token = !force && window.frappe?.csrf_token;
+      if (typeof token !== "string" || !token || token === "None") {
+        const html = await raw("/app", { html: true });
+        token = html.match(/frappe\.csrf_token\s*=\s*["']([^"']+)["']/)?.[1];
+      }
+      if (!token || token === "None")
+        throw new Error(
+          "Could not initialize the Lead session token. Sign in again and reopen the form.",
+        );
+      state.csrf = token;
+      return token;
+    }
+    function validOptions(message) {
+      const lists = [
+        "source_options",
+        "product_category_options",
+        "customer_category_options",
+      ];
+      if (
+        !message ||
+        lists.some(
+          (key) =>
+            !Array.isArray(message[key]) ||
+            message[key].some((value) => typeof value !== "string"),
+        )
+      )
+        throw new Error("ERP did not return valid Lead form options.");
+      if (message.lead_owner !== state.user) {
+        stopSession(
+          "ERP returned Lead options for a different account. Sign in again.",
+        );
+        throw new Error("Your session changed.");
+      }
+      for (const field of ["custom_citytown", "custom_district"]) {
+        const definition = message.location_fields?.[field];
+        if (
+          !definition ||
+          !["Select", "Link"].includes(definition.fieldtype) ||
+          !Array.isArray(definition.options) ||
+          definition.options.some((value) => typeof value !== "string")
+        )
+          throw new Error(
+            "Update create_lead_from_mobile on ERP to return City/Town and District options.",
+          );
+      }
+      if (
+        message.business_policy != null &&
+        (!message.business_policy.fields || !message.business_policy.rules)
+      )
+        throw new Error("ERP returned an invalid form policy.");
+      for (const key of lists)
+        message[key] = [
+          ...new Set(message[key].map((value) => value.trim()).filter(Boolean)),
+        ];
+      if (
+        !message.source_options.length ||
+        !message.product_category_options.length
+      )
+        throw new Error(
+          "Configure Lead Source and Product Enquired options in ERP.",
+        );
+      if (typeof message.csrf_token === "string" && message.csrf_token.trim())
+        state.csrf = message.csrf_token.trim();
+      return message;
+    }
+    async function rpc(action, args = {}) {
+      if (action === "location") {
+        if (nativeMode) return nativeRpc(action, args);
+        if (!navigator.geolocation)
+          throw new Error(
+            "Location is unavailable in this browser. Type the location.",
+          );
+        const position = await new Promise((resolve, reject) =>
+          navigator.geolocation.getCurrentPosition(
+            resolve,
+            () =>
+              reject(
+                new Error(
+                  "Could not get your GPS location. Allow location access or type it.",
+                ),
+              ),
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+          ),
+        );
+        // Browser fallback has no access to the Android-restricted geocoding key.
+        return (
+          "https://www.google.com/maps/search/?api=1&query=" +
+          position.coords.latitude +
+          "," +
+          position.coords.longitude
+        );
+      }
+      await session();
+      if (action === "options") {
+        const data = await raw(API);
+        await session();
+        return validOptions(data.message);
+      }
+      if (action === "search") {
+        if (
+          !["custom_citytown", "custom_district"].includes(args.field) ||
+          typeof args.query !== "string" ||
+          args.query.length > 140
+        )
+          throw new Error("Enter at most 140 characters of the location.");
+        const data = await raw(API, {
+          query: {
+            view: "location_options",
+            fieldname: args.field,
+            txt: args.query,
+          },
+        });
+        await session();
+        const rows = data.message?.options;
+        if (
+          !Array.isArray(rows) ||
+          rows.some((row) => typeof row?.value !== "string")
+        )
+          throw new Error("ERP returned invalid location options.");
+        return [...new Set(rows.map((row) => row.value))];
+      }
+      if (action === "submit") {
+        const values = { ...args };
+        if (values.whatsapp_no)
+          values.whatsapp_no = values.whatsapp_no.replace(/[ ().-]/g, "");
+        else delete values.whatsapp_no;
+        if (!values.custom_customer_category)
+          delete values.custom_customer_category;
+        let data;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const token = await csrf(attempt > 0);
+          await session();
+          try {
+            data = await raw(API, {
+              body: new URLSearchParams({ ...values, csrf_token: token }),
+              token,
+            });
+            break;
+          } catch (error) {
+            if (!error.csrf || attempt) throw error;
+          }
+        }
+        try {
+          await session();
+        } catch (error) {
+          error.uncertain = true;
+          throw error;
+        }
+        if (
+          data?.message?.status !== "success" ||
+          typeof data.message.name !== "string" ||
+          !data.message.name.trim()
+        )
+          throw new ApiError(
+            "ERP did not confirm Lead creation. Check My Leads before trying again.",
+            0,
+            true,
+          );
+        if (nativeMode) notify("success");
+        else $("lc-success").showModal();
+        return true;
+      }
+      throw new Error("Unsupported Lead action.");
+    }
+    function receive(message) {
+      const pending = state.pending.get(message.id);
+      if (!pending) return;
+      clearTimeout(pending.timeout);
+      state.pending.delete(message.id);
+      if (typeof message.error === "string") {
+        const error = Error(message.error);
+        error.shown = message.shown === true;
+        pending.reject(error);
+      } else pending.resolve(message.result);
+    }
+    const rule = (name) => state.options?.business_policy?.fields?.[name] || {};
+    const hasRule = (name) =>
+      Object.prototype.hasOwnProperty.call(
+        state.options?.business_policy?.fields || {},
+        name,
+      );
+    const required = (def) =>
+      def[3] === "location" ||
+      (hasRule(def[0]) ? rule(def[0]).required === true : def[4]);
+    const optionsFor = (name) =>
+      (state.options.location_fields[name]
+        ? state.options.location_fields[name].options
+        : rule(name).options) ||
+      {
+        source: state.options.source_options,
+        custom_product_enquired: state.options.product_category_options,
+        custom_customer_category: state.options.customer_category_options,
+      }[name] ||
+      state.options.location_fields[name]?.options ||
+      [];
+    const close = (field) => {
+      field.list.hidden = true;
+      field.input.setAttribute("aria-expanded", "false");
+      field.active = -1;
+    };
+    function validation(field, message) {
+      field.error.textContent = message || "";
+      field.error.hidden = !message;
+      field.input.setAttribute("aria-invalid", message ? "true" : "false");
+    }
+    function choose(field, value) {
+      field.input.value = value;
+      field.selected = value;
+      validation(field, "");
+      close(field);
+    }
+    async function choices(field) {
+      const version = ++field.version;
+      clearTimeout(field.timer);
+      const query = field.input.value.trim();
+      field.active = -1;
+      if (state.submitting || field.input.disabled || field.input.readOnly)
+        return close(field);
+      const remote =
+        state.options.location_fields[field.name]?.fieldtype === "Link";
+      if (remote) {
+        field.helper.textContent = "Searching ERP...";
+        field.helper.hidden = false;
+        field.timer = setTimeout(async () => {
+          try {
+            const values = await rpc("search", {
+              field: field.name,
+              query,
+            });
+            if (version !== field.version) return;
+            field.values = values;
+            field.helper.textContent = values.length
+              ? ""
+              : "No matching options.";
+            field.helper.hidden = values.length > 0;
+            if (document.activeElement === field.input) show(field, values);
+          } catch (error) {
+            if (version === field.version) {
+              field.helper.textContent = error.message;
+              field.helper.hidden = false;
+              close(field);
+            }
+          }
+        }, 300);
+      } else {
+        field.values = optionsFor(field.name);
+        show(
+          field,
+          field.values.filter((value) =>
+            value.toLowerCase().includes(query.toLowerCase()),
+          ),
+        );
+      }
+    }
+    function show(field, values) {
+      field.list.replaceChildren();
+      field.shown = values;
+      for (const value of values) {
+        const li = document.createElement("li"),
+          button = text("button", value);
+        button.type = "button";
+        button.setAttribute("role", "option");
+        button.addEventListener("mousedown", (event) => event.preventDefault());
+        button.addEventListener("click", () => choose(field, value));
+        li.append(button);
+        field.list.append(li);
+      }
+      field.list.hidden = values.length === 0;
+      field.input.setAttribute("aria-expanded", String(values.length > 0));
+    }
+    function build() {
+      const root = $("fields");
+      for (const def of definitions) {
+        const [name, label, hint, type] = def,
+          wrap = document.createElement("div");
+        wrap.className = "field";
+        wrap.id = "field-" + name;
+        const caption = text("label", label, "caption");
+        caption.htmlFor = name;
+        wrap.append(caption);
+        const inputWrap = document.createElement("div");
+        inputWrap.className = "input-wrap";
+        const input = document.createElement(
+          type === "textarea" ? "textarea" : "input",
+        );
+        input.id = name;
+        input.name = name;
+        input.placeholder = hint;
+        if (type !== "textarea") input.type = type === "tel" ? "tel" : "text";
+        else input.rows = 2;
+        if (type === "tel") {
+          input.inputMode = "tel";
+          input.autocomplete = "tel";
+        }
+        if (["first_name", "custom_address"].includes(name))
+          input.setAttribute("autocapitalize", "words");
+        if (name === "custom_requirement")
+          input.setAttribute("autocapitalize", "sentences");
+        const error = text("div", "", "validation"),
+          helper = text("div", "", "helper");
+        error.id = name + "-error";
+        error.hidden = true;
+        helper.hidden = true;
+        input.setAttribute("aria-describedby", error.id);
+        inputWrap.append(input);
+        const field = {
+          def,
+          name,
+          wrap,
+          caption,
+          input,
+          error,
+          helper,
+          selected: null,
+          values: [],
+          shown: [],
+          active: -1,
+          version: 0,
+          timer: null,
+        };
+        state.fields[name] = field;
+        if (type === "choice" || type === "location") {
+          inputWrap.classList.add("choice");
+          if (type === "location") inputWrap.classList.add("up");
+          input.setAttribute("role", "combobox");
+          input.setAttribute("aria-autocomplete", "list");
+          input.setAttribute("aria-expanded", "false");
+          const list = document.createElement("ul");
+          list.id = name + "-choices";
+          list.className = "choices";
+          list.setAttribute("role", "listbox");
+          list.hidden = true;
+          input.setAttribute("aria-controls", list.id);
+          field.list = list;
+          inputWrap.append(svg(type === "location"), list);
+          input.addEventListener("focus", () => {
+            for (const other of Object.values(state.fields))
+              if (other.list && other !== field) close(other);
+            const previous = field.selected;
+            choices(field);
+            field.selected = previous;
+          });
+          input.addEventListener("input", () => {
+            field.selected = field.values.includes(input.value.trim())
+              ? input.value.trim()
+              : null;
+            choices(field);
+          });
+          input.addEventListener("blur", () => {
+            setTimeout(() => close(field), 150);
+          });
+          input.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+              close(field);
+              return;
+            }
+            if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+              event.preventDefault();
+              const length = field.shown.length;
+              if (!length) return;
+              field.active =
+                (field.active + (event.key === "ArrowDown" ? 1 : -1) + length) %
+                length;
+              Array.from(field.list.querySelectorAll("button")).forEach(
+                (button, index) =>
+                  button.classList.toggle("active", index === field.active),
+              );
+            }
+            if (event.key === "Enter") {
+              event.preventDefault();
+              if (field.active >= 0) choose(field, field.shown[field.active]);
+            }
+          });
+        }
+        if (name === "custom_address") {
+          const row = document.createElement("div");
+          row.className = "location";
+          const button = text("button", "Get Location");
+          button.id = "get-location";
+          button.type = "button";
+          const icon = svg(false);
+          icon.removeAttribute("class");
+          icon.innerHTML =
+            '<circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2"></circle><path d="M12 1v4m0 14v4M1 12h4m14 0h4"></path>';
+          button.prepend(icon);
+          button.addEventListener("click", getLocation);
+          row.append(inputWrap, button);
+          wrap.append(row);
+          const locationError = text("div", "", "location-error");
+          locationError.id = "location-error";
+          locationError.hidden = true;
+          wrap.append(locationError);
+        } else wrap.append(inputWrap);
+        wrap.append(helper, error);
+        const counter = text("div", "", "count");
+        counter.hidden = true;
+        wrap.append(counter);
+        field.counter = counter;
+        input.addEventListener("input", () => {
+          validation(field, "");
+          updateCount(field);
+          if (name === "mobile_no") syncWhatsApp();
+        });
+        root.append(wrap);
+        if (name === "mobile_no") {
+          const same = text("label", "", "same");
+          same.id = "same-row";
+          const checkbox = document.createElement("input");
+          checkbox.id = "same-phone";
+          checkbox.type = "checkbox";
+          same.append(
+            checkbox,
+            document.createTextNode("Phone and WhatsApp numbers are the same"),
+          );
+          root.append(same);
+          checkbox.addEventListener("change", () => {
+            if (checkbox.checked) {
+              state.separate = state.fields.whatsapp_no.input.value;
+              state.same = true;
+              syncWhatsApp();
+            } else {
+              state.same = false;
+              state.fields.whatsapp_no.input.value = state.separate;
+            }
+            updateEnabled();
+          });
+        }
+      }
+    }
+    function updateCount(field) {
+      const max = rule(field.name).max_length;
+      field.counter.hidden = !(max > 0);
+      field.counter.textContent =
+        max > 0 ? field.input.value.length + " / " + max : "";
+    }
+    function syncWhatsApp() {
+      if (state.same && rule("whatsapp_no").read_only !== true) {
+        state.fields.whatsapp_no.input.value =
+          state.fields.mobile_no.input.value;
+        updateCount(state.fields.whatsapp_no);
+      }
+    }
+    function updateEnabled() {
+      for (const field of Object.values(state.fields)) {
+        const isLocation = field.def[3] === "location";
+        field.input.disabled =
+          state.submitting || state.loading || state.stopped || state.uncertain;
+        field.input.readOnly =
+          (!isLocation && rule(field.name).read_only === true) ||
+          (field.name === "whatsapp_no" && state.same);
+      }
+      $("same-phone").disabled =
+        state.submitting || state.loading || state.stopped || state.uncertain;
+      $("submit").disabled =
+        !state.options ||
+        state.loading ||
+        state.submitting ||
+        state.stopped ||
+        state.uncertain;
+      $("get-location").disabled =
+        state.locating ||
+        state.submitting ||
+        state.loading ||
+        state.stopped ||
+        state.uncertain;
+    }
+    function applyOptions(options) {
+      state.options = options;
+      for (const field of Object.values(state.fields)) {
+        const def = field.def,
+          r = rule(field.name),
+          isLocation = def[3] === "location";
+        field.wrap.hidden = !isLocation && r.visible === false;
+        field.caption.replaceChildren(document.createTextNode(def[1]));
+        if (required(def)) field.caption.append(text("span", " *", "star"));
+        field.input.setAttribute("aria-required", String(required(def)));
+        if (!isLocation && r.max_length > 0)
+          field.input.maxLength = r.max_length;
+        else field.input.removeAttribute("maxlength");
+        if (field.list) {
+          field.values = optionsFor(field.name);
+          field.version++;
+          clearTimeout(field.timer);
+          close(field);
+          if (!isLocation && !field.values.includes(field.selected)) {
+            field.selected = null;
+            field.input.value = "";
+          }
+          if (
+            !isLocation &&
+            r.default != null &&
+            field.values.includes(String(r.default)) &&
+            (!field.selected || r.read_only)
+          )
+            choose(field, String(r.default));
+        } else if (
+          Object.prototype.hasOwnProperty.call(r, "default") &&
+          (r.read_only || !field.input.value)
+        )
+          field.input.value = String(r.default ?? "");
+        updateCount(field);
+      }
+      if (rule("whatsapp_no").read_only) {
+        state.same = false;
+        $("same-phone").checked = false;
+      }
+      $("same-row").hidden =
+        rule("mobile_no").visible === false ||
+        rule("whatsapp_no").visible === false ||
+        rule("whatsapp_no").read_only === true;
+      state.fields.mobile_no.wrap.style.marginBottom = $("same-row").hidden
+        ? "15px"
+        : "0";
+      syncWhatsApp();
+    }
+    async function load() {
+      if (state.loading || state.submitting || state.stopped || state.uncertain)
+        return;
+      state.loading = true;
+      updateEnabled();
+      $("load-error").hidden = true;
+      $("refreshing").hidden = !state.options;
+      if (!state.options) $("loading").hidden = false;
+      try {
+        const options = await rpc("options");
+        applyOptions(options);
+        $("lead-form").hidden = false;
+      } catch (error) {
+        if (state.options) setFormError(error.message);
+        else {
+          $("load-error").hidden = false;
+          $("load-message").textContent = error.message;
+        }
+      } finally {
+        state.loading = false;
+        $("loading").hidden = true;
+        $("refreshing").hidden = true;
+        updateEnabled();
+      }
+    }
+    function setFormError(message) {
+      $("form-error").textContent = message;
+      $("form-error").hidden = !message;
+    }
+    function validate() {
+      let first = null;
+      for (const field of Object.values(state.fields)) {
+        if (field.wrap.hidden) {
+          validation(field, "");
+          continue;
+        }
+        const value = field.input.value.trim(),
+          r = rule(field.name),
+          def = field.def;
+        let error = "";
+        if (required(def) && !value)
+          error =
+            {
+              first_name: "Enter the customer name.",
+              mobile_no: "Enter the phone number.",
+              whatsapp_no: "WhatsApp Number is required.",
+              custom_requirement: "Enter the requirement.",
+              source: "Select a lead source.",
+              custom_product_enquired: "Select a product enquired.",
+              custom_address: "Enter or get the location.",
+            }[field.name] ||
+            "Select " + def[1] + " from the configured options.";
+        if (
+          value &&
+          r.max_length > 0 &&
+          field.input.value.length > r.max_length
+        )
+          error = def[1] + " is too long.";
+        if (
+          field.list &&
+          value &&
+          (!field.selected || value !== field.selected)
+        )
+          error = "Choose " + def[1] + " from the configured options.";
+        if (field.name === "whatsapp_no" && value) {
+          const number = value.replace(/[ ().-]/g, "");
+          if (
+            value.length > 64 ||
+            !/^\+?[0-9]{7,15}$/.test(number) ||
+            number.startsWith("+0") ||
+            !/^[+0-9 ().-]+$/.test(value)
+          )
+            error = "Enter a valid WhatsApp number (7?15 digits).";
+        }
+        if (
+          value &&
+          Array.isArray(r.options) &&
+          !r.options.includes(value) &&
+          def[3] !== "location"
+        )
+          error = "Choose a valid " + field.name.replaceAll("_", " ") + ".";
+        if (value && r.type === "number") {
+          const number = Number(value.replaceAll(",", ""));
+          if (!Number.isFinite(number))
+            error = "Choose a valid number for " + field.name + ".";
+          else if (
+            typeof r.min_exclusive === "number" &&
+            number <= r.min_exclusive
+          )
+            error =
+              field.name + " must be greater than " + r.min_exclusive + ".";
+          else if (typeof r.max_value === "number" && number > r.max_value)
+            error = field.name + " exceeds the permitted amount.";
+        }
+        validation(field, error);
+        if (error && !first) first = field;
+      }
+      if (first) {
+        first.input.focus();
+        first.wrap.scrollIntoView({ block: "center", behavior: "smooth" });
+        return false;
+      }
+      return true;
+    }
+    async function submit(event) {
+      event?.preventDefault();
+      if (state.submitting || state.loading || !state.options || !validate())
+        return;
+      const values = {};
+      for (const [name, field] of Object.entries(state.fields))
+        values[name] = field.input.value.trim();
+      state.submitting = true;
+      notify("busy", { value: true });
+      updateEnabled();
+      setFormError("");
+      $("submit").replaceChildren(text("span", "", "spinner"));
+      $("submit").setAttribute("aria-label", "Creating Lead");
+      try {
+        await rpc("submit", values);
+        for (const name of [
+          "first_name",
+          "mobile_no",
+          "whatsapp_no",
+          "custom_requirement",
+          "custom_address",
+          "custom_citytown",
+          "custom_district",
+        ]) {
+          const field = state.fields[name];
+          field.input.value = "";
+          field.selected = null;
+          validation(field, "");
+          updateCount(field);
+        }
+        state.separate = "";
+      } catch (error) {
+        state.uncertain = error.uncertain === true;
+        setFormError(error.message);
+      } finally {
+        state.submitting = false;
+        notify("busy", { value: false });
+        $("submit").textContent = "Create Lead";
+        $("submit").removeAttribute("aria-label");
+        updateEnabled();
+      }
+    }
+    async function getLocation() {
+      if (state.locating || state.submitting) return;
+      state.locating = true;
+      updateEnabled();
+      $("location-error").hidden = true;
+      const button = $("get-location"),
+        label = button.lastChild;
+      label.textContent = "Getting...";
+      try {
+        const address = await rpc("location");
+        state.fields.custom_address.input.value = address;
+        updateCount(state.fields.custom_address);
+      } catch (error) {
+        if (!error.shown) {
+          $("location-error").textContent = error.message;
+          $("location-error").hidden = false;
+        }
+      } finally {
+        state.locating = false;
+        label.textContent = "Get Location";
+        updateEnabled();
+      }
+    }
+    build();
+    $("lead-form").addEventListener("submit", submit);
+    $("retry").addEventListener("click", load);
+    let touchY = null;
+    root.addEventListener(
+      "touchstart",
+      (event) => {
+        touchY =
+          root.scrollTop === 0 &&
+          !event.target.closest("input,textarea,button,.choices")
+            ? event.touches[0].clientY
+            : null;
+      },
+      { passive: true },
+    );
+    root.addEventListener(
+      "touchend",
+      (event) => {
+        if (touchY !== null && event.changedTouches[0].clientY - touchY > 80)
+          load();
+        touchY = null;
+      },
+      { passive: true },
+    );
+
+    $("lc-back").addEventListener("click", () => {
+      if (state.submitting) return;
+      if (nativeMode) notify("close");
+      else if (window.history.length > 1) window.history.back();
+      else window.location.assign("/app");
+    });
+    $("lc-success-ok").addEventListener("click", () => $("lc-success").close());
+    let bindingTimer;
+    function start() {
+      if (state.started || state.stopped) return;
+      if (nativeMode && !state.expectedUser) return;
+      state.started = true;
+      clearTimeout(bindingTimer);
+      load();
+    }
+    window.LeadForm = Object.freeze({ version: "hosted-v1", receive, start });
+    window.addEventListener("genie-lead-session", (event) => {
+      if (!nativeMode || state.stopped) return;
+      const user = event.detail?.user;
+      if (
+        typeof user !== "string" ||
+        !user ||
+        user === "Guest" ||
+        (state.expectedUser && state.expectedUser !== user)
+      ) {
+        stopSession(
+          "Your app session changed. Sign in again and reopen Create Lead.",
+        );
+        return;
+      }
+      state.expectedUser = user;
+      start();
+    });
+    if (nativeMode) {
+      bindingTimer = setTimeout(() => {
+        if (!state.started) {
+          $("loading").hidden = true;
+          $("load-error").hidden = false;
+          $("load-message").textContent =
+            "The app could not initialize this page. Update the app and reopen Create Lead.";
+        }
+      }, 25000);
+      notify("ready");
+    } else start();
+  })();
+</script>

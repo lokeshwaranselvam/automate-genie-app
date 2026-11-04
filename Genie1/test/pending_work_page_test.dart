@@ -50,4 +50,39 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('Tasks ignores phone Back while its visible Back returns Home', (
+    tester,
+  ) async {
+    var tasksOpen = true;
+    var visibleBackCalls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder:
+              (context, update) =>
+                  tasksOpen
+                      ? PendingWorkPage(
+                        onBack: () {
+                          visibleBackCalls++;
+                          update(() => tasksOpen = false);
+                        },
+                      )
+                      : const Scaffold(body: Text('Home')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final webviewState = tester.state(find.byType(SessionWebView));
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('My Tasks'), findsOneWidget);
+    expect(tester.state(find.byType(SessionWebView)), same(webviewState));
+    expect(visibleBackCalls, 0);
+    await tester.tap(find.byTooltip('Back'));
+    await tester.pumpAndSettle();
+    expect(find.text('Home'), findsOneWidget);
+    expect(find.byType(PendingWorkPage), findsNothing);
+    expect(visibleBackCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
 }

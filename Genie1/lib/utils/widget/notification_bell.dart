@@ -33,9 +33,9 @@ class _NotificationBellState extends State<NotificationBell>
 
   Future<void> _refreshCached() async {
     try {
-      final rows = await NotificationInbox.cached();
-      if (mounted && _hasNew != rows.isNotEmpty) {
-        setState(() => _hasNew = rows.isNotEmpty);
+      final hasNew = await NotificationInbox.hasUnseen();
+      if (mounted && _hasNew != hasNew) {
+        setState(() => _hasNew = hasNew);
       }
     } catch (_) {
       // Storage failures must not interrupt Home or clear an existing badge.

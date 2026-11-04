@@ -61,6 +61,8 @@ class MobileFaceAuthTest(unittest.TestCase):
 
     def setUp(self):
         self.user = "employee@example.test"
+        self.roles = set()
+        self.role_checks = []
         self.store = {}
         self.created = []
         self.events = {}
@@ -105,6 +107,11 @@ class MobileFaceAuthTest(unittest.TestCase):
         return Row({field: row.get(field) for field in fields}) if row else None
 
     def exists(self, doctype, name):
+        if doctype == "Has Role":
+            self.assertEqual(name, {"parent": self.frappe.session.user,
+                "parenttype": "User", "parentfield": "roles", "role": "IOS User"})
+            self.role_checks.append(name.copy())
+            return name["role"] in self.roles
         if doctype == "ToDo" and isinstance(name, dict):
             return any(
                 row.get("doctype") == "ToDo"
@@ -150,6 +157,27 @@ class MobileFaceAuthTest(unittest.TestCase):
             with self.subTest(action=action), self.assertRaisesRegex(ValueError, "Sign in"):
                 self.run_api(action)
         self.assertFalse(self.created)
+
+    def test_status_reports_role_policy_without_changing_enrollment(self):
+        for roles, required in [(set(), True), ({"Employee"}, True), ({"IOS"}, True),
+                                ({"IOS User Extra"}, True), ({"IOS User"}, False),
+                                ({"Employee", "IOS User"}, False)]:
+            self.roles = roles
+            with self.subTest(roles=roles):
+                result = self.run_api(user="other@example.test", face_required=False, roles=["IOS User"])
+                self.assertIs(result["face_required"], required)
+                self.assertEqual(result["current_user"], self.frappe.session.user)
+                self.assertFalse(result["enrolled"])
+                self.assertIsNone(result["reference_file"])
+        self.assertFalse(self.created)
+
+    def test_existing_face_actions_preserve_policy_and_receipt_contract(self):
+        self.assertTrue(self.enroll()["face_required"])
+        self.assertTrue(self.verify()["face_required"])
+        self.roles = {"IOS User"}
+        self.assertFalse(self.run_api()["face_required"])
+        self.assertTrue(self.run_api()["enrolled"])
+        self.assertFalse(self.verify()["face_required"])
 
     def test_model_version_negotiation_preserves_existing_clients(self):
         self.assertEqual(self.run_api()["model_version"], "opencv-sface-2021dec-v1")
@@ -407,54 +435,55 @@ class MobileFaceGuardTest(unittest.TestCase):
                         self.run_guard("mobile_face_employee_checkin_attach",
                                        Document(name="CHECKIN-1", employee="EMP-1"), cmd=command)
 
-    def test_email_and_department_policy_in_both_hooks(self):
+    def test_role_policy_in_both_hooks_for_all_users(self):
         cases = [
-            ("murugan.finance@homegeniegroup.com", "Finance - HBPPL", True),
-            (" MURUGAN.FINANCE@HOMEGENIEGROUP.COM ", None, True),
-            ("other.finance@homegeniegroup.com", "Finance - HBPPL", False),
-            ("murugan.finance@example.test", "Finance - HBPPL", False),
-            ("new.trainee@homegeniegroup.com", "IT And Digital - HBPPL", True),
-            ("new.itdigital@homegeniegroup.com", "IT And Digital - HBPPL", True),
-            (" NEW.TRAINEE@homegeniegroup.com ", "IT And Digital - HBPPL", True),
-            ("new.trainee.sales@example.test", "IT And Digital - HBPPL", True),
-            ("new.trainee@homegeniegroup.com", "Sales - HBPPL", False),
-            ("new.itdigital@homegeniegroup.com", "Sales - HBPPL", False),
-            ("new.trainee@homegeniegroup.com", None, False),
-            ("new.employee@homegeniegroup.com", "IT And Digital - HBPPL", False),
-            ("new@team.trainee.itdigital.com", "IT And Digital - HBPPL", False),
-            ("trainee@example.test", "IT And Digital - HBPPL", False),
-            ("new.trainee", "IT And Digital - HBPPL", False),
-            (None, "IT And Digital - HBPPL", False),
+            (set(), "Sales - HBPPL", True),
+            ({"Employee"}, None, True),
+            ({"IOS"}, "IT And Digital - HBPPL", True),
+            ({"IOS User Extra"}, "Finance - HBPPL", True),
+            ({"ios user"}, None, True),
+            ({"IOS User"}, "Sales - HBPPL", False),
+            ({"Employee", "IOS User"}, None, False),
         ]
-        # Keep the session ID unchanged: eligibility must use User.email.
-        for email, department, required in cases:
-            self.email = email
+        for roles, department, required in cases:
+            self.roles = roles
             self.department = department
+            # Neither the old email/department criteria nor supplied form
+            # parameters may decide who is exempt.
+            self.user = "ordinary.employee@example.test"
+            self.frappe.session.user = self.user
             for command, log_type in (("itgenie.api.checkin", "IN"),
                                       ("itgenie.api.checkout", "OUT")):
                 for script, error in (
                     ("mobile_face_employee_checkin_guard", "Complete face verification"),
                     ("mobile_face_employee_checkin_attach", "receipt is missing"),
                 ):
-                    with self.subTest(email=email, department=department, command=command, script=script):
+                    with self.subTest(roles=roles, department=department, command=command, script=script):
                         doc = Document(name="CHECKIN-1", employee="EMP-1", log_type=log_type)
+                        params = dict(cmd=command, face_required=False, roles=["IOS User"], user="ios@example.test")
                         if required:
                             with self.assertRaisesRegex(ValueError, error):
-                                self.run_guard(script, doc, cmd=command)
+                                self.run_guard(script, doc, **params)
                         else:
-                            self.run_guard(script, doc, cmd=command)
+                            self.run_guard(script, doc, **params)
         self.assertEqual(self.store, {})
 
-    def test_other_users_skip_both_receipt_hooks_without_modifying_records(self):
-        self.user = "employee@example.test"
-        self.frappe.session.user = self.user
-        for command, log_type in (("itgenie.api.checkin", "IN"),
-                                  ("itgenie.api.checkout", "OUT")):
-            self.run_guard("mobile_face_employee_checkin_guard",
-                           Document(employee="EMP-1", log_type=log_type), cmd=command)
-            self.run_guard("mobile_face_employee_checkin_attach",
-                           Document(name="CHECKIN-1", employee="EMP-1"), cmd=command)
+    def test_ios_role_exemption_also_applies_to_previously_required_emails(self):
+        self.roles = {"IOS User"}
+        for user in ["lokeshwaran.trainee@homegeniegroup.com", "murugan.finance@homegeniegroup.com"]:
+            self.user = user
+            self.frappe.session.user = user
+            for command, log_type in (("itgenie.api.checkin", "IN"), ("itgenie.api.checkout", "OUT")):
+                for script in ["mobile_face_employee_checkin_guard", "mobile_face_employee_checkin_attach"]:
+                    self.run_guard(script, Document(name="CHECKIN-1", employee="EMP-1", log_type=log_type), cmd=command)
         self.assertEqual(self.store, {})
+
+    def test_ios_role_does_not_exempt_another_employee_or_wrong_action(self):
+        self.roles = {"IOS User"}
+        for employee, log_type in (("EMP-OTHER", "IN"), ("EMP-MISSING", "IN"), ("EMP-1", "OUT")):
+            with self.assertRaisesRegex(ValueError, "employee or action"):
+                self.run_guard("mobile_face_employee_checkin_guard",
+                    Document(employee=employee, log_type=log_type), cmd="itgenie.api.checkin")
 
     def test_other_users_still_cannot_submit_for_another_employee_or_wrong_action(self):
         self.user = "employee@example.test"

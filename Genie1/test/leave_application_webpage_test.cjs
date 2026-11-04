@@ -113,6 +113,7 @@ function fill(env, changes = {}) {
       from_date: "2026-10-31",
       to_date: "2026-10-31",
       description: "Family leave",
+      custom_tasks_assigned_to: "EMP-2",
       half_day: false,
     },
     changes,
@@ -258,6 +259,7 @@ test("one submission uses the same form payload, CSRF and server-confirmed total
     from_date: "2026-10-31",
     to_date: "2026-10-31",
     description: "Family leave",
+    custom_tasks_assigned_to: "EMP-2",
     half_day: "1",
     csrf_token: "leave-csrf",
   });
@@ -471,4 +473,100 @@ test("HTTP 400 ERP validation messages remain readable and preserve the draft", 
   assert.match(env.modal.textContent, /Set a Leave Approver/);
   assert.equal(env.api.state.draft.description, "Family leave");
   assert.equal(env.requests.filter((req) => req.method === "POST").length, 1);
+});
+
+
+test("Tasks Assigned To is mandatory even when omitted from business policy", async () => {
+  const env = setup(standardHandler);
+  await env.api.loadOptions();
+  fill(env, { custom_tasks_assigned_to: "" });
+  assert.throws(() => env.api.validate(), /Tasks Assigned To is required/);
+  await env.api.submit();
+  assert.equal(env.requests.filter(r => r.method === "POST").length, 0);
+});
+
+test("employee link search selects IDs, displays names safely, and clears edited selections", async () => {
+  const env = setup(req => {
+    if (req.url.searchParams.get("view") === "tasks_assigned_options") {
+      assert.equal(req.url.pathname, "/api/method/create_leave_application_from_mobile");
+      assert.equal(req.method, "GET");
+      assert.equal(req.url.searchParams.get("txt"), "1223");
+      assert.equal(req.url.searchParams.get("ignore_user_permissions"), null);
+      return { data: { message: { options: [{ value: "1223", description: "Arun Adithya T" }] } } };
+    }
+    return standardHandler(req);
+  });
+  await env.api.loadOptions();
+  fill(env);
+  const input = env.document.getElementById("la-custom_tasks_assigned_to");
+  input.value = "1223";
+  input.dispatchEvent(new env.document.defaultView.Event("input"));
+  assert.equal(env.api.state.draft.custom_tasks_assigned_to, "");
+  await new Promise(resolve => setTimeout(resolve, 360));
+  const option = env.document.querySelector("#la-employee-options button");
+  assert.ok(option);
+  assert.match(option.textContent, /1223Arun Adithya T/);
+  option.click();
+  assert.equal(input.value, "1223");
+  assert.equal(env.api.state.draft.custom_tasks_assigned_to, "1223");
+  assert.equal(env.document.getElementById("la-employee-options").hidden, true);
+  input.value = "Arun";
+  input.dispatchEvent(new env.document.defaultView.Event("input"));
+  assert.equal(env.api.state.draft.custom_tasks_assigned_to, "");
+  input.dispatchEvent(new env.document.defaultView.Event("focusout", { bubbles: true }));
+});
+
+
+test("employee search permission errors remain in the dropdown without bypassing permissions", async () => {
+  const env = setup(req => req.url.searchParams.get("view") === "tasks_assigned_options"
+    ? { status: 403, data: { message: "Employee selection is not permitted." } }
+    : standardHandler(req));
+  await env.api.loadOptions();
+  const input = env.document.getElementById("la-custom_tasks_assigned_to");
+  input.value = "Denied";
+  input.dispatchEvent(new env.document.defaultView.Event("input"));
+  await new Promise(resolve => setTimeout(resolve, 360));
+  assert.match(env.document.getElementById("la-employee-options").textContent, /not permitted/);
+  assert.equal(env.api.state.draft.custom_tasks_assigned_to, "");
+});
+
+test("employee typing is debounced and detached controls cannot run searches", async () => {
+  let searches = 0;
+  const env = setup(req => {
+    if (req.url.searchParams.get("view") === "tasks_assigned_options") { searches++; return { data: { message: { options: [] } } }; }
+    return standardHandler(req);
+  });
+  await env.api.loadOptions();
+  const input = env.document.getElementById("la-custom_tasks_assigned_to");
+  for (const value of ["A", "Ar", "Arun"]) {
+    input.value = value;
+    input.dispatchEvent(new env.document.defaultView.Event("input"));
+  }
+  await new Promise(resolve => setTimeout(resolve, 360));
+  assert.equal(searches, 1);
+  input.value = "Other";
+  input.dispatchEvent(new env.document.defaultView.Event("input"));
+  env.api.renderForm();
+  await new Promise(resolve => setTimeout(resolve, 360));
+  assert.equal(searches, 1);
+});
+
+
+test("API-owned employee lookup works before filling the leave form", async () => {
+  const env = setup(req => {
+    if (req.url.searchParams.get("view") === "tasks_assigned_options") {
+      assert.equal(req.method, "GET");
+      assert.equal(req.url.pathname, "/api/method/create_leave_application_from_mobile");
+      return { data: { message: { options: [{ value: "1223", description: "Arun Adithya T" }] } } };
+    }
+    return standardHandler(req);
+  });
+  await env.api.loadOptions();
+  const input = env.document.getElementById("la-custom_tasks_assigned_to");
+  input.value = "1223";
+  input.dispatchEvent(new env.document.defaultView.Event("input"));
+  await new Promise(resolve => setTimeout(resolve, 360));
+  assert.ok(env.document.querySelector("#la-employee-options button"));
+  assert.equal(env.api.state.draft.leave_type, "");
+  assert.equal(env.requests.filter(req => req.method === "POST").length, 0);
 });

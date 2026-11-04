@@ -21,6 +21,12 @@ current_user = frappe.session.user
 if not current_user or current_user == "Guest":
     frappe.throw("Sign in before registering or verifying your face.")
 
+# Server-owned policy: old-app users with this exact role are exempt.
+face_required = not bool(frappe.db.exists("Has Role", {
+    "parent": current_user, "parenttype": "User", "parentfield": "roles",
+    "role": "IOS User",
+}))
+
 action = (frappe.form_dict.get("action") or "status").strip().lower()
 # The mobile app initializes this token by loading /app with the same sid
 # session when it is missing. Server Script safe_exec exposes the session token
@@ -120,7 +126,7 @@ def jpeg_file(filename, attached_doctype=None, attached_name=None):
 if action == "status":
     reference = reference_file()
     frappe.response["message"] = {
-        "status": "success", "current_user": current_user,
+        "status": "success", "current_user": current_user, "face_required": face_required,
         "enrolled": bool(reference), "reference_file": reference,
         "model_version": model_version, "minimum_similarity": minimum_similarity,
         "csrf_token": csrf_token, "verification_receipt_version": 2,
@@ -141,7 +147,7 @@ elif action == "enroll":
     # are never overwritten; an administrator must deliberately remove one.
     file_doc.insert(ignore_permissions=True, set_name=reference_name)
     frappe.response["message"] = {
-        "status": "success", "current_user": current_user, "enrolled": True,
+        "status": "success", "current_user": current_user, "face_required": face_required, "enrolled": True,
         "reference_file": {
             "name": file_doc.name, "url": file_doc.file_url,
             "version": file_doc.content_hash or file_doc.name,
@@ -223,7 +229,7 @@ elif action == "record_verification":
             # transaction commit and response transmission outside this script.
             frappe.response["attendance_timings_ms"] = timings
         frappe.response["message"] = {
-            "status": "success", "current_user": current_user,
+            "status": "success", "current_user": current_user, "face_required": face_required,
             "record_id": record.name, "receipt_version": 2,
             "verification_source": "device_reported",
             "csrf_token": csrf_token, "verification_receipt_version": 2,

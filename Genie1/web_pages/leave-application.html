@@ -23,7 +23,8 @@
     display: none !important;
   }
   #la-app button,
-  #la-app textarea {
+  #la-app textarea,
+  #la-app input {
     font: inherit;
   }
   #la-app button {
@@ -35,7 +36,8 @@
     opacity: 0.5;
   }
   #la-app button:focus-visible,
-  #la-app textarea:focus-visible {
+  #la-app textarea:focus-visible,
+  #la-app input:focus-visible {
     outline: 3px solid #b8c9ff;
     outline-offset: 2px;
   }
@@ -330,6 +332,7 @@
         from_date: "",
         to_date: "",
         description: "",
+        custom_tasks_assigned_to: "",
         half_day: false,
       },
     };
@@ -400,6 +403,7 @@
         from_date: "",
         to_date: "",
         description: "",
+        custom_tasks_assigned_to: "",
         half_day: false,
       };
       state.version++;
@@ -608,6 +612,7 @@
       return state.policy.fields[name] || {};
     }
     function required(name, legacy = true) {
+      if (name === "custom_tasks_assigned_to") return true;
       return Object.prototype.hasOwnProperty.call(state.policy.fields, name)
         ? field(name).required === true
         : legacy;
@@ -877,6 +882,104 @@
       });
       return el("div", { class: "la-control" }, button, panel);
     }
+    function tasksAssignedControl() {
+      const name = "custom_tasks_assigned_to";
+      let timer, request = 0, active = -1;
+      const panel = el("div", {
+        id: "la-employee-options", class: "la-panel la-options",
+        role: "listbox", "aria-label": "Employees", hidden: "",
+      });
+      const input = el("input", {
+        id: "la-" + name, class: "la-input", type: "text",
+        placeholder: "Search employee ID or name", autocomplete: "off",
+        role: "combobox", "aria-autocomplete": "list", "aria-required": "true",
+        "aria-controls": "la-employee-options", "aria-expanded": "false",
+      });
+      input.value = state.draft[name];
+      input.readOnly = field(name).read_only === true;
+      const control = el("div", { class: "la-control" }, input, panel);
+      function close() {
+        clearTimeout(timer);
+        request++;
+        panel.hidden = true;
+        input.setAttribute("aria-expanded", "false");
+        input.removeAttribute("aria-activedescendant");
+      }
+      function showMessage(message) {
+        panel.replaceChildren(el("p", { class: "la-hint", role: "status" }, message));
+        panel.hidden = false;
+        input.setAttribute("aria-expanded", "true");
+        input.removeAttribute("aria-activedescendant");
+        active = -1;
+      }
+      function schedule() {
+        close();
+        if (state.busy || state.uncertain || state.stopped || input.readOnly) return;
+        showMessage("Searching employees...");
+        const version = state.version, current = request, text = input.value.trim();
+        timer = setTimeout(async () => {
+          try {
+            await session();
+            if (current !== request || version !== state.version || !input.isConnected) return;
+            if (text.length > 140) throw new Error("Search text must be at most 140 characters.");
+            const response = await raw(API, {
+              query: { view: "tasks_assigned_options", txt: text },
+            });
+            await session();
+            if (current !== request || version !== state.version || state.stopped || !input.isConnected) return;
+            const rows = response.message?.options;
+            if (!Array.isArray(rows) || rows.some((row) => typeof row?.value !== "string"))
+              throw new Error("Update the leave API to return valid employee search options.");
+            panel.replaceChildren();
+            for (const item of rows) {
+              if (!item || typeof item.value !== "string" || !item.value) continue;
+              panel.append(el("button", {
+                type: "button", role: "option", id: "la-employee-" + panel.children.length,
+                "aria-selected": "false",
+                onmousedown: (event) => event.preventDefault(),
+                onclick: () => {
+                  if (state.busy || state.uncertain || state.stopped || input.readOnly) return;
+                  state.draft[name] = item.value;
+                  input.value = item.value;
+                  input.focus();
+                  close();
+                },
+              }, el("strong", {}, plain(item.value)),
+              el("div", { class: "la-hint" }, plain(item.description || item.label || ""))));
+            }
+            if (!panel.children.length) showMessage("No matching employees available.");
+          } catch (error) {
+            if (current === request && version === state.version && !state.stopped && input.isConnected)
+              showMessage(error.uncertain
+                ? "Employee search could not be completed. Type again to retry."
+                : error.message);
+          }
+        }, 300);
+      }
+      input.addEventListener("input", () => {
+        state.draft[name] = "";
+        schedule();
+      });
+      input.addEventListener("focus", schedule);
+      control.addEventListener("focusout", (event) => {
+        if (!control.contains(event.relatedTarget)) close();
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") { close(); return; }
+        const options = Array.from(panel.querySelectorAll("button"));
+        if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !panel.hidden && options.length) {
+          event.preventDefault();
+          active = (active + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+          options.forEach((option, index) => option.setAttribute("aria-selected", String(index === active)));
+          input.setAttribute("aria-activedescendant", options[active].id);
+          options[active].scrollIntoView?.({ block: "nearest" });
+        } else if (event.key === "Enter" && !panel.hidden) {
+          event.preventDefault();
+          if (active >= 0 && options[active]) options[active].click();
+        }
+      });
+      return control;
+    }
     function renderForm() {
       if (state.stopped || !state.options) return;
       const form = el("form", {
@@ -916,6 +1019,7 @@
       if (Number(field("description").max_length) > 0)
         reason.maxLength = Number(field("description").max_length);
       controls.append(wrapper("description", "Reason", reason));
+      controls.append(wrapper("custom_tasks_assigned_to", "Tasks Assigned To", tasksAssignedControl()));
       const half = el("input", {
         id: "la-half_day",
         type: "checkbox",
@@ -989,6 +1093,7 @@
         throw new Error("Choose a leave type.");
       for (const [name, title] of [
         ["description", "Reason"],
+        ["custom_tasks_assigned_to", "Tasks Assigned To"],
         ["leave_type", "Leave Type"],
         ["from_date", "From Date"],
         ["to_date", "To Date"],
@@ -1075,6 +1180,7 @@
         for (const name of [
           "leave_type",
           "description",
+          "custom_tasks_assigned_to",
           "from_date",
           "to_date",
           "half_day",
@@ -1159,6 +1265,7 @@
           from_date: d.from_date,
           to_date: d.to_date,
           description: d.description.trim(),
+          custom_tasks_assigned_to: d.custom_tasks_assigned_to.trim(),
           half_day: d.half_day ? "1" : "0",
         });
         const message = response.message;
@@ -1179,6 +1286,7 @@
           from_date: "",
           to_date: "",
           description: "",
+          custom_tasks_assigned_to: "",
           half_day: false,
         };
         state.busy = false;

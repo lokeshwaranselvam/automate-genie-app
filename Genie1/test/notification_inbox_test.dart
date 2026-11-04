@@ -6,6 +6,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homegenie/Screen/notifications_page.dart';
 import 'package:homegenie/Screen/session_webview.dart';
+import 'package:homegenie/Screen/sales_summary_webview_page.dart';
 import 'package:homegenie/utils/api/notification_inbox.dart';
 import 'package:homegenie/utils/widget/notification_bell.dart';
 import 'package:http/http.dart' as http;
@@ -58,24 +59,34 @@ void main() {
         'creation': '2026-10-15 13:00:00',
       },
   ];
-  MockClient client({
-    int status = 200,
-    List<Map<String, dynamic>>? rows,
-    Future<void> Function()? duringLoad,
-  }) => MockClient((request) async {
-    expect(request.headers['Cookie'], 'sid=sid');
-    if (request.url.path.endsWith('get_logged_user')) {
-      return http.Response(jsonEncode({'message': user}), 200);
+  Future<void> seedPushes() async {
+    for (final row in logs()) {
+      await NotificationInbox.capture(
+        RemoteMessage(
+          messageId: row['name'] as String,
+          data: {
+            'notification_log': row['name'],
+            'title': row['subject'],
+            'body': row['email_content'],
+            'for_user': row['for_user'],
+            'doctype': row['document_type'],
+            'docname': row['document_name'],
+          },
+        ),
+      );
     }
-    expect(request.url.path, '/api/resource/Notification%20Log');
-    expect(request.followRedirects, isFalse);
-    expect(jsonDecode(request.url.queryParameters['filters']!), [
-      ['for_user', '=', user],
-    ]);
-    expect(request.url.queryParameters['limit_page_length'], '100');
-    if (duringLoad != null) await duringLoad();
-    return http.Response(jsonEncode({'data': rows ?? logs()}), status);
-  });
+  }
+
+  MockClient client({int status = 200, String sid = 'sid'}) =>
+      MockClient((request) async {
+        expect(request.headers['Cookie'], 'sid=$sid');
+        // Inbox refresh must never fetch ERP Notification Log/history.
+        expect(request.url.path, '/api/method/frappe.auth.get_logged_user');
+        return http.Response(
+          jsonEncode({'message': status == 200 ? user : 'Denied'}),
+          status,
+        );
+      });
 
   test(
     'supplied lead-call payload has a meaningful inbox title and body',
@@ -101,32 +112,24 @@ void main() {
   );
 
   test(
-    'notifications are recipient scoped, categorized and stripped of HTML',
+    'push notifications are recipient scoped, categorized and stripped of HTML',
     () async {
-      await http.runWithClient(
-        () async {
-          final items = await NotificationInbox.load();
-          expect(items.map((item) => item.category).toSet(), {
-            'Tasks',
-            'Leads',
-            'Visits',
-            'Pending Work',
-          });
-          expect(items.first.title, isNot(contains('<b>')));
-          expect(items.first.body, contains('details'));
-          expect(items.first.reference, isNotEmpty);
-        },
-        () => client(
-          rows: [
-            ...logs(),
-            {
-              'name': 'OTHER',
-              'for_user': 'other@example.test',
-              'subject': 'Private',
-            },
-          ],
-        ),
+      await seedPushes();
+      await NotificationInbox.capture(
+        push('other', 'LEAD_ASSIGNED', recipient: 'other@example.test'),
       );
+      await http.runWithClient(() async {
+        final items = await NotificationInbox.load();
+        expect(items.map((item) => item.category).toSet(), {
+          'Tasks',
+          'Leads',
+          'Visits',
+          'Pending Work',
+        });
+        expect(items.first.title, isNot(contains('<b>')));
+        expect(items.first.body, contains('details'));
+        expect(items.first.reference, isNotEmpty);
+      }, () => client());
     },
   );
 
@@ -159,52 +162,57 @@ void main() {
   });
 
   test(
-    'ERP and push events sharing a notification log ID are merged',
+    'pushes with an ERP log ID remain visible once without loading ERP history',
     () async {
-      await NotificationInbox.capture(
-        RemoteMessage(
-          messageId: 'push',
-          data: {'notification_log': 'LOG-Task', 'title': 'Task push'},
-        ),
+      const message = RemoteMessage(
+        messageId: 'push',
+        data: {'notification_log': 'LOG-Task', 'title': 'Task push'},
       );
+      await NotificationInbox.capture(message);
+      await NotificationInbox.capture(message);
       await http.runWithClient(() async {
         final items = await NotificationInbox.load();
-        expect(items, hasLength(4));
-        expect(items.where((row) => row.id == 'LOG-Task'), hasLength(1));
+        expect(items, hasLength(1));
+        expect(items.single.id, 'LOG-Task');
+        expect(items.single.title, 'Task push');
+        expect(items.single.receivedViaPush, isTrue);
       }, () => client());
     },
   );
 
   test(
-    'history errors do not erase previously received push notifications',
+    'refresh uses the local push inbox without requesting ERP notification history',
     () async {
       await NotificationInbox.capture(push('one', 'VISIT_ASSIGNED'));
       await http.runWithClient(() async {
-        await expectLater(NotificationInbox.load(), throwsStateError);
-        expect(await NotificationInbox.cached(), hasLength(1));
-      }, () => client(status: 403));
+        expect((await NotificationInbox.load()).single.id, 'push:one');
+      }, () => client());
     },
   );
 
-  test('changing account during loading rejects the response', () async {
-    await http.runWithClient(
-      () async {
-        await expectLater(NotificationInbox.load(), throwsStateError);
-      },
-      () => client(
-        duringLoad: () async {
-          await (await SharedPreferences.getInstance()).setString(
-            'session_username',
-            'other@example.test',
-          );
+  test(
+    'a session switch during refresh cannot return another account inbox',
+    () async {
+      await NotificationInbox.capture(push('one', 'TASK_ASSIGNED'));
+      await http.runWithClient(
+        () async {
+          await expectLater(NotificationInbox.load(), throwsStateError);
         },
-      ),
-    );
-  });
+        () => MockClient((request) async {
+          await (await SharedPreferences.getInstance()).setString(
+            'session_sid',
+            'different-sid',
+          );
+          return http.Response(jsonEncode({'message': user}), 200);
+        }),
+      );
+    },
+  );
 
   test(
     'viewed notifications do not return from ERP or duplicate push delivery',
     () async {
+      await seedPushes();
       await http.runWithClient(() async {
         final rows = await NotificationInbox.load();
         final scope = (await NotificationInbox.sessionScope())!;
@@ -240,27 +248,16 @@ void main() {
   );
 
   test(
-    'an in-flight ERP response cannot restore dismissed items or lose new pushes',
+    'refresh does not restore dismissed pushes or lose new arrivals',
     () async {
+      await NotificationInbox.capture(push('old', 'TASK_ASSIGNED'));
+      final scope = (await NotificationInbox.sessionScope())!;
+      await NotificationInbox.dismissViewed({'push:old'}, scope: scope);
+      await NotificationInbox.capture(push('new', 'VISIT_ASSIGNED'));
       await http.runWithClient(() async {
-        await NotificationInbox.load();
-        final scope = (await NotificationInbox.sessionScope())!;
-        final rows = await NotificationInbox.cached();
-        await http.runWithClient(
-          () async {
-            final items = await NotificationInbox.load();
-            expect(items.map((row) => row.id), ['push:new']);
-          },
-          () => client(
-            duringLoad: () async {
-              await NotificationInbox.dismissViewed(
-                rows.map((row) => row.id).toSet(),
-                scope: scope,
-              );
-              await NotificationInbox.capture(push('new', 'VISIT_ASSIGNED'));
-            },
-          ),
-        );
+        expect((await NotificationInbox.load()).map((row) => row.id), [
+          'push:new',
+        ]);
       }, () => client());
     },
   );
@@ -280,26 +277,59 @@ void main() {
     expect(await NotificationInbox.cached(), hasLength(1));
   });
 
-  test('ERP notifications already read are excluded', () async {
-    await http.runWithClient(
-      () async {
-        final rows = await NotificationInbox.load();
-        expect(rows.any((row) => row.id == 'LOG-Task'), isFalse);
-      },
-      () => client(
-        rows:
-            logs()
-                .map(
-                  (row) => {...row, if (row['name'] == 'LOG-Task') 'read': 1},
-                )
-                .toList(),
-      ),
+  test(
+    'legacy ERP-only cache entries are hidden from the page and bell',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final key =
+          'notification_inbox_${base64UrlEncode(utf8.encode('https://erp.example.test|$user'))}';
+      await prefs.setString(
+        key,
+        jsonEncode([
+          {'id': 'LOG-ERP-ONLY', 'title': 'ERP only', 'read': false},
+          {'id': 'LOG-OLD-MERGE', 'title': 'Old imported row', 'read': true},
+        ]),
+      );
+      expect(await NotificationInbox.cached(), isEmpty);
+      expect(await NotificationInbox.hasUnseen(), isFalse);
+      await http.runWithClient(() async {
+        expect(await NotificationInbox.load(), isEmpty);
+      }, () => client());
+      // A real push sharing that log ID must now be accepted, rather than
+      // discarded because its ERP-only copy was previously cached.
+      await NotificationInbox.capture(
+        const RemoteMessage(
+          messageId: 'real',
+          data: {'notification_log': 'LOG-ERP-ONLY', 'title': 'Actual push'},
+        ),
+      );
+      expect((await NotificationInbox.cached()).single.title, 'Actual push');
+      expect(await NotificationInbox.hasUnseen(), isTrue);
+    },
+  );
+
+  test('legacy push IDs and marked log-ID pushes survive cache reload', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final key =
+        'notification_inbox_${base64UrlEncode(utf8.encode('https://erp.example.test|$user'))}';
+    await prefs.setString(
+      key,
+      jsonEncode([
+        {'id': 'push:legacy', 'title': 'Legacy push'},
+        {'id': 'LOG-PUSH', 'title': 'Marked push', 'received_via_push': true},
+        {'id': 'LOG-ERP', 'title': 'ERP only'},
+      ]),
     );
+    expect((await NotificationInbox.cached()).map((row) => row.id), [
+      'push:legacy',
+      'LOG-PUSH',
+    ]);
   });
 
   testWidgets(
-    'leaving notifications clears the viewed inbox and the bell dot; a new push restores it',
+    'leaving notifications retains items; only the header trash clears them',
     (tester) async {
+      await tester.runAsync(seedPushes);
       await http.runWithClient(() async {
         await tester.runAsync(() => NotificationInbox.load());
         expect(
@@ -335,6 +365,27 @@ void main() {
         await settleInbox(tester);
         expect(
           await tester.runAsync(() => NotificationInbox.cached()),
+          hasLength(4),
+        );
+        expect(
+          find.byKey(const ValueKey('notification-unread-dot')),
+          findsNothing,
+        );
+        await tester.tap(find.byTooltip('Notifications'));
+        await settleInbox(tester);
+        expect(find.text('Task assigned'), findsOneWidget);
+        await tester.tap(find.byTooltip('Clear notifications'));
+        await settleInbox(tester);
+        expect(find.text('No notifications yet'), findsOneWidget);
+        await tester
+            .widget<RefreshIndicator>(find.byType(RefreshIndicator))
+            .onRefresh();
+        await settleInbox(tester);
+        expect(find.text('No notifications yet'), findsOneWidget);
+        await tester.binding.handlePopRoute();
+        await settleInbox(tester);
+        expect(
+          await tester.runAsync(() => NotificationInbox.cached()),
           isEmpty,
         );
         expect(
@@ -356,6 +407,27 @@ void main() {
     },
   );
 
+  test(
+    'seen state retains messages, survives reload, and isolates sessions',
+    () async {
+      await NotificationInbox.capture(push('seen', 'TASK_ASSIGNED'));
+      final scope = (await NotificationInbox.sessionScope())!;
+      expect(await NotificationInbox.hasUnseen(), isTrue);
+      await NotificationInbox.markSeen({'push:seen'}, scope: scope);
+      expect(await NotificationInbox.hasUnseen(), isFalse);
+      expect(await NotificationInbox.cached(), hasLength(1));
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      expect(await NotificationInbox.hasUnseen(), isFalse);
+      await NotificationInbox.capture(push('new', 'TASK_ASSIGNED'));
+      expect(await NotificationInbox.hasUnseen(), isTrue);
+      await prefs.setString('session_username', 'other@example.test');
+      await NotificationInbox.capture(push('new', 'TASK_ASSIGNED'));
+      await NotificationInbox.markSeen({'push:new'}, scope: scope);
+      expect(await NotificationInbox.hasUnseen(), isTrue);
+    },
+  );
+
   testWidgets('empty inbox has no bell dot', (tester) async {
     await http.runWithClient(() async {
       await tester.pumpWidget(
@@ -367,14 +439,14 @@ void main() {
         findsNothing,
       );
       await tester.pumpWidget(const SizedBox.shrink());
-    }, () => client(rows: []));
+    }, () => client());
   });
 
   testWidgets(
-    'a push displayed on the open screen is cleared on exit without refetching ERP',
+    'a push displayed on the open screen remains on exit without refetching ERP',
     (tester) async {
       var historyRequests = 0;
-      final server = client(rows: []);
+      final server = client();
       await http.runWithClient(
         () async {
           await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
@@ -386,10 +458,10 @@ void main() {
           await capture;
           await settleInbox(tester);
           expect(find.text('VISIT_ASSIGNED assigned'), findsOneWidget);
-          expect(historyRequests, 1);
+          expect(historyRequests, 0);
           await tester.pumpWidget(const SizedBox.shrink());
           await settleInbox(tester);
-          expect(await NotificationInbox.cached(), isEmpty);
+          expect(await NotificationInbox.cached(), hasLength(1));
         },
         () => MockClient((request) async {
           if (request.url.path.contains('Notification')) historyRequests++;
@@ -402,6 +474,7 @@ void main() {
   testWidgets(
     'notification page shows all items without filters, expands details, and refreshes',
     (tester) async {
+      await tester.runAsync(seedPushes);
       await http.runWithClient(() async {
         await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
         await settleInbox(tester);
@@ -428,6 +501,7 @@ void main() {
   testWidgets('ERP opens only after choosing the inbox item action', (
     tester,
   ) async {
+    await tester.runAsync(seedPushes);
     await http.runWithClient(
       () async {
         await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
@@ -461,6 +535,7 @@ void main() {
   testWidgets(
     'inbox document action refuses navigation after account switching',
     (tester) async {
+      await tester.runAsync(seedPushes);
       await http.runWithClient(
         () async {
           await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
@@ -490,41 +565,163 @@ void main() {
     },
   );
 
-  test(
-    'ERP history merge keeps the lead call action captured from its push',
-    () async {
-      await NotificationInbox.capture(
+  test('push inbox retains the captured lead call action', () async {
+    await NotificationInbox.capture(
+      const RemoteMessage(
+        messageId: 'lead',
+        data: {
+          'type': 'NEW_LEAD_CALL',
+          'doctype': 'Lead',
+          'docname': 'Lead-1',
+          'for_user': user,
+          'mobile_no': '9876543210',
+          'notification_log': 'LOG-Lead',
+        },
+      ),
+    );
+    await http.runWithClient(() async {
+      final rows = await NotificationInbox.load();
+      final lead = rows.singleWhere((row) => row.id == 'LOG-Lead');
+      expect(lead.callPhone, '9876543210');
+      expect(lead.doctype, 'Lead');
+    }, () => client());
+  });
+
+  testWidgets('session check failure shows an error and permits swipe retry', (
+    tester,
+  ) async {
+    await http.runWithClient(() async {
+      await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
+      await settleInbox(tester);
+      expect(find.text('Could not load notifications'), findsOneWidget);
+      expect(find.byType(RefreshIndicator), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    }, () => client(status: 401));
+  });
+
+  testWidgets('sales-summary push opens only through the inbox action', (
+    tester,
+  ) async {
+    await tester.runAsync(
+      () => NotificationInbox.capture(
         const RemoteMessage(
-          messageId: 'lead',
+          messageId: 'summary',
           data: {
-            'type': 'NEW_LEAD_CALL',
-            'doctype': 'Lead',
-            'docname': 'Lead-1',
+            'type': 'DOCUMENT_NOTIFICATION',
+            'notification_kind': 'SALES_SUMMARY',
+            'doctype': 'Notification Log',
+            'docname': 'sales-summary-123',
+            'notification_log': 'sales-summary-123',
             'for_user': user,
-            'mobile_no': '9876543210',
-            'notification_log': 'LOG-Lead',
+            'title': 'Your sales summary is ready',
+            'body': 'View your counts.',
+            'page_route': '/genie-sales-summary',
           },
         ),
-      );
+      ),
+    );
+    await http.runWithClient(() async {
+      await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
+      await settleInbox(tester);
+      expect((await NotificationInbox.cached()).single.isSalesSummary, isTrue);
+      expect(find.byType(SalesSummaryWebViewPage), findsNothing);
+      await tester.tap(find.text('Your sales summary is ready'));
+      await settleInbox(tester);
+      expect(find.text('View sales summary'), findsOneWidget);
+      expect(find.text('Open in ERP'), findsNothing);
+      await tester.tap(find.text('View sales summary'));
+      await settleInbox(tester);
+      expect(find.byType(SalesSummaryWebViewPage), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await settleInbox(tester);
+    }, () => client());
+  });
+
+  test(
+    'cleared log-linked and ordinary pushes stay cleared after logout and login',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('token', 'old-token');
+      await prefs.setString('email', user);
+      await prefs.setBool('is_employee_checked_in', true);
+      await seedPushes();
       await http.runWithClient(() async {
-        final rows = await NotificationInbox.load();
-        final lead = rows.singleWhere((row) => row.id == 'LOG-Lead');
-        expect(lead.callPhone, '9876543210');
-        expect(lead.doctype, 'Lead');
+        await NotificationInbox.load();
+        await NotificationInbox.capture(push('cleared-push', 'TASK_ASSIGNED'));
+        final scope = (await NotificationInbox.sessionScope())!;
+        final ids =
+            (await NotificationInbox.cached()).map((item) => item.id).toSet();
+        expect(ids, contains('LOG-Task'));
+        expect(ids, contains('push:cleared-push'));
+        await NotificationInbox.dismissViewed(ids, scope: scope);
       }, () => client());
+
+      await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
+      expect(prefs.getString('token'), isNull);
+      expect(prefs.getString('session_sid'), isNull);
+      expect(prefs.getString('session_username'), isNull);
+      expect(prefs.getString('email'), isNull);
+      expect(prefs.getBool('is_employee_checked_in'), isNull);
+      expect(prefs.getKeys(), hasLength(1));
+      expect(prefs.getKeys().single, endsWith('_viewed'));
+
+      await prefs.setString('session_username', user);
+      await prefs.setString('session_sid', 'new-sid');
+      await http.runWithClient(() async {
+        expect(await NotificationInbox.load(), isEmpty);
+        await NotificationInbox.capture(push('cleared-push', 'TASK_ASSIGNED'));
+        expect(await NotificationInbox.cached(), isEmpty);
+        await NotificationInbox.capture(push('new-push', 'TASK_ASSIGNED'));
+        expect((await NotificationInbox.cached()).single.id, 'push:new-push');
+        expect(await NotificationInbox.hasUnseen(), isTrue);
+      }, () => client(sid: 'new-sid'));
     },
   );
 
-  testWidgets(
-    'notification API failure shows an error and permits swipe retry',
-    (tester) async {
-      await http.runWithClient(() async {
-        await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
-        await settleInbox(tester);
-        expect(find.text('Could not load notifications'), findsOneWidget);
-        expect(find.byType(RefreshIndicator), findsOneWidget);
-        await tester.pumpWidget(const SizedBox.shrink());
-      }, () => client(status: 500));
+  test(
+    'logout preserves only dismissal IDs and keeps accounts and sites isolated',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      await NotificationInbox.capture(push('same-id', 'TASK_ASSIGNED'));
+      await NotificationInbox.dismissViewed({
+        'push:same-id',
+      }, scope: (await NotificationInbox.sessionScope())!);
+      await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
+
+      await prefs.setString('session_username', 'other@example.test');
+      await prefs.setString('session_sid', 'other-sid');
+      await NotificationInbox.capture(push('same-id', 'TASK_ASSIGNED'));
+      expect((await NotificationInbox.cached()).single.id, 'push:same-id');
+      await NotificationInbox.dismissViewed({
+        'push:same-id',
+      }, scope: (await NotificationInbox.sessionScope())!);
+      await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
+      expect(prefs.getKeys(), hasLength(2));
+
+      await prefs.setString('session_username', user);
+      await prefs.setString('session_sid', 'site-sid');
+      dotenv.testLoad(fileInput: 'SITE_URL=https://other.example.test');
+      await NotificationInbox.capture(push('same-id', 'TASK_ASSIGNED'));
+      expect((await NotificationInbox.cached()).single.id, 'push:same-id');
+      dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
+      expect(await NotificationInbox.cached(), isEmpty);
+      await prefs.setString('session_username', 'other@example.test');
+      expect(await NotificationInbox.cached(), isEmpty);
     },
   );
+
+  test('logout cleanup waits for pending notification clears', () async {
+    await NotificationInbox.capture(push('pending-clear', 'TASK_ASSIGNED'));
+    final prefs = await SharedPreferences.getInstance();
+    final scope = (await NotificationInbox.sessionScope())!;
+    final clear = NotificationInbox.dismissViewed({
+      'push:pending-clear',
+    }, scope: scope);
+    await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
+    await clear;
+    await prefs.setString('session_username', user);
+    await prefs.setString('session_sid', 'next-sid');
+    await NotificationInbox.capture(push('pending-clear', 'TASK_ASSIGNED'));
+    expect(await NotificationInbox.cached(), isEmpty);
+  });
 }

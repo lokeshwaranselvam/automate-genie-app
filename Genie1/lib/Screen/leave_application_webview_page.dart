@@ -1,3 +1,4 @@
+import '../utils/widget/webview_pull_to_refresh.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -202,47 +203,52 @@ class LeaveApplicationWebViewPageState
       ),
       child: Scaffold(
         backgroundColor: Colors.white,
-        body: Stack(
-          fit: StackFit.expand,
-          children: [
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              height: MediaQuery.paddingOf(context).top,
-              child: const DecoratedBox(
-                decoration: BoxDecoration(gradient: BrandColors.gradient),
+        body: WebViewPullToRefresh(
+          controller: _error == null ? _controller : null,
+          enabled: !_loading && !_submitting,
+          onRefresh: _initialize,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: MediaQuery.paddingOf(context).top,
+                child: const DecoratedBox(
+                  decoration: BoxDecoration(gradient: BrandColors.gradient),
+                ),
               ),
-            ),
-            SafeArea(
-              child:
-                  _error != null
-                      ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(_error!, textAlign: TextAlign.center),
-                              const SizedBox(height: 16),
-                              FilledButton(
-                                onPressed: _initialize,
-                                child: const Text('Retry'),
-                              ),
-                            ],
+              SafeArea(
+                child:
+                    _error != null
+                        ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(_error!, textAlign: TextAlign.center),
+                                const SizedBox(height: 16),
+                                FilledButton(
+                                  onPressed: _initialize,
+                                  child: const Text('Retry'),
+                                ),
+                              ],
+                            ),
                           ),
+                        )
+                        : Stack(
+                          children: [
+                            if (_controller != null)
+                              WebViewWidget(controller: _controller!),
+                            if (_loading)
+                              const Center(child: AgPathLoadingIndicator()),
+                          ],
                         ),
-                      )
-                      : Stack(
-                        children: [
-                          if (_controller != null)
-                            WebViewWidget(controller: _controller!),
-                          if (_loading)
-                            const Center(child: AgPathLoadingIndicator()),
-                        ],
-                      ),
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );

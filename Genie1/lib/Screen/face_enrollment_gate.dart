@@ -1,3 +1,5 @@
+import '../utils/widget/pull_to_refresh.dart';
+import '../utils/api/notification_inbox.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
@@ -112,7 +114,7 @@ class _FaceEnrollmentGateState extends State<FaceEnrollmentGate> {
       } finally {
         await SessionAuthApi.clearSession();
         final prefs = await SharedPreferences.getInstance();
-        await prefs.clear();
+        await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
       }
       if (mounted) {
         Navigator.of(
@@ -143,75 +145,83 @@ class _FaceEnrollmentGateState extends State<FaceEnrollmentGate> {
                   title: const Text('Set up your selfie'),
                 )
                 : null,
-        body: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (needsSelfie) ...[
-                    const Icon(
-                      Icons.face_retouching_natural,
-                      size: 72,
-                      color: BrandColors.ink,
-                    ),
-                    const SizedBox(height: 20),
-                    const Text(
-                      'Your attendance face photo',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
+        body: PullToRefresh(
+          enabled: !_busy,
+          onRefresh: _retry,
+          child: SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (needsSelfie) ...[
+                      const Icon(
+                        Icons.face_retouching_natural,
+                        size: 72,
+                        color: BrandColors.ink,
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Look at the front camera and blink once. Your selfie will be saved privately on your ERP User record and used for attendance and visit check-in/out.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 15, height: 1.5),
-                    ),
-                  ],
-                  if (_status != null) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      _status!.currentUser,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.black54),
-                    ),
-                  ],
-                  const SizedBox(height: 24),
-                  if (_busy)
-                    const AgPathLoadingIndicator()
-                  else ...[
-                    if (_error != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 20),
-                        child: Text(
-                          _error!,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Color(0xFFB3261E)),
+                      const SizedBox(height: 20),
+                      const Text(
+                        'Your attendance face photo',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: FilledButton.icon(
-                        style: const ButtonStyle(
-                          backgroundBuilder: BrandColors.buttonBackground,
-                          foregroundColor: WidgetStatePropertyAll(Colors.white),
-                        ),
-                        onPressed: _retry,
-                        icon: const Icon(Icons.camera_alt_outlined),
-                        label: Text(_status == null ? 'Retry' : 'Take selfie'),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Look at the front camera and blink once. Your selfie will be saved privately on your ERP User record and used for attendance and visit check-in/out.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 15, height: 1.5),
                       ),
-                    ),
-                    TextButton(
-                      onPressed: _signOut,
-                      child: const Text('Sign out'),
-                    ),
+                    ],
+                    if (_status != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _status!.currentUser,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.black54),
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                    if (_busy)
+                      const AgPathLoadingIndicator()
+                    else ...[
+                      if (_error != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 20),
+                          child: Text(
+                            _error!,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Color(0xFFB3261E)),
+                          ),
+                        ),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: FilledButton.icon(
+                          style: const ButtonStyle(
+                            backgroundBuilder: BrandColors.buttonBackground,
+                            foregroundColor: WidgetStatePropertyAll(
+                              Colors.white,
+                            ),
+                          ),
+                          onPressed: _retry,
+                          icon: const Icon(Icons.camera_alt_outlined),
+                          label: Text(
+                            _status == null ? 'Retry' : 'Take selfie',
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _signOut,
+                        child: const Text('Sign out'),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),

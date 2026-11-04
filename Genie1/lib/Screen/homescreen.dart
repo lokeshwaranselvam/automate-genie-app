@@ -1,3 +1,4 @@
+import '../utils/api/notification_inbox.dart';
 import 'notifications_page.dart';
 import '../utils/api/notification_inbox_taps.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
@@ -397,7 +398,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           );
           await LiveLocationService.stopForSignOut();
           await SessionAuthApi.clearSession();
-          await prefs.clear();
+          await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
           if (!mounted) return;
           Navigator.of(context).pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const Login()),
@@ -785,7 +786,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     // valid session belonging to the same account on the other installation.
     await SessionAuthApi.clearSession();
     if (!sameLogin()) return;
-    await prefs.clear();
+    await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
     if (!mounted) return;
     Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const Login()),
@@ -1346,7 +1347,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                     SharedPreferences prefs =
                         await SharedPreferences.getInstance();
                     await LiveLocationService.stopForSignOut();
-                    await prefs.clear();
+                    await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
                     // Best-effort: invalidate this device's push token so the
                     // signed-out user stops receiving notifications here. A
                     // fresh token is registered on the next login.
@@ -2061,6 +2062,9 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           setState(() => _attendancePageOpen = false);
           return false;
         }
+        // The Tasks webpage must ignore phone/system Back. Its visible
+        // app-bar Back button returns Home through its explicit callback.
+        if (_selectedTab == 1) return false;
         if (_selectedTab == 3 && _opportunitiesWebViewKey.currentState != null) {
           await _opportunitiesWebViewKey.currentState!.handleBack();
           return false;
@@ -2249,7 +2253,10 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
                   index: _selectedTab,
                   children: [
                     _buildHomeDashboard(),
-                    PendingWorkPage(key: _pendingWorkPageKey),
+                    PendingWorkPage(
+                      key: _pendingWorkPageKey,
+                      onBack: () => setState(() => _selectedTab = 0),
+                    ),
                     _selectedTab == 2 && _showBottomVisits
                         ? SiteVisitsPage(onVisitsUpdated: _onSiteVisitsUpdated)
                         : const SizedBox.shrink(),

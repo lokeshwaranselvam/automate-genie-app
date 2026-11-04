@@ -5,7 +5,9 @@ import '../utils/widget/home_back_button.dart';
 import 'session_webview.dart';
 
 class PendingWorkPage extends StatefulWidget {
-  const PendingWorkPage({super.key});
+  const PendingWorkPage({super.key, this.onBack});
+
+  final VoidCallback? onBack;
 
   @override
   State<PendingWorkPage> createState() => PendingWorkPageState();
@@ -20,7 +22,17 @@ class PendingWorkPageState extends State<PendingWorkPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: brandAppBar(
-        leading: const HomeBackButton(color: Colors.white),
+        leading:
+            widget.onBack == null
+                ? const HomeBackButton(color: Colors.white)
+                : IconButton(
+                  tooltip: 'Back',
+                  onPressed: widget.onBack,
+                  icon: const Icon(
+                    Icons.arrow_back_rounded,
+                    color: Colors.white,
+                  ),
+                ),
         title: const Text(
           'My Tasks',
           style: TextStyle(

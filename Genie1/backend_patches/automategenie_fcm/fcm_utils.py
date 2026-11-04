@@ -377,3 +377,60 @@ def validate_fcm_notification_installation():
     if not issubclass(controller, FCMNotificationMixin):
         frappe.throw("The FCM Notification controller is not active. Check hooks and installed-app order.")
     return {"status": "ready", "controller": controller.__name__}
+
+@frappe.whitelist(methods=["POST"])
+def test_fcm_document_notification(data=None):
+    """Send a test FCM notification to a user."""
+
+    data = frappe.parse_json(data) if isinstance(data, str) else data
+    if not isinstance(data, dict):
+        frappe.throw("Invalid test payload.")
+
+    user = (data.get("for_user") or "").strip()
+    if not frappe.db.get_value("User", user, "enabled"):
+        frappe.throw("A valid, enabled recipient is required in for_user.")
+
+    title = (data.get("title") or "").strip()
+    body = (data.get("body") or "").strip()
+    if not title or not body:
+        frappe.throw("A title and body are required.")
+
+    sound_mode = data.get("sound_mode") or "default"
+    if sound_mode == "alarm" and not frappe.db.exists(
+        "Has Role", {"parent": user, "role": ["in", ["Sales User", "Designer"]]}
+    ):
+        sound_mode = "default"
+
+    token = frappe.db.get_value(
+        "FCM Device", {"user": user, "is_active": 1}, "fcm_token", order_by="modified desc"
+    )
+    if not token:
+        return {"status": "failed", "message": "No active FCM device token."}
+
+    try:
+        response = messaging.send(
+            messaging.Message(
+                token=token.strip(),
+                data={
+                    "type": "DOCUMENT_NOTIFICATION",
+                    "notification_name": str(data.get("notification_name") or "")[:140],
+                    "doctype": "",
+                    "docname": "",
+                    "assignment_id": str(data.get("assignment_id") or ""),
+                    "for_user": user,
+                    "sound_mode": sound_mode,
+                    "alarm_enabled": "1" if sound_mode == "alarm" else "0",
+                    "title": title[:200],
+                    "body": body[:240],
+                },
+                android=messaging.AndroidConfig(priority="high"),
+            ),
+            app=get_firebase_app(),
+        )
+    except Exception as error:
+        _log_notification_failure(
+            data.get("notification_name"), error, stage="test_firebase_send", user=user
+        )
+        return {"status": "failed", "message": "FCM sending failed. Check Error Log."}
+
+    return {"status": "sent", "message": "Accepted by Firebase.", "response": response}

@@ -1,5 +1,6 @@
 import 'notification_inbox.dart';
 import 'notification_inbox_taps.dart';
+import 'sales_summary_notification.dart';
 import 'document_notification.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'lead_call_notification.dart';
@@ -254,6 +255,9 @@ class FcmNotificationService {
 }
 
 String _documentReceipt(RemoteMessage message) {
+  if (isSalesSummaryPush(message.data)) {
+    return 'sales-summary:${message.data['notification_log']}';
+  }
   if (message.messageId?.isNotEmpty == true) return message.messageId!;
   final keys = message.data.keys.toList()..sort();
   return jsonEncode([

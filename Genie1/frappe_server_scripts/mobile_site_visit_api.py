@@ -674,6 +674,10 @@ elif action == "create_event":
     category_config = get_event_category_config()
     if category not in category_config["options"]:
         frappe.throw("Choose a valid event category.")
+    if category.strip().lower() == "head office ch":
+        if assigned_to and assigned_to != current_user:
+            frappe.throw("Head Office CH visits can only be assigned to your logged-in user.")
+        assigned_to = current_user
     category_rule = get_category_rule(category)
     direct_event = category_rule["reference_mode"] == "none"
     required_values = [

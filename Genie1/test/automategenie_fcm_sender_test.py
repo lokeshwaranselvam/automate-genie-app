@@ -1,5 +1,6 @@
 """Generic sender transport mocks; no live Frappe/Firebase operations."""
 import importlib.util
+import ast
 import json
 from contextlib import nullcontext
 from pathlib import Path
@@ -22,6 +23,7 @@ class AutomateGenieFcmSenderTest(unittest.TestCase):
         self.frappe = SimpleNamespace(
             session=SimpleNamespace(user=self.user), local=SimpleNamespace(site="live-site"),
             PermissionError=PermissionError,
+            whitelist=lambda **kwargs: lambda function: function,
             throw=Mock(side_effect=lambda message, error=ValueError: (_ for _ in ()).throw(error(message))),
             get_doc=Mock(return_value=self.document),
             db=SimpleNamespace(get_value=Mock(side_effect=self.get_value), exists=Mock(return_value=False)),
@@ -111,7 +113,16 @@ class AutomateGenieFcmSenderTest(unittest.TestCase):
                 self.send()
 
     def test_generic_sender_is_internal_not_an_http_whitelisted_method(self):
-        self.assertNotIn("@frappe.whitelist", Path(self.module.__file__).read_text())
+        tree = ast.parse(Path(self.module.__file__).read_text())
+        whitelisted = {
+            node.name for node in tree.body if isinstance(node, ast.FunctionDef)
+            and any(isinstance(decorator, ast.Call)
+                    and ast.unparse(decorator.func) == "frappe.whitelist"
+                    for decorator in node.decorator_list)
+        }
+        # Only the guarded cron entry is exposed for Safe Exec's enqueue
+        # wrapper. Document senders and the per-recipient worker stay internal.
+        self.assertEqual(whitelisted, {"send_daily_sales_summary"})
         with self.assertRaises(PermissionError):
             self.module.send_fcm_to_user(self.recipient, self.payload)
         self.messaging.send.assert_not_called()

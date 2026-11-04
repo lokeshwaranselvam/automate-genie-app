@@ -79,6 +79,8 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
       _categoryRules[_eventCategory] ??
       SiteVisitCategoryRule.legacy(_eventCategory);
   bool get _directEvent => _categoryRule.isDirect;
+  bool get _selfAssignedCategory =>
+      _eventCategory?.trim().toLowerCase() == 'head office ch';
   String? get _referenceDoctype =>
       _categoryRule.isDocument ? _categoryRule.referenceDoctype : null;
   bool get _referenceEvent => _categoryRule.isDocument;
@@ -123,33 +125,56 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
   }
 
   Future<void> _refreshOptions() async {
-    if (_loading || _saving || _mobileSearching) return;
-    final category = _eventCategory;
-    final assignedTo = _assignedTo;
-    final opportunity = _opportunity;
-    final product = _product;
-    final query = _initialOpportunityQuery;
-    final hadOptions = _eventCategories.isNotEmpty;
+    if (_loading || _saving || _referenceLoading) return;
+    _mobileSearchDebounce?.cancel();
+    _locationSearchDebounce?.cancel();
+    _mobileSearchId++;
+    _opportunitySearchId++;
+    _locationSearchRequestId++;
+    _mapLinkRequestId++;
+    setState(() {
+      _loading = true;
+      _eventCategory = null;
+      _categoryStep = true;
+      _eventStep = false;
+      _opportunity = null;
+      _initialOpportunityQuery = null;
+      _product = null;
+      _assignedTo = null;
+      _visitDate = null;
+      _startsOn = null;
+      _endsOn = null;
+      _savedLocationRow = '';
+      _locationType = null;
+      _selectedCoordinates = null;
+      _resolvedMapLink = null;
+      _locationMapController = null;
+      _locationSearchResults = [];
+      _locationSearchSession = null;
+      _locationSearchError = null;
+      _mapLinkError = null;
+      _searchingLocation = false;
+      _resolvingMapLink = false;
+      _mobileSearching = false;
+      _mobileMatches = null;
+      _mobileSearchFailed = false;
+      _mobileSearchMessage = null;
+      _opportunitySearchError = null;
+      _selectedReference = null;
+      _references = [];
+      _referenceMatches = null;
+      _referenceQuery = '';
+      _referenceError = null;
+      _referenceFieldController = null;
+      _referenceFocusNode = null;
+      _opportunityFieldController = null;
+      _opportunityFocusNode = null;
+      _summaryController.clear();
+      _mobileController.clear();
+      _mapLinkController.clear();
+      _locationSearchController.clear();
+    });
     await _loadOptions();
-    if (!mounted) return;
-    if (hadOptions) {
-      setState(() {
-        _eventCategory = _eventCategories.contains(category) ? category : null;
-        if (_eventCategory == null) _categoryStep = true;
-        _assignedTo =
-            _users.any((user) => user['name'] == assignedTo)
-                ? assignedTo
-                : null;
-        _opportunity = opportunity;
-        _initialOpportunityQuery = query;
-        _product = _productOptions.contains(product) ? product : null;
-      });
-    }
-    if (_referenceEvent && _referenceError != null) {
-      _onReferenceMobileChanged(_mobileController.text);
-    } else if (_mobileSearchFailed && _mobileController.text.isNotEmpty) {
-      _onMobileChanged(_mobileController.text);
-    }
   }
 
   Future<void> _loadOptions() async {
@@ -282,6 +307,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
         _users.any((user) => user['name'] == assigned)) {
       _assignedTo = assigned;
     }
+    if (_selfAssignedCategory) _assignedTo = _currentUser;
   }
 
   void _selectOpportunity(Map<String, dynamic> opportunity) {
@@ -1927,7 +1953,11 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
   List<DropdownMenuItem<String>> _assigneeItems() {
     final others =
         _users
-            .where((user) => user['name']?.toString() != _currentUser)
+            .where(
+              (user) =>
+                  !_selfAssignedCategory &&
+                  user['name']?.toString() != _currentUser,
+            )
             .toList()
           ..sort(
             (a, b) => (a['name']?.toString() ?? '').toLowerCase().compareTo(
@@ -1936,7 +1966,7 @@ class _NewSiteVisitPageState extends State<NewSiteVisitPage> {
           );
     final me = _users.where((user) => user['name']?.toString() == _currentUser);
     return [
-      if (me.isNotEmpty)
+      if (me.isNotEmpty || (_selfAssignedCategory && _currentUser.isNotEmpty))
         DropdownMenuItem(
           value: _currentUser,
           child: Text(

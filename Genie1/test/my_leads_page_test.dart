@@ -9,7 +9,12 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+// ignore: depend_on_referenced_packages
+import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
+import 'fake_lead_webview_platform.dart';
+
 void main() {
+  setUp(() => WebViewPlatform.instance = FakeLeadWebPlatform());
   testWidgets(
     'phone and exact Lead status filters combine and clear without refetching',
     (tester) async {
@@ -216,6 +221,12 @@ void main() {
           expect(tester.takeException(), isNull);
         },
         () => MockClient((request) async {
+          if (request.url.path.endsWith('get_logged_user')) {
+            return http.Response(
+              jsonEncode({'message': 'sales@example.test'}),
+              200,
+            );
+          }
           expect(request.url.path, '/api/method/create_lead_from_mobile');
           expect(request.method, 'GET');
           expect(request.headers['cookie'], 'sid=test-session');

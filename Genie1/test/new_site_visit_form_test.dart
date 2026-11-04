@@ -504,7 +504,10 @@ void main() {
           await tester.pump(const Duration(milliseconds: 450));
           await tester.pumpAndSettle();
           expect(find.text('Ankit'), findsOneWidget);
-          expect(find.text('CRM-OPP-2026-28718 · 9873823617'), findsOneWidget);
+          expect(
+            find.text('CRM-OPP-2026-28718 Ã‚Â· 9873823617'),
+            findsOneWidget,
+          );
           expect(find.textContaining('CRM-LEAD-2026-50209'), findsNothing);
           await tester.tap(find.text('Ankit'));
           await tester.pumpAndSettle();
@@ -1379,6 +1382,135 @@ void main() {
   );
 
   testWidgets(
+    'swipe refresh resets the site visit draft and reloads form options',
+    (tester) async {
+      final requests = <http.Request>[];
+      await withForm(
+        tester,
+        [],
+        () async {
+          await tester.ensureVisible(
+            find.widgetWithText(ListTile, 'Head Office CH'),
+          );
+          await tester.tap(find.widgetWithText(ListTile, 'Head Office CH'));
+          await tester.pumpAndSettle();
+          await tester.ensureVisible(field('Summary *'));
+          await tester.enterText(field('Summary *'), 'Unsaved office visit');
+          final getCount =
+              requests.where((request) => request.method == 'GET').length;
+          await tester.runAsync(
+            () =>
+                tester
+                    .widget<RefreshIndicator>(
+                      find.byType(RefreshIndicator).first,
+                    )
+                    .onRefresh(),
+          );
+          await tester.pumpAndSettle();
+          expect(
+            find.widgetWithText(ListTile, 'Head Office CH'),
+            findsOneWidget,
+          );
+          expect(field('Summary *'), findsNothing);
+          expect(
+            requests.where((request) => request.method == 'GET').length,
+            greaterThan(getCount),
+          );
+          await tester.ensureVisible(
+            find.widgetWithText(ListTile, 'Head Office CH'),
+          );
+          await tester.tap(find.widgetWithText(ListTile, 'Head Office CH'));
+          await tester.pumpAndSettle();
+          expect(
+            tester.widget<TextField>(field('Summary *')).controller!.text,
+            isEmpty,
+          );
+          expect(find.text('Select visit date'), findsOneWidget);
+          expect(selectedValue(tester, 'Assigned to *'), 'sales@example.test');
+          expect(
+            requests.where((request) => request.method == 'POST'),
+            isEmpty,
+          );
+          expect(tester.takeException(), isNull);
+        },
+        requests: requests,
+        selectInitialCategory: false,
+      );
+    },
+  );
+
+  testWidgets(
+    'Head Office CH picker contains only the logged-in user and switching categories restores all users',
+    (tester) async {
+      await withForm(tester, [], () async {
+        Future<void> chooseCategory(String category) async {
+          final tile = find.widgetWithText(ListTile, category);
+          await tester.ensureVisible(tile);
+          await tester.tap(tile);
+          await tester.pumpAndSettle();
+        }
+
+        Future<void> openAssignees() async {
+          await tester.ensureVisible(field('Assigned to *'));
+          await tester.tap(field('Assigned to *'));
+          await tester.pumpAndSettle();
+        }
+
+        Future<void> closeAssignees() async {
+          Navigator.of(tester.element(find.text('Assigned to'))).pop();
+          await tester.pumpAndSettle();
+        }
+
+        await chooseCategory('Bank');
+        await openAssignees();
+        await tester.tap(
+          find.widgetWithText(ListTile, 'installer@example.test'),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          selectedValue(tester, 'Assigned to *'),
+          'installer@example.test',
+        );
+        await tester.ensureVisible(find.text('Change category'));
+        await tester.tap(find.text('Change category'));
+        await tester.pumpAndSettle();
+        await chooseCategory('Head Office CH');
+        expect(selectedValue(tester, 'Assigned to *'), 'sales@example.test');
+        await openAssignees();
+        expect(find.byType(ListTile), findsOneWidget);
+        expect(
+          find.widgetWithText(ListTile, 'Assign to me (sales@example.test)'),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(ListTile, 'installer@example.test'),
+          findsNothing,
+        );
+        await tester.enterText(field('Search username'), 'installer');
+        await tester.pumpAndSettle();
+        expect(find.text('No matching users.'), findsOneWidget);
+        await closeAssignees();
+        expect(selectedValue(tester, 'Assigned to *'), 'sales@example.test');
+        await tester.ensureVisible(find.text('Change category'));
+        await tester.tap(find.text('Change category'));
+        await tester.pumpAndSettle();
+        await chooseCategory('Timbe / Bioman Office CH');
+        await openAssignees();
+        expect(
+          find.widgetWithText(ListTile, 'installer@example.test'),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(ListTile, 'Assign to me (sales@example.test)'),
+          findsOneWidget,
+        );
+        await closeAssignees();
+        expect(tester.takeException(), isNull);
+      }, selectInitialCategory: false);
+    },
+  );
+
+  testWidgets(
     'assignee recommendations filter by username and save the selected user',
     (tester) async {
       final requests = <http.Request>[];
@@ -1739,6 +1871,16 @@ void main() {
         await tester
             .widget<RefreshIndicator>(find.byType(RefreshIndicator))
             .onRefresh();
+        await tester.pumpAndSettle();
+        expect(find.widgetWithText(ListTile, 'Site Visit'), findsOneWidget);
+        expect(attempts, 1);
+        await tester.tap(find.widgetWithText(ListTile, 'Site Visit'));
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<TextField>(field('Mobile number')).controller!.text,
+          isEmpty,
+        );
+        await tester.enterText(field('Mobile number'), '8667733611');
         await tester.pump(const Duration(milliseconds: 600));
         await tester.pumpAndSettle();
         expect(

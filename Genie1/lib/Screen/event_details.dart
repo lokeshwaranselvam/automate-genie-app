@@ -1,3 +1,4 @@
+import '../utils/api/notification_inbox.dart';
 import '../utils/event_category_policy.dart';
 import '../utils/api_business_policy.dart';
 import '../utils/widget/pull_to_refresh.dart';
@@ -1458,7 +1459,7 @@ class _EventDetailsState extends State<EventDetails> {
       if (!sessionValid) {
         Warning.show(context, 'Session expired. Please log in again.', 'Error');
         await LiveLocationService.stopForSignOut();
-        await prefs.clear();
+        await NotificationInbox.clearPreferencesPreservingDismissals(prefs);
         if (!mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const Login()),

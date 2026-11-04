@@ -9,12 +9,33 @@ user = frappe.session.user
 if not user or user == "Guest": frappe.throw("Please sign in to apply for leave.")
 business_policy = frappe.call("mobile_business_policy", feature="leave", action="get", event_id="")["policy"]
 
+# This field is mandatory for every caller, including clients outside the webpage.
+if not business_policy["fields"].get("custom_tasks_assigned_to"):
+    business_policy["fields"]["custom_tasks_assigned_to"] = {}
+business_policy["fields"]["custom_tasks_assigned_to"]["required"] = True
+business_policy["fields"]["custom_tasks_assigned_to"]["visible"] = True
+
 employee_fields = ["name", "employee_name", "company", "department"]
 if frappe.get_meta("Employee").get_field("leave_approver"): employee_fields.append("leave_approver")
 
 def skip_leave_application_push(): return
 
-if frappe.request.method == "GET":
+if frappe.request.method == "GET" and frappe.form_dict.get("view") == "tasks_assigned_options":
+    # Use the same API-owned link search pattern as Lead Creation.
+    txt = frappe.form_dict.get("txt") or ""
+    if not isinstance(txt, str) or len(txt) > 140:
+        frappe.throw("Search text must be at most 140 characters.")
+    tasks_field = frappe.get_meta("Leave Application").get_field("custom_tasks_assigned_to")
+    if not tasks_field or tasks_field.fieldtype != "Link" or tasks_field.options != "Employee":
+        frappe.throw("Configure Tasks Assigned To as an Employee Link on Leave Application.")
+    employees = frappe.get_all("Employee", filters={"user_id": user, "status": "Active"}, fields=["name"], limit_page_length=1)
+    if not employees:
+        frappe.throw("No active Employee record is linked to your account.")
+    matches = frappe.call("frappe.desk.search.search_link", doctype=tasks_field.options,
+        txt=txt.strip(), page_length=10, reference_doctype="Leave Application", ignore_user_permissions=tasks_field.get("ignore_user_permissions") in [1, "1", True])
+    frappe.response["message"] = {"options": matches}
+
+elif frappe.request.method == "GET":
     employees = frappe.get_all("Employee", filters={"user_id": user, "status": "Active"}, fields=employee_fields, limit_page_length=1)
     if not employees: frappe.throw("No active Employee record is linked to your account.")
     # Use the same eligibility source as ERPNext's Leave Application form.
@@ -38,6 +59,21 @@ elif frappe.request.method == "POST":
     from_date = (form.get("from_date") or "").strip()
     to_date = (form.get("to_date") or "").strip()
     description = (form.get("description") or "").strip()
+    tasks_assigned_to = form.get("custom_tasks_assigned_to")
+    if not isinstance(tasks_assigned_to, str) or not tasks_assigned_to.strip():
+        frappe.throw("Tasks Assigned To is required. Choose an Employee.")
+    tasks_assigned_to = tasks_assigned_to.strip()
+    tasks_field = frappe.get_meta("Leave Application").get_field("custom_tasks_assigned_to")
+    if not tasks_field or tasks_field.fieldtype != "Link" or tasks_field.options != "Employee":
+        frappe.throw("Configure Tasks Assigned To as an Employee Link on Leave Application.")
+    # Validate the exact Employee with the same field policy used for suggestions.
+    # Read this setting from server metadata; never accept it from the caller.
+    assigned_employees = frappe.call("frappe.desk.search.search_link", doctype=tasks_field.options,
+        txt=tasks_assigned_to, filters={"name": tasks_assigned_to}, page_length=1,
+        reference_doctype="Leave Application",
+        ignore_user_permissions=tasks_field.get("ignore_user_permissions") in [1, "1", True])
+    if not assigned_employees or assigned_employees[0].get("value") != tasks_assigned_to:
+        frappe.throw("Choose a valid Employee you have permission to select for Tasks Assigned To.")
     half_day = form.get("half_day") in ["1", 1, True, "true", "True", "on"]
     if not leave_type: frappe.throw("Leave Type is required.")
     if not from_date or not to_date: frappe.throw("From Date and To Date are required.")
@@ -73,6 +109,7 @@ elif frappe.request.method == "POST":
     leave.from_date = from_date
     leave.to_date = to_date
     leave.description = description
+    leave.custom_tasks_assigned_to = tasks_assigned_to
     leave.company = employee.company
     leave.department = employee.department
     leave.leave_approver = approver
@@ -82,6 +119,6 @@ elif frappe.request.method == "POST":
     leave.after_insert = skip_leave_application_push
     leave.flags.ignore_mandatory = True
     leave.insert(ignore_permissions=True, ignore_mandatory=True)
-    frappe.response["message"] = {"status": "success", "name": leave.name, "employee": leave.employee, "leave_type": leave.leave_type, "from_date": leave.from_date, "to_date": leave.to_date, "total_leave_days": leave.total_leave_days, "description": leave.description, "half_day": leave.half_day, "status_text": leave.status}
+    frappe.response["message"] = {"status": "success", "name": leave.name, "employee": leave.employee, "leave_type": leave.leave_type, "from_date": leave.from_date, "to_date": leave.to_date, "total_leave_days": leave.total_leave_days, "description": leave.description, "half_day": leave.half_day, "status_text": leave.status, "custom_tasks_assigned_to": leave.custom_tasks_assigned_to}
 else:
     frappe.throw("Use GET to load the form or POST to apply for leave.")

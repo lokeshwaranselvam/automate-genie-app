@@ -1,0 +1,115 @@
+<!-- Frappe Web Page route: genie-sales-summary. Combined internal HTML/CSS/JS. -->
+<style>
+  #ss-app {position:fixed;inset:0;z-index:1035;overflow:auto;background:#f4f7fb;color:#17202a;font:14px/1.5 Roboto,system-ui,-apple-system,sans-serif;color-scheme:light}
+  #ss-app,#ss-app * {box-sizing:border-box}
+  #ss-app [hidden] {display:none!important}
+  #ss-app .ss-header {display:flex;align-items:center;min-height:56px;padding:0 20px;background:linear-gradient(90deg,#0055ff,#442fef,#8000e5)}
+  #ss-app .ss-header h1 {color:#fff!important;font-size:20px;margin:0;font-weight:700}
+  #ss-app[data-native=true] .ss-header {display:none}
+  #ss-app .ss-main {max-width:720px;margin:auto;padding:24px 20px 40px}
+  #ss-app .ss-eyebrow {color:#697586;margin:0 0 4px;font-size:13px}
+  #ss-app h2 {font-size:24px;color:#17202a;margin:0 0 8px;font-weight:750}
+  #ss-app .ss-description {color:#697586;margin:0 0 24px}
+  #ss-app .ss-grid {display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  #ss-app .ss-card {min-width:0;background:#fff;border:1px solid #e5eaf2;border-radius:20px;padding:22px;box-shadow:0 8px 24px #26344508}
+  #ss-app .ss-symbol {width:44px;height:44px;border-radius:14px;background:#eaf3ff;color:#442fef;display:grid;place-items:center;margin-bottom:18px}
+  #ss-app .ss-symbol svg {width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  #ss-app .ss-label {font-size:14px;font-weight:600;color:#697586;margin:0}
+  #ss-app .ss-value {display:block;font-size:44px;line-height:1.2;font-weight:750;color:#442fef;margin-top:8px;font-variant-numeric:tabular-nums}
+  #ss-app .ss-total {display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:16px;padding:20px 22px;background:linear-gradient(110deg,#0055ff,#442fef,#8000e5);border-radius:18px;color:#fff}
+  #ss-app .ss-total strong {font-size:28px;font-variant-numeric:tabular-nums}
+  #ss-app .ss-asof {margin:20px 0 0;color:#697586;font-size:12px}
+  #ss-app .ss-refresh {margin-top:20px;border:0;border-radius:24px;padding:12px 22px;background:#442fef;color:white;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;min-height:44px}
+  #ss-app .ss-refresh:disabled {opacity:.55;cursor:default}
+  #ss-app button:focus-visible {outline:3px solid #aabfff;outline-offset:3px}
+  #ss-app .ss-status {padding:24px 0;color:#697586}
+  #ss-app .ss-error {color:#b3261e}
+  #ss-app .ss-spinner {width:26px;height:26px;border:3px solid #ddd7ff;border-top-color:#442fef;border-radius:50%;animation:ss-spin .8s linear infinite;margin:16px 0}
+  @keyframes ss-spin {to {transform:rotate(360deg)}}
+  @media(max-width:340px) { #ss-app .ss-grid {grid-template-columns:1fr} }
+  @media(prefers-reduced-motion:reduce) { #ss-app .ss-spinner {animation:none} }
+</style>
+<div id="ss-app">
+  <header class="ss-header"><h1>Sales summary</h1></header>
+  <main class="ss-main">
+    <p class="ss-eyebrow">MY OPPORTUNITIES</p>
+    <h2>Your sales summary</h2>
+    <p class="ss-description">Live counts for Opportunities where you are the Opportunity Owner, Field Owner 1, or Field Owner 2 and have permission to view.</p>
+    <div id="ss-status" class="ss-status" role="status" aria-live="polite">Loading your summary…</div>
+    <section id="ss-counts" aria-label="Opportunity counts" hidden>
+      <div class="ss-grid">
+        <article class="ss-card"><span class="ss-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></span><h3 class="ss-label">Prospect</h3><strong id="ss-prospect" class="ss-value"></strong></article>
+        <article class="ss-card"><span class="ss-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg></span><h3 class="ss-label">Pipeline</h3><strong id="ss-pipeline" class="ss-value"></strong></article>
+      </div>
+      <div class="ss-total"><span>Total Prospect + Pipeline</span><strong id="ss-total"></strong></div>
+      <p id="ss-asof" class="ss-asof"></p>
+    </section>
+    <button id="ss-refresh" class="ss-refresh" type="button">Refresh</button>
+  </main>
+</div>
+<script>
+(() => {
+  'use strict';
+  const $=id=>document.getElementById(id),app=$('ss-app');
+  if(!app||app.dataset.started==='true')return;
+  app.dataset.started='true';
+  const native=typeof window.GenieSalesSummary?.postMessage==='function';
+  app.dataset.native=String(native);
+  const state={user:null,expectedUser:null,busy:false,stopped:false,started:false};
+  let controller=null;
+  let verification=null;
+  function verifyAppSession(){
+    if(!native)return Promise.resolve();
+    return new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{verification=null;reject(Error('Could not verify your app session. Reopen the sales summary.'));},10000);
+      verification={resolve,reject,timer};window.GenieSalesSummary.postMessage('verify_session');
+    });
+  }
+  window.addEventListener('genie-sales-summary-verified',event=>{
+    const pending=verification;if(!pending)return;verification=null;clearTimeout(pending.timer);
+    if(event.detail?.valid===true&&event.detail.user===state.expectedUser)pending.resolve();
+    else{stop();pending.reject(Error('App session changed.'));}
+  });
+  function status(message,error=false){$('ss-status').textContent=message;$('ss-status').className='ss-status'+(error?' ss-error':'');$('ss-status').hidden=false;}
+  function stop(){state.stopped=true;$('ss-counts').hidden=true;status('Your session expired or changed. Sign in again and reopen the sales summary.',true);if(native)window.GenieSalesSummary.postMessage('session_expired');}
+  async function get(method,signal){
+    const response=await fetch(new URL('/api/method/'+method,window.location.origin).href,{
+      credentials:'same-origin',cache:'no-store',redirect:'error',headers:{Accept:'application/json'},signal,
+    });
+    if(response.status===401){stop();throw Error('Session expired.');}
+    if(!response.ok)throw Error(response.status===403?'Your account does not have permission to view this sales summary.':'Could not load the sales summary ('+response.status+').');
+    const data=await response.json();if(!data||!Object.hasOwn(data,'message'))throw Error('ERP returned an invalid response.');return data.message;
+  }
+  function validateUser(user){
+    if(typeof user!=='string'||!user||user==='Guest'||(state.expectedUser&&state.expectedUser!==user)||(state.user&&state.user!==user)){stop();throw Error('Session changed.');}
+    return user;
+  }
+  async function load(){
+    if(!state.started||state.busy||state.stopped)return;
+    state.busy=true;$('ss-refresh').disabled=true;$('ss-counts').hidden=true;status('Loading your summary…');app.setAttribute('aria-busy','true');
+    controller=new AbortController();const timer=setTimeout(()=>controller.abort(),40000);
+    try{
+      await verifyAppSession();
+      const user=validateUser(await get('frappe.auth.get_logged_user',controller.signal));
+      const data=await get('mobile_sales_summary',controller.signal);
+      if(validateUser(await get('frappe.auth.get_logged_user',controller.signal))!==user){stop();throw Error('Session changed.');}
+      if(!data||data.user!==user||data.scope!=='own_opportunities'){stop();throw Error('ERP returned a summary for another user.');}
+      const values=[data.prospect_count,data.pipeline_count,data.total_count];
+      if(!values.every(value=>Number.isSafeInteger(value)&&value>=0)||values[2]!==values[0]+values[1])throw Error('ERP returned invalid sales counts.');
+      await verifyAppSession();
+      state.user=user;
+      $('ss-prospect').textContent=String(values[0]);$('ss-pipeline').textContent=String(values[1]);$('ss-total').textContent=String(values[2]);
+      $('ss-asof').textContent='Updated '+String(data.as_of||'now')+' (ERP site time)';
+      $('ss-status').hidden=true;$('ss-counts').hidden=false;
+    }catch(error){if(!state.stopped)status(error.name==='AbortError'?'The request timed out. Check your connection and refresh.':error.message||'Could not load the summary.',true);}
+    finally{clearTimeout(timer);controller=null;state.busy=false;$('ss-refresh').disabled=state.stopped;app.removeAttribute('aria-busy');}
+  }
+  $('ss-refresh').addEventListener('click',load);
+  window.addEventListener('genie-sales-summary-session',event=>{
+    if(!native)return;
+    try{state.expectedUser=validateUser(event.detail?.user);if(!state.started){state.started=true;load();}}catch(_){/* Session error is already displayed. */}
+  });
+  window.addEventListener('pagehide',()=>{if(controller)controller.abort();});
+  if(native)status('Opening your sales-summary session…');else{state.started=true;load();}
+})();
+</script>

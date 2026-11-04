@@ -17,18 +17,13 @@ if command.endswith(".checkin") or command.endswith(".checkout"):
     employee_record = frappe.db.get_value(
         "Employee", doc.employee, ["user_id", "department"], as_dict=True,
     )
-    user_email = str(frappe.db.get_value("User", current_user, "email") or "").strip().lower()
-    email_local_part = user_email.split("@", 1)[0] if "@" in user_email else ""
     face_required = (
         employee_record
         and employee_record.user_id == current_user
-        and (
-            user_email == "murugan.finance@homegeniegroup.com"
-            or (
-                (".trainee" in email_local_part or ".itdigital" in email_local_part)
-                and employee_record.department == "IT And Digital - HBPPL"
-            )
-        )
+        and not bool(frappe.db.exists("Has Role", {
+            "parent": current_user, "parenttype": "User", "parentfield": "roles",
+            "role": "IOS User",
+        }))
     )
     if face_required:
         record_id = frappe.form_dict.get("face_verification")

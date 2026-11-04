@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import '../utils/storage_diagnostics.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
@@ -46,11 +47,19 @@ class _LoginState extends State<Login> {
 
   Future<void> _restoreRememberedLogin() async {
     try {
-      final remember = await StorageDiagnostics.read(_secureStorage, key: _rememberKey) == 'true';
+      final remember =
+          await StorageDiagnostics.read(_secureStorage, key: _rememberKey) ==
+          'true';
       if (!remember) return;
 
-      final username = await StorageDiagnostics.read(_secureStorage, key: _usernameKey);
-      final password = await StorageDiagnostics.read(_secureStorage, key: _passwordKey);
+      final username = await StorageDiagnostics.read(
+        _secureStorage,
+        key: _usernameKey,
+      );
+      final password = await StorageDiagnostics.read(
+        _secureStorage,
+        key: _passwordKey,
+      );
       if (!mounted) return;
 
       setState(() => _rememberMe = true);
@@ -72,7 +81,11 @@ class _LoginState extends State<Login> {
       }
 
       // Credentials are saved only after the server accepts them in login().
-      await StorageDiagnostics.write(_secureStorage, key: _rememberKey, value: 'true');
+      await StorageDiagnostics.write(
+        _secureStorage,
+        key: _rememberKey,
+        value: 'true',
+      );
     } catch (error) {
       debugPrint('Could not update remembered login: $error');
     }
@@ -81,11 +94,13 @@ class _LoginState extends State<Login> {
   Future<void> _saveRememberedLogin() async {
     if (!_rememberMe) return;
     try {
-      await StorageDiagnostics.write(_secureStorage,
+      await StorageDiagnostics.write(
+        _secureStorage,
         key: _usernameKey,
         value: _emailController.text.trim(),
       );
-      await StorageDiagnostics.write(_secureStorage,
+      await StorageDiagnostics.write(
+        _secureStorage,
         key: _passwordKey,
         value: _passwordController.text,
       );
@@ -179,49 +194,65 @@ class _LoginState extends State<Login> {
     }
   }
 
+  Future<void> _refreshLogin() async {
+    if (_isLoading) return;
+    setState(() {
+      _emailController.clear();
+      _passwordController.clear();
+      _isPasswordVisible = false;
+      _rememberMe = false;
+    });
+    await _restoreRememberedLogin();
+    await _checkPing();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F9FC),
-      body: SafeArea(
-        child: Stack(
-          children: [
-            Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 26,
-                  vertical: 28,
-                ),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 430),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const SizedBox(height: 8),
-                        _buildBrand(),
-                        const SizedBox(height: 35),
-                        _buildUsernameField(),
-                        const SizedBox(height: 19),
-                        _buildPasswordField(),
-                        const SizedBox(height: 8),
-                        _buildRememberMe(),
-                        const SizedBox(height: 16),
-                        _buildLoginButton(),
-                      ],
+      body: PullToRefresh(
+        enabled: !_isLoading,
+        onRefresh: _refreshLogin,
+        child: SafeArea(
+          child: Stack(
+            children: [
+              Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 26,
+                    vertical: 28,
+                  ),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 430),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: 8),
+                          _buildBrand(),
+                          const SizedBox(height: 35),
+                          _buildUsernameField(),
+                          const SizedBox(height: 19),
+                          _buildPasswordField(),
+                          const SizedBox(height: 8),
+                          _buildRememberMe(),
+                          const SizedBox(height: 16),
+                          _buildLoginButton(),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            if (_isLoading)
-              ColoredBox(
-                color: Colors.black.withValues(alpha: 0.12),
-                child: const Center(
-                  child: AgPathLoadingIndicator(showBackground: true),
+              if (_isLoading)
+                ColoredBox(
+                  color: Colors.black.withValues(alpha: 0.12),
+                  child: const Center(
+                    child: AgPathLoadingIndicator(showBackground: true),
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );

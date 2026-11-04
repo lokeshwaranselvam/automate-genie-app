@@ -438,8 +438,11 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     final distanceVisits =
         _dateRange != null
             ? visits
-            : visits.where((visit) {
-              final date = _filterDate(visit, _tab);
+            : _visits.where((visit) {
+              final date = _filterDate(
+                visit,
+                _isCompleted(visit) ? _VisitTab.completed : _VisitTab.scheduled,
+              );
               return date != null &&
                   date.year == now.year &&
                   date.month == now.month;
@@ -473,7 +476,9 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
             padding: const EdgeInsets.only(right: 12),
             child: Tooltip(
               message:
-                  'Recorded distance for ${distances.length} of ${distanceVisits.length} visits ${_dateRange == null ? 'in the current month' : 'in the selected date range'}. Updates with the selected tab and search.',
+                  _dateRange == null
+                      ? 'Recorded distance for ${distances.length} of ${distanceVisits.length} visits across all tabs in the current month.'
+                      : 'Recorded distance for ${distances.length} of ${distanceVisits.length} visits in the selected date range. Updates with the selected tab and search.',
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 110),
                 child: Column(

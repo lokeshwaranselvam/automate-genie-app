@@ -1,3 +1,4 @@
+import '../utils/widget/webview_pull_to_refresh.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -132,9 +133,10 @@ class _ExpenseClaimWebViewPageState extends State<ExpenseClaimWebViewPage> {
       _pageReady = false;
       _loading = false;
       _submitting = false;
-      _error = uncertain
-          ? '$message If you were submitting a claim, check Expense Claims in ERPNext before trying again.'
-          : message;
+      _error =
+          uncertain
+              ? '$message If you were submitting a claim, check Expense Claims in ERPNext before trying again.'
+              : message;
     });
   }
 
@@ -216,14 +218,15 @@ class _ExpenseClaimWebViewPageState extends State<ExpenseClaimWebViewPage> {
       );
       await controller.setNavigationDelegate(
         NavigationDelegate(
-          onNavigationRequest: (request) =>
-              _isCurrent(generation, controller) &&
-                      !_pageFailed &&
-                      !_submitting &&
-                      !_choosingPhoto &&
-                      _isPage(request.url)
-                  ? NavigationDecision.navigate
-                  : NavigationDecision.prevent,
+          onNavigationRequest:
+              (request) =>
+                  _isCurrent(generation, controller) &&
+                          !_pageFailed &&
+                          !_submitting &&
+                          !_choosingPhoto &&
+                          _isPage(request.url)
+                      ? NavigationDecision.navigate
+                      : NavigationDecision.prevent,
           onPageStarted: (url) {
             if (!_isCurrent(generation, controller)) return;
             if (!_isPage(url)) {
@@ -328,8 +331,7 @@ class _ExpenseClaimWebViewPageState extends State<ExpenseClaimWebViewPage> {
         _fail(_message(error), generation);
       }
     } finally {
-      if (_isCurrent(generation, controller) &&
-          _bindingDocument == document) {
+      if (_isCurrent(generation, controller) && _bindingDocument == document) {
         _bindingDocument = null;
       }
     }
@@ -416,7 +418,9 @@ class _ExpenseClaimWebViewPageState extends State<ExpenseClaimWebViewPage> {
       final uris = <String>[];
       for (final image in selected) {
         if (image.path.isEmpty || !await File(image.path).exists()) {
-          throw StateError('The selected bill image is missing. Choose it again.');
+          throw StateError(
+            'The selected bill image is missing. Choose it again.',
+          );
         }
         uris.add(Uri.file(image.path).toString());
       }
@@ -429,7 +433,9 @@ class _ExpenseClaimWebViewPageState extends State<ExpenseClaimWebViewPage> {
       return [];
     } catch (error) {
       if (_isCurrentDocument(generation, controller, document)) {
-        _showPhotoMessage('Could not select the bill photo: ${_message(error)}');
+        _showPhotoMessage(
+          'Could not select the bill photo: ${_message(error)}',
+        );
       }
       return [];
     } finally {
@@ -441,7 +447,9 @@ class _ExpenseClaimWebViewPageState extends State<ExpenseClaimWebViewPage> {
 
   void _showPhotoMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _close() {
@@ -483,22 +491,32 @@ class _ExpenseClaimWebViewPageState extends State<ExpenseClaimWebViewPage> {
           ),
           title: const Text('Expense Claim'),
         ),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(_error!, textAlign: TextAlign.center),
-                const SizedBox(height: 16),
-                FilledButton(
-                  onPressed:
-                      _initializing || _submitting || _choosingPhoto
-                          ? null
-                          : _initialize,
-                  child: const Text('Retry'),
-                ),
-              ],
+        body: WebViewPullToRefresh(
+          controller: _error == null ? _controller : null,
+          enabled:
+              !_loading &&
+              !_initializing &&
+              !_submitting &&
+              !_choosingPhoto &&
+              !_closing,
+          onRefresh: _initialize,
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_error!, textAlign: TextAlign.center),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed:
+                        _initializing || _submitting || _choosingPhoto
+                            ? null
+                            : _initialize,
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -506,29 +524,38 @@ class _ExpenseClaimWebViewPageState extends State<ExpenseClaimWebViewPage> {
     }
     return Scaffold(
       backgroundColor: Colors.white,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            height: MediaQuery.paddingOf(context).top,
-            child: const DecoratedBox(
-              decoration: BoxDecoration(gradient: BrandColors.gradient),
+      body: WebViewPullToRefresh(
+        controller: _error == null ? _controller : null,
+        enabled:
+            !_loading &&
+            !_initializing &&
+            !_submitting &&
+            !_choosingPhoto &&
+            !_closing,
+        onRefresh: _initialize,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: MediaQuery.paddingOf(context).top,
+              child: const DecoratedBox(
+                decoration: BoxDecoration(gradient: BrandColors.gradient),
+              ),
             ),
-          ),
-          SafeArea(
-            child: Stack(
-              children: [
-                if (_controller != null)
-                  WebViewWidget(controller: _controller!),
-                if (_loading)
-                  const Center(child: AgPathLoadingIndicator()),
-              ],
+            SafeArea(
+              child: Stack(
+                children: [
+                  if (_controller != null)
+                    WebViewWidget(controller: _controller!),
+                  if (_loading) const Center(child: AgPathLoadingIndicator()),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

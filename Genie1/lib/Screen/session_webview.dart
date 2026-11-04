@@ -1,3 +1,4 @@
+import '../utils/widget/webview_pull_to_refresh.dart';
 import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
@@ -132,6 +133,28 @@ class _SessionWebViewState extends State<SessionWebView> {
     }
   }
 
+  Future<void> _refreshPage() async {
+    if (_isLoading || _openingPaymentApp) return;
+    final controller = _controller;
+    if (controller == null || _error != null) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+      await _initializeWebView();
+      return;
+    }
+    final current = Uri.tryParse(await controller.currentUrl() ?? widget.url);
+    if (!mounted ||
+        current == null ||
+        current.scheme != 'https' ||
+        current.host.isEmpty) {
+      return;
+    }
+    // Start a fresh GET document; never resubmit a previous form POST.
+    await controller.loadRequest(current);
+  }
+
   Future<void> _openPaymentApp(Uri uri) async {
     if (_openingPaymentApp) return;
     _openingPaymentApp = true;
@@ -202,8 +225,15 @@ class _SessionWebViewState extends State<SessionWebView> {
               ],
             );
 
+    final refreshableBody = WebViewPullToRefresh(
+      controller: _error == null ? _controller : null,
+      enabled: !_isLoading && !_openingPaymentApp,
+      onRefresh: _refreshPage,
+      child: body,
+    );
+
     if (widget.embedded) {
-      return PopScope(canPop: !widget.blockSystemBack, child: body);
+      return PopScope(canPop: !widget.blockSystemBack, child: refreshableBody);
     }
 
     return PopScope(
@@ -221,7 +251,7 @@ class _SessionWebViewState extends State<SessionWebView> {
           ),
           title: Text(widget.title),
         ),
-        body: body,
+        body: refreshableBody,
       ),
     );
   }

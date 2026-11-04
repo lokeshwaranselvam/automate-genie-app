@@ -1,3 +1,4 @@
+import '../utils/widget/pull_to_refresh.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 import 'dart:io';
@@ -467,6 +468,12 @@ class _FaceCapturePageState extends State<FaceCapturePage>
     _queueStart();
   }
 
+  Future<void> _refreshCamera() async {
+    if (_starting || _capturing || _completed) return;
+    await _retry();
+    await _cameraOperations;
+  }
+
   @override
   Widget build(BuildContext context) {
     final camera = _camera;
@@ -480,111 +487,116 @@ class _FaceCapturePageState extends State<FaceCapturePage>
     return Scaffold(
       backgroundColor: const Color(0xFFF5F8FC),
       appBar: brandAppBar(title: Text(widget.title)),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: ColoredBox(
-                    color: Colors.black,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        if (previewReady)
-                          Center(
-                            child:
-                                widget.usePrimaryFaceSelection
-                                    ? AspectRatio(
-                                      aspectRatio: 1 / camera.value.aspectRatio,
-                                      child: CameraPreview(camera),
-                                    )
-                                    : CameraPreview(camera),
-                          ),
-                        if (previewReady)
-                          IgnorePointer(
-                            child: CustomPaint(
-                              painter: _FaceGuidePainter(
-                                color:
-                                    _blink.progress.canCapture
-                                        ? Colors.green
-                                        : Colors.white,
+      body: PullToRefresh(
+        enabled: !_starting && !_capturing && !_completed,
+        onRefresh: _refreshCamera,
+        child: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
+                    child: ColoredBox(
+                      color: Colors.black,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          if (previewReady)
+                            Center(
+                              child:
+                                  widget.usePrimaryFaceSelection
+                                      ? AspectRatio(
+                                        aspectRatio:
+                                            1 / camera.value.aspectRatio,
+                                        child: CameraPreview(camera),
+                                      )
+                                      : CameraPreview(camera),
+                            ),
+                          if (previewReady)
+                            IgnorePointer(
+                              child: CustomPaint(
+                                painter: _FaceGuidePainter(
+                                  color:
+                                      _blink.progress.canCapture
+                                          ? Colors.green
+                                          : Colors.white,
+                                ),
                               ),
                             ),
-                          ),
-                        if (_starting || _capturing)
-                          const Center(
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
+                          if (_starting || _capturing)
+                            const Center(
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                              ),
                             ),
-                          ),
-                        if (!previewReady && !_starting)
-                          const Center(
-                            child: Icon(
-                              Icons.face,
-                              color: Colors.white70,
-                              size: 80,
+                          if (!previewReady && !_starting)
+                            const Center(
+                              child: Icon(
+                                Icons.face,
+                                color: Colors.white70,
+                                size: 80,
+                              ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-              child: Column(
-                children: [
-                  Icon(
-                    needsRetry ? Icons.info_outline : Icons.face,
-                    color: _blue,
-                    size: 30,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    message,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      height: 1.4,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                child: Column(
+                  children: [
+                    Icon(
+                      needsRetry ? Icons.info_outline : Icons.face,
+                      color: _blue,
+                      size: 30,
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'The camera takes your selfie automatically after you blink.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Color(0xFF667085), height: 1.4),
-                  ),
-                  if (needsRetry && !_capturing) ...[
-                    const SizedBox(height: 18),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: _retry,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _blue,
-                        ).copyWith(
-                          backgroundBuilder: BrandColors.buttonBackground,
-                        ),
-                        icon: Icon(
-                          _needsSettings
-                              ? Icons.settings
-                              : Icons.camera_alt_outlined,
-                        ),
-                        label: Text(
-                          _needsSettings ? 'Open settings' : 'Try again',
-                        ),
+                    const SizedBox(height: 10),
+                    Text(
+                      message,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        height: 1.4,
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'The camera takes your selfie automatically after you blink.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Color(0xFF667085), height: 1.4),
+                    ),
+                    if (needsRetry && !_capturing) ...[
+                      const SizedBox(height: 18),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: _retry,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _blue,
+                          ).copyWith(
+                            backgroundBuilder: BrandColors.buttonBackground,
+                          ),
+                          icon: Icon(
+                            _needsSettings
+                                ? Icons.settings
+                                : Icons.camera_alt_outlined,
+                          ),
+                          label: Text(
+                            _needsSettings ? 'Open settings' : 'Try again',
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

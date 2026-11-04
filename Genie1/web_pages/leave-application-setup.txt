@@ -16,10 +16,12 @@ Install the ERP Web Page before using the rebuilt app
   6. Rebuild/install the app. The existing Leave Application entry in More/Attendance
      now opens this dedicated WebView. Existing Back and Notifications callbacks remain.
 
-Existing APIs - no API or Server Script changes are required
+Existing APIs - update the leave Server Script together with this webpage
   GET /api/method/frappe.auth.get_logged_user
   GET /api/method/create_leave_application_from_mobile
   POST /api/method/create_leave_application_from_mobile
+  GET /api/method/create_leave_application_from_mobile?view=tasks_assigned_options&txt=...
+  searches Employee choices through the same API-owned pattern as Lead Creation.
   GET /app only when a current CSRF token needs to be initialized/refreshed.
   The existing server determines the active Employee, eligible Leave Types,
   approver, company, half_day_date, workflow and final total. Do not create another API.
@@ -60,3 +62,22 @@ Verification
   On a device verify More/Attendance entry, header/status bar, Back, Notifications,
   eligible leave types, today/future dates, disabled past days, half day, required
   reason, overlap/balance/approver errors and one confirmed ERP Leave Application.
+
+Mandatory Tasks Assigned To
+  Replace the API Server Script create_leave_application_from_mobile with the updated
+  frappe_server_scripts/create_leave_application_from_mobile.py at the same time as
+  publishing the updated HTML. Keep Allow Guest disabled and existing settings.
+  Leave Application must have custom_tasks_assigned_to as Link, Options: Employee.
+  Set Mandatory in Customize Form too if the ERP Desk form must also require it.
+  The page requires a dropdown selection and submits the Employee document ID.
+  The API rejects empty/malformed values and validates the exact Employee using
+  the same link search policy as suggestions, then saves the field on the application.
+  Employee choices use API-owned link search, matching the Lead Creation pattern.
+  The API reads Ignore User Permissions from the server metadata of
+  Leave Application.custom_tasks_assigned_to, matching the Desk field setting.
+  Client-supplied permission flags are never used. Frappe link search handles
+  read/select authorization. Search is limited to 10 per request and does not create leave.
+  Existing clients posting to this endpoint must now send custom_tasks_assigned_to;
+  older callers that omit it will receive a mandatory-field validation error.
+  Verify employee ID/name search, selection, direct POST without the field,
+  inaccessible/invalid Employee rejection, and the saved field on the ERP document.
