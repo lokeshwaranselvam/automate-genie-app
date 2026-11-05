@@ -78,7 +78,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
       _busy = true;
       _error = null;
       _capturing = false;
-      _instruction = 'Preparing your camera and face toolsâ€¦';
+      _instruction = 'Preparing your camera and face tools';
     });
     try {
       // Load the model before requesting frames: no blink is accepted while loading.
@@ -160,7 +160,7 @@ class _FaceCapturePageState extends State<FaceCapturePage>
     _capturing = true;
     setState(() {
       _busy = true;
-      _instruction = 'Checking your selfieâ€¦';
+      _instruction = 'Checking your selfie...';
     });
     File? photo;
     var accepted = false;

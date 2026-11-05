@@ -66,11 +66,20 @@ class LocalPwaHandler(SimpleHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and origin != server.local_origin:
             return self._reply(403, b"Cross-origin requests are not allowed.")
-        if self.headers.get("Sec-Fetch-Site") == "cross-site":
-            return self._reply(403, b"Cross-site requests are not allowed.")
         parsed = urlsplit(self.path)
         if parsed.scheme or parsed.netloc or not self.path.startswith("/") or self.path.startswith("//"):
             return self._reply(400, b"An origin-relative path is required.")
+        # Chrome may retain a cross-site initiator when navigating from a link
+        # or redirect. Allow only top-level GET navigation to the public shell;
+        # cross-site API calls, subresources and form submissions stay blocked.
+        shell_navigation = (
+            self.command == "GET"
+            and parsed.path in ("/", APP_PATH, APP_PATH + "index.html")
+            and self.headers.get("Sec-Fetch-Mode") == "navigate"
+            and self.headers.get("Sec-Fetch-Dest") == "document"
+        )
+        if self.headers.get("Sec-Fetch-Site") == "cross-site" and not shell_navigation:
+            return self._reply(403, b"Cross-site requests are not allowed.")
         if parsed.path == "/":
             return self._reply(302, location=APP_PATH)
         if parsed.path.startswith(APP_PATH):

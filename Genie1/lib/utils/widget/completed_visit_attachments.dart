@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../Screen/session_webview.dart';
 import '../api/event.dart';
+import '../platform/erp_web_page_uri.dart';
 
 /// Saved Event files; fetching these never changes checkout or report data.
 class CompletedVisitAttachments extends StatefulWidget {
@@ -53,14 +55,31 @@ class _CompletedVisitAttachmentsState extends State<CompletedVisitAttachments> {
         throw const FormatException('Attachment details are unavailable.');
       }
       final base = Uri.tryParse(dotenv.env['SITE_URL']?.trim() ?? '');
-      if (base == null || base.scheme != 'https' || base.host.isEmpty) {
+      if (base == null || !isTrustedErpPageUri(base)) {
         throw StateError('ERP URL unavailable.');
       }
       final files = <Map<String, dynamic>>[];
       for (final record in records.whereType<Map>()) {
         final path = record['file_url']?.toString().trim() ?? '';
         if (path.isEmpty) continue;
-        final uri = base.resolve(path);
+        var uri = base.resolve(path);
+        // Absolute ERP file URLs must also travel through the local session
+        // proxy. Map only its configured HTTPS upstream, never arbitrary hosts.
+        final upstream = Uri.tryParse(dotenv.env['WEB_PROXY_ERP_ORIGIN'] ?? '');
+        if (kIsWeb &&
+            base.scheme == 'http' &&
+            (base.host == 'localhost' || base.host == '127.0.0.1') &&
+            upstream != null &&
+            upstream.scheme == 'https' &&
+            upstream.host.isNotEmpty &&
+            uri.userInfo.isEmpty &&
+            uri.origin == upstream.origin) {
+          uri = base.replace(
+            path: uri.path,
+            query: uri.query,
+            fragment: uri.fragment,
+          );
+        }
         // Never send ERP authentication to a different host or URL scheme.
         if (uri.origin != base.origin || uri.userInfo.isNotEmpty) {
           continue;

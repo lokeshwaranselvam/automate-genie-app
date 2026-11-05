@@ -1,10 +1,36 @@
 """Custom Frappe application Python, NOT a restricted Server Script.
 
 Replace only register_device in apps/itgenie/itgenie/lead_calling/mobile_api.py.
+Append heartbeat from this file to that same module.
 Keep all other functions/imports in that deployed module unchanged.
 The existing FCM Device schema stores one employee-keyed record per employee.
 """
 import frappe
+
+
+@frappe.whitelist(methods=["POST"])
+def heartbeat(device_id=None):
+    """Update only the authenticated user's matching active installation.
+
+    Frappe commits a successful POST. No token, binding, or activation changes.
+    """
+    user = frappe.session.user
+    if not user or user == "Guest":
+        frappe.throw("Login required", frappe.PermissionError)
+    if not isinstance(device_id, str) or not device_id.strip() or len(device_id) > 140:
+        frappe.throw("A valid device_id is required")
+    device = frappe.db.get_value(
+        "FCM Device",
+        {"user": user, "is_active": 1, "device_id": device_id.strip()},
+        "name", for_update=True,
+    )
+    if not device:
+        return {"status": "not_registered"}
+    frappe.db.set_value(
+        "FCM Device", device, "last_seen", frappe.utils.now(),
+        update_modified=False,
+    )
+    return {"status": "success"}
 
 
 @frappe.whitelist()

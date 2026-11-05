@@ -258,7 +258,10 @@ class FcmNotificationService {
 }
 
 String _documentReceipt(RemoteMessage message) {
-  if (isSalesSummaryPush(message.data)) {
+  final notificationLog = message.data['notification_log'];
+  if (isSalesSummaryPush(message.data) &&
+      notificationLog is String &&
+      notificationLog.trim().isNotEmpty) {
     return 'sales-summary:${message.data['notification_log']}';
   }
   if (message.messageId?.isNotEmpty == true) return message.messageId!;

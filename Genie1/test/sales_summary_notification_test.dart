@@ -6,6 +6,65 @@ import 'package:homegenie/utils/api/notification_inbox.dart';
 import 'package:homegenie/utils/api/sales_summary_notification.dart';
 
 void main() {
+  test('existing collection payload uses the fixed sales summary route', () {
+    final data = <String, dynamic>{
+      'type': 'DOCUMENT_NOTIFICATION',
+      'notification_name': 'TOMORROW-COLLECTION',
+      'doctype': 'User',
+      'docname': 'staff@example.test',
+      'link': 'https://outside.test',
+    };
+    expect(isSalesSummaryPush(data), isTrue);
+    expect(isSalesSummaryPush({...data, 'doctype': '', 'docname': ''}), isTrue);
+    expect(isSalesSummaryPush({...data, 'type': 'OTHER'}), isFalse);
+    expect(
+      isSalesSummaryPush({...data, 'notification_name': 'CHECKOUT-REMINDER'}),
+      isFalse,
+    );
+  });
+
+  test('old collection cache is recognized without linking User reminders', () {
+    final old = <String, dynamic>{
+      'id': 'push:old',
+      'title': 'Tomorrow Collection',
+      'body': 'TOMORROW COLLECTION\n\nGood morning!',
+      'doctype': 'User',
+      'reference': 'staff@example.test',
+    };
+    final collection = InboxNotification.fromJson(old);
+    expect(collection.isSalesSummary, isTrue);
+    expect(collection.hasErpDocumentLink, isFalse);
+    expect(
+      InboxNotification.fromJson(collection.toJson()).isSalesSummary,
+      isTrue,
+    );
+    final reminder = InboxNotification.fromJson({
+      ...old,
+      'title': 'TEST: Check-out Reminder',
+      'body': 'Check out today.',
+    });
+    expect(reminder.isSalesSummary, isFalse);
+    expect(reminder.hasErpDocumentLink, isFalse);
+    expect(
+      InboxNotification.fromJson({
+        ...old,
+        'title': 'Task assigned',
+        'doctype': 'Task',
+        'reference': 'TASK-1',
+      }).hasErpDocumentLink,
+      isTrue,
+    );
+    expect(
+      InboxNotification.fromJson({
+        ...old,
+        'doctype': '',
+        'reference': '',
+        'title': 'Information',
+      }).hasErpDocumentLink,
+      isFalse,
+    );
+  });
+
   test('summary route accepts only the exact internal page', () {
     dotenv.testLoad(fileInput: 'SITE_URL=https://erp.example.test');
     final page = salesSummaryPageUri()!;

@@ -638,6 +638,74 @@ void main() {
   });
 
   test(
+    'collection payload retains routing after reload and rejects another recipient',
+    () async {
+      for (final recipient in ['another@example.test', user]) {
+        await NotificationInbox.capture(
+          RemoteMessage(
+            messageId: recipient,
+            data: {
+              'type': 'DOCUMENT_NOTIFICATION',
+              'notification_name': 'TOMORROW-COLLECTION',
+              'doctype': 'User',
+              'docname': recipient,
+              'for_user': recipient,
+              'title': 'Tomorrow Collection',
+              'body': 'Your collection details.',
+            },
+          ),
+        );
+      }
+      final item = (await NotificationInbox.cached()).single;
+      expect(item.notificationName, 'TOMORROW-COLLECTION');
+      expect(item.isSalesSummary, isTrue);
+      expect(item.hasErpDocumentLink, isFalse);
+      expect(InboxNotification.fromJson(item.toJson()).isSalesSummary, isTrue);
+    },
+  );
+
+  testWidgets(
+    'User reminders have no ERP action but collection retains its action',
+    (tester) async {
+      await tester.runAsync(() async {
+        for (final name in ['CHECKOUT-REMINDER', 'TOMORROW-COLLECTION']) {
+          await NotificationInbox.capture(
+            RemoteMessage(
+              messageId: name,
+              data: {
+                'type': 'DOCUMENT_NOTIFICATION',
+                'notification_name': name,
+                'doctype': 'User',
+                'docname': user,
+                'for_user': user,
+                'title': name,
+                'body': 'Notification details.',
+              },
+            ),
+          );
+        }
+      });
+      await http.runWithClient(() async {
+        await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
+        await settleInbox(tester);
+        await tester.tap(find.text('CHECKOUT-REMINDER'));
+        await settleInbox(tester);
+        expect(find.text('Open in ERP'), findsNothing);
+        expect(find.text('View sales summary'), findsNothing);
+        await tester.tap(find.text('TOMORROW-COLLECTION'));
+        await settleInbox(tester);
+        expect(find.text('View sales summary'), findsOneWidget);
+        expect(find.text('Open in ERP'), findsNothing);
+        await tester.tap(find.text('View sales summary'));
+        await settleInbox(tester);
+        expect(find.byType(SalesSummaryWebViewPage), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await settleInbox(tester);
+      }, () => client());
+    },
+  );
+
+  test(
     'cleared log-linked and ordinary pushes stay cleared after logout and login',
     () async {
       final prefs = await SharedPreferences.getInstance();

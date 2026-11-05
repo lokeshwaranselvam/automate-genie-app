@@ -52,6 +52,32 @@ class ProxyTests(unittest.TestCase):
                 self.assertEqual(self.request("/api/method/logout", "POST", headers=headers)[0], 403)
             upstream.assert_not_called()
 
+    def test_cross_site_navigation_can_load_only_the_public_shell(self):
+        headers = {
+            "Sec-Fetch-Site": "cross-site",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Dest": "document",
+        }
+        with patch("serve_pwa_local.http.client.HTTPSConnection") as upstream:
+            for path in ("/genie/", "/genie/index.html"):
+                status, _, body = self.request(path, headers=headers)
+                self.assertEqual(status, 200)
+                self.assertEqual(body, b"local app")
+            self.assertEqual(self.request("/", headers=headers)[0], 302)
+            for path in ("/api/method/logout", "/genie/assets/.env", "/genie/../api/method/logout"):
+                self.assertEqual(self.request(path, headers=headers)[0], 403)
+            self.assertEqual(self.request("/genie/", "POST", headers=headers)[0], 403)
+            self.assertEqual(self.request("/genie/", headers={
+                **headers, "Sec-Fetch-Dest": "iframe",
+            })[0], 403)
+            self.assertEqual(self.request("/genie/", headers={
+                **headers, "Origin": "https://attacker.test",
+            })[0], 403)
+            self.assertEqual(self.request("/genie/", headers={
+                **headers, "Host": "attacker.test",
+            })[0], 403)
+            upstream.assert_not_called()
+
     def test_login_cookie_and_csrf_are_forwarded_without_a_shared_cookie_jar(self):
         with patch("serve_pwa_local.http.client.HTTPSConnection") as upstream:
             response = upstream.return_value.getresponse.return_value

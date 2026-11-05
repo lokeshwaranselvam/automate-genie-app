@@ -48,6 +48,87 @@ void main() {
     200,
   );
   test(
+    'heartbeat uses saved registration ID and leaves credentials intact',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('token', 'token key:secret');
+      FlutterSecureStorage.setMockInitialValues({
+        'genie_fcm_registration_device_id': 'saved-browser-device',
+      });
+      var posts = 0;
+      await http.runWithClient(
+        () => FcmDeviceApi.heartbeat(),
+        () => MockClient((request) async {
+          posts++;
+          expect(request.method, 'POST');
+          expect(
+            request.url.path,
+            '/api/method/itgenie.lead_calling.mobile_api.heartbeat',
+          );
+          expect(request.headers['Authorization'], 'token key:secret');
+          expect(jsonDecode(request.body), {
+            'device_id': 'saved-browser-device',
+          });
+          return success();
+        }),
+      );
+      expect(posts, 1);
+      expect(prefs.getString('session_sid'), 'login-sid');
+      expect(prefs.getString('token'), 'token key:secret');
+    },
+  );
+
+  test(
+    'heartbeat without saved registration does not create an ID or request',
+    () async {
+      await http.runWithClient(
+        () => FcmDeviceApi.heartbeat(),
+        () => MockClient((request) async {
+          fail('Unregistered installations must not send heartbeats.');
+        }),
+      );
+      expect(
+        await const FlutterSecureStorage().read(
+          key: 'genie_fcm_registration_device_id',
+        ),
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'duplicate heartbeats share a request and network failure is harmless',
+    () async {
+      await (await SharedPreferences.getInstance()).setString(
+        'token',
+        'token key:secret',
+      );
+      FlutterSecureStorage.setMockInitialValues({
+        'genie_fcm_registration_device_id': 'saved-browser-device',
+      });
+      final response = Completer<http.Response>();
+      var posts = 0;
+      await http.runWithClient(
+        () async {
+          final first = FcmDeviceApi.heartbeat();
+          final second = FcmDeviceApi.heartbeat();
+          await Future<void>.delayed(Duration.zero);
+          response.completeError(TimeoutException('offline'));
+          await Future.wait([first, second]);
+        },
+        () => MockClient((request) {
+          posts++;
+          return response.future;
+        }),
+      );
+      expect(posts, 1);
+      expect(
+        (await SharedPreferences.getInstance()).getString('session_sid'),
+        'login-sid',
+      );
+    },
+  );
+  test(
     'registration keeps its device ID across token rotation and session changes',
     () async {
       final records = <Map>[];

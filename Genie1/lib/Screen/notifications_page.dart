@@ -161,6 +161,7 @@ class _NotificationsPageState extends State<NotificationsPage>
           MaterialPageRoute(builder: (_) => const SalesSummaryWebViewPage()),
         );
       } else {
+        if (!item.hasErpDocumentLink) return;
         final document = DocumentNotification.fromData({
           'type': 'DOCUMENT_NOTIFICATION',
           'doctype': item.doctype,
@@ -298,7 +299,7 @@ class _NotificationsPageState extends State<NotificationsPage>
           if (item.body.isEmpty && item.reference.isEmpty)
             const Text('No additional details.'),
           if (item.isSalesSummary ||
-              (item.doctype.isNotEmpty && item.reference.isNotEmpty) ||
+              item.hasErpDocumentLink ||
               item.callPhone.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -311,7 +312,7 @@ class _NotificationsPageState extends State<NotificationsPage>
                       icon: const Icon(Icons.bar_chart_rounded),
                       label: const Text('View sales summary'),
                     )
-                  else if (item.doctype.isNotEmpty && item.reference.isNotEmpty)
+                  else if (item.hasErpDocumentLink)
                     TextButton.icon(
                       onPressed: _opening ? null : () => _openItem(item),
                       icon: const Icon(Icons.open_in_new),

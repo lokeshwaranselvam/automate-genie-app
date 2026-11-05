@@ -36,13 +36,32 @@ class InboxNotification {
     this.doctype = '',
     this.callPhone = '',
     this.pageRoute = '',
+    this.notificationName = '',
     this.read = false,
     this.receivedViaPush = false,
   });
   final String id, title, body, created, category, reference;
   final String doctype, callPhone;
   final String pageRoute;
-  bool get isSalesSummary => pageRoute == salesSummaryRoute;
+  final String notificationName;
+  bool get isSalesSummary =>
+      pageRoute == salesSummaryRoute ||
+      notificationName == 'TOMORROW-COLLECTION' ||
+      // Older cached pushes did not retain notification_name. Match only the
+      // collection message's exact title and heading, never arbitrary links.
+      (notificationName.isEmpty &&
+          (doctype.isEmpty || doctype.trim().toLowerCase() == 'user') &&
+          title.trim() == 'Tomorrow Collection' &&
+          body.trimLeft().startsWith('TOMORROW COLLECTION\n'));
+
+  bool get hasErpDocumentLink =>
+      !isSalesSummary &&
+      doctype.trim().isNotEmpty &&
+      reference.trim().isNotEmpty &&
+      !const {
+        'user',
+        'notification log',
+      }.contains(doctype.trim().toLowerCase());
   final bool read;
   final bool receivedViaPush;
 
@@ -72,6 +91,7 @@ class InboxNotification {
         doctype: row['doctype']?.toString() ?? '',
         callPhone: row['call_phone']?.toString() ?? '',
         pageRoute: salesSummaryPageRoute(row['page_route']),
+        notificationName: row['notification_name']?.toString() ?? '',
         read: row['read'] == true || row['read'] == 1,
         receivedViaPush:
             row['received_via_push'] == true ||
@@ -87,6 +107,7 @@ class InboxNotification {
     'doctype': doctype,
     'call_phone': callPhone,
     'page_route': pageRoute,
+    'notification_name': notificationName,
     'read': read,
     'received_via_push': receivedViaPush,
   };
@@ -308,6 +329,7 @@ class NotificationInbox {
               .toString(),
       callPhone: leadCall?.phone ?? '',
       pageRoute: isSalesSummaryPush(message.data) ? salesSummaryRoute : '',
+      notificationName: message.data['notification_name']?.toString() ?? '',
     );
     final write = _queueWrite(() async {
       await prefs.reload();

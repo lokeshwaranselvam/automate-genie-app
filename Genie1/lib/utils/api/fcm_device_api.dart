@@ -16,6 +16,87 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 /// Registers this installation's FCM token against the logged-in Frappe user.
 class FcmDeviceApi {
+  static Future<void>? _heartbeatRequest;
+
+  /// Best-effort foreground activity. Never generates a replacement device ID,
+  /// refreshes an FCM token, or changes login/registration state.
+  static Future<void> heartbeat() async {
+    final request = _heartbeatRequest ??= _sendHeartbeat();
+    try {
+      await request;
+    } finally {
+      if (identical(_heartbeatRequest, request)) _heartbeatRequest = null;
+    }
+  }
+
+  static Future<void> _sendHeartbeat() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final sid = prefs.getString('session_sid');
+      final deviceId = await _deviceStorage.read(key: _deviceIdKey);
+      final site = Uri.tryParse(dotenv.env['SITE_URL']?.trim() ?? '');
+      if (sid == null ||
+          sid.isEmpty ||
+          deviceId == null ||
+          deviceId.isEmpty ||
+          site == null ||
+          site.host.isEmpty) {
+        return;
+      }
+      final token = prefs.getString('token')?.trim() ?? '';
+      final useToken = RegExp(r'^token [^\s:]+:[^\s:]+$').hasMatch(token);
+      final endpoint = site.resolve(
+        '/api/method/itgenie.lead_calling.mobile_api.heartbeat',
+      );
+      var csrf = kIsWeb || !useToken ? await _csrfToken(sid, endpoint) : null;
+      Future<http.Response> post() async {
+        await _assertSession(sid);
+        if (useToken &&
+            (await SharedPreferences.getInstance())
+                    .getString('token')
+                    ?.trim() !=
+                token) {
+          throw StateError('Heartbeat session changed.');
+        }
+        final client = http.Client();
+        try {
+          final request =
+              http.Request('POST', endpoint)
+                ..followRedirects = false
+                ..headers.addAll({
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json',
+                  if (!kIsWeb && !useToken) 'Cookie': 'sid=$sid',
+                  if (useToken) 'Authorization': token,
+                  if (csrf != null) 'X-Frappe-CSRF-Token': csrf,
+                })
+                ..body = jsonEncode({
+                  'device_id': deviceId,
+                  if (csrf != null) 'csrf_token': csrf,
+                });
+          return await client
+              .send(request)
+              .then(http.Response.fromStream)
+              .timeout(const Duration(seconds: 15));
+        } finally {
+          client.close();
+        }
+      }
+
+      var response = await post();
+      if ((kIsWeb || !useToken) && _csrfRejected(response)) {
+        csrf = await _csrfToken(sid, endpoint);
+        response = await post();
+      }
+      if (response.statusCode != 200) {
+        debugPrint('Device heartbeat failed (HTTP ${response.statusCode}).');
+      }
+    } catch (error) {
+      // Activity reporting cannot interrupt opening or using the app.
+      debugPrint('Device heartbeat unavailable: ${error.runtimeType}');
+    }
+  }
+
   static StreamSubscription<String>? _tokenRefreshSubscription;
   static const _deviceStorage = FlutterSecureStorage();
   static const _deviceIdKey = 'genie_fcm_registration_device_id';

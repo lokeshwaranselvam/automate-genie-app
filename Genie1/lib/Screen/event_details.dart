@@ -2577,7 +2577,9 @@ class _EventDetailsState extends State<EventDetails> {
                             : '',
                     child: ElevatedButton(
                       onPressed:
-                          _canUseVisitActions && !checkedOut &&
+                          _canUseVisitActions &&
+                                  (!kIsWeb || checkedIn) &&
+                                  !checkedOut &&
                                   !_isActionInProgress
                               ? () => _onVisitActionTap(
                                 'check_out',

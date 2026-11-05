@@ -41,6 +41,7 @@ import '../utils/widget/warning.dart';
 import '../utils/widget/attendance_session_notice.dart';
 import '../utils/api/check_in_out.dart';
 import '../utils/api/session_auth.dart';
+import '../utils/api/fcm_device_api.dart';
 import '../utils/api/session_web_links_api.dart';
 import '../utils/api/pending_work_monitor.dart';
 import '../utils/api/pending_work_api.dart';
@@ -245,6 +246,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (kIsWeb) unawaited(FcmDeviceApi.heartbeat());
     _pendingWorkUpdatesSubscription = PendingWorkMonitor.newEntrySections
         .listen((_) {
           _pendingDashboardRefreshDebounce?.cancel();
@@ -334,6 +336,7 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
     }
     if (state == AppLifecycleState.resumed) {
       _appIsResumed = true;
+      if (kIsWeb) unawaited(FcmDeviceApi.heartbeat());
       PendingWorkMonitor.start();
       if (!_isActionLoading) unawaited(_getStatusFromServer(force: true));
       if (_selectedTab == 0) unawaited(_refreshHomeSchedule());

@@ -69,6 +69,47 @@ void main() {
     });
   }
 
+  for (final retryCsrf in [false, true]) {
+    test(
+      'browser heartbeat includes CSRF and saved ID; retry=$retryCsrf',
+      () async {
+        FlutterSecureStorage.setMockInitialValues({
+          'genie_fcm_registration_device_id': 'browser-id',
+        });
+        var gets = 0;
+        var posts = 0;
+        await http.runWithClient(
+          () => FcmDeviceApi.heartbeat(),
+          () => MockClient((request) async {
+            expect(request.headers.containsKey('Cookie'), isFalse);
+            if (request.method == 'GET') {
+              gets++;
+              expect(request.url.path, '/app');
+              return http.Response('frappe.csrf_token = "csrf$gets";', 200);
+            }
+            posts++;
+            expect(
+              request.url.path,
+              '/api/method/itgenie.lead_calling.mobile_api.heartbeat',
+            );
+            expect(request.headers['Authorization'], 'token key:secret');
+            expect(request.headers['X-Frappe-CSRF-Token'], 'csrf$gets');
+            expect(jsonDecode(request.body), {
+              'device_id': 'browser-id',
+              'csrf_token': 'csrf$gets',
+            });
+            if (retryCsrf && posts == 1) {
+              return http.Response('{"exc_type":"CSRFTokenError"}', 400);
+            }
+            return http.Response('{"message":{"status":"success"}}', 200);
+          }),
+        );
+        expect(posts, retryCsrf ? 2 : 1);
+        expect(gets, posts);
+      },
+    );
+  }
+
   test(
     'Browser refuses a token obtained after a cross-origin redirect',
     () async {

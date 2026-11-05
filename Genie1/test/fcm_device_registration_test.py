@@ -100,6 +100,34 @@ class RegistrationTests(unittest.TestCase):
         self.frappe.db.set_value.assert_not_called()
         self.frappe.db.commit.assert_not_called()
 
+    def test_heartbeat_updates_only_matching_active_device_last_seen(self):
+        self.frappe.db.get_value.side_effect = ["EMP-TEST"]
+        self.assertEqual(self.module.heartbeat("browser-device"), {"status": "success"})
+        self.frappe.db.get_value.assert_called_once_with(
+            "FCM Device", {"user": "test@example.test", "is_active": 1,
+                           "device_id": "browser-device"}, "name", for_update=True,
+        )
+        self.frappe.db.set_value.assert_called_once_with(
+            "FCM Device", "EMP-TEST", "last_seen", "2026-11-04 15:00:00",
+            update_modified=False,
+        )
+        self.frappe.db.commit.assert_not_called()
+
+    def test_heartbeat_does_not_claim_missing_or_other_device(self):
+        self.frappe.db.get_value.side_effect = [None]
+        self.assertEqual(self.module.heartbeat("other-device"), {"status": "not_registered"})
+        self.frappe.db.set_value.assert_not_called()
+        self.frappe.get_doc.assert_not_called()
+
+    def test_heartbeat_rejects_guest_and_missing_device(self):
+        for value in (None, "", "  ", 123, "a" * 141):
+            with self.assertRaises(ValueError):
+                self.module.heartbeat(value)
+        self.frappe.session.user = "Guest"
+        with self.assertRaises(PermissionError):
+            self.module.heartbeat("browser-device")
+        self.frappe.db.get_value.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

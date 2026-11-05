@@ -141,6 +141,25 @@ void main() {
     },
   );
 
+  for (final notificationLog in [null, '', '   ']) {
+    test(
+      'collection pushes with log $notificationLog use distinct FCM IDs',
+      () async {
+        final collection = <String, dynamic>{
+          'notification_name': 'TOMORROW-COLLECTION',
+          'sound_mode': 'default',
+          'alarm_enabled': '0',
+          if (notificationLog != null) 'notification_log': notificationLog,
+        };
+        expect(await send(id: 'collection-one', changes: collection), isTrue);
+        expect(await send(id: 'collection-one', changes: collection), isFalse);
+        expect(await send(id: 'collection-two', changes: collection), isTrue);
+        expect(shows, hasLength(2));
+        expect(alarms, 0);
+      },
+    );
+  }
+
   test(
     'Client Script pushes from the unchanged server remain compatible',
     () async {
