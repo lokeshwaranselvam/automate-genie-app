@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'mobile_login_device.dart';
 import '../api_business_policy.dart';
 import '../event_location_selection.dart';
 import '../event_otp.dart';
@@ -765,19 +767,17 @@ class Event {
     final prefs = await SharedPreferences.getInstance();
     final String? token = prefs.getString('token');
 
-    final response = await http
-        .post(
+    final response = await _postVisitAction(
           Uri.parse('$URL.event_checkin'),
-          body: {
+          {
             'user': user,
             'event_id': eventId,
             'lat': lat.toString(),
             'lng': lng.toString(),
             'address': address,
           },
-          headers: {'Authorization': token ?? ''},
-        )
-        .timeout(const Duration(seconds: 25));
+          token,
+        );
 
     debugPrint(
       '[EventApi] eventCheckin response: ${response.statusCode} ${response.body}',
@@ -809,10 +809,9 @@ class Event {
       return {'cancelled': true};
     }
 
-    final response = await http
-        .post(
+    final response = await _postVisitAction(
           Uri.parse('$URL.event_checkout'),
-          body: {
+          {
             'user': user,
             'event_id': eventId,
             'lat': lat.toString(),
@@ -823,11 +822,56 @@ class Event {
             'last_lat_lng': lastLatLng,
             "location_logs": locationLogs,
           },
-          headers: {'Authorization': token ?? ''},
-        )
-        .timeout(const Duration(seconds: 25));
+          token,
+        );
 
     return _visitActionResponse(response, 'check-out');
+  }
+
+  static Future<http.Response> _postVisitAction(
+    Uri endpoint,
+    Map<String, String?> fields,
+    String? apiToken,
+  ) async {
+    if (!kIsWeb) {
+      return http.post(endpoint, body: fields,
+        headers: {'Authorization': apiToken ?? ''},
+      ).timeout(const Duration(seconds: 25));
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final sid = prefs.getString('session_sid');
+    void assertCurrentSession() {
+      if (sid == null || sid.isEmpty ||
+          prefs.getString('session_sid') != sid ||
+          prefs.getString('token') != apiToken) {
+        throw StateError('Your session changed. Reopen the event after signing in.');
+      }
+    }
+    Future<String> csrfToken() async {
+      assertCurrentSession();
+      final csrf = await MobileLoginDevice.browserCsrfToken(endpoint);
+      assertCurrentSession();
+      return csrf;
+    }
+    Future<http.Response> post(String csrf) async {
+      assertCurrentSession();
+      final response = await http.post(endpoint,
+        headers: {
+          'Authorization': apiToken ?? '',
+          'X-Frappe-CSRF-Token': csrf,
+        },
+        body: {...fields, 'csrf_token': csrf},
+      ).timeout(const Duration(seconds: 25));
+      assertCurrentSession();
+      return response;
+    }
+    var response = await post(await csrfToken());
+    // A CSRF rejection happens before the action executes. Never replay an
+    // uncertain write after a timeout, ordinary validation error or HTTP 5xx.
+    if (MobileLoginDevice.isCsrfFailure(response)) {
+      response = await post(await csrfToken());
+    }
+    return response;
   }
 
   /// Visit check-in/out callers read `response['message']['status']`. A proxy

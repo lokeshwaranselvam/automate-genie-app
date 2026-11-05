@@ -596,6 +596,26 @@ class _EventDetailsState extends State<EventDetails> {
               ) ==
               null
           : legacyPhase;
+  Future<void> _onVisitActionTap(String action, bool legacyPhase) async {
+    if (!_canUseVisitActions || _isActionInProgress) return;
+    if (!_visitActionAllowed(action, legacyPhase)) {
+      final reason =
+          _visitBusinessPolicy.data['actions'] is Map
+              ? _visitBusinessPolicy.actionBlockReason(
+                action,
+                allowPreparation: true,
+              )
+              : _visitCheckedOut
+              ? 'Already Checked Out'
+              : action == 'check_out'
+              ? 'Cannot check out before check-in'
+              : 'Already Checked In';
+      Warning.show(context, reason ?? 'This action is unavailable.', 'Warning');
+      return;
+    }
+    await _handleVisitCheckInOut(action: action);
+  }
+
   void _applyVisitBusinessPolicy(ApiBusinessPolicy policy) {
     _visitBusinessPolicy = policy;
     if (policy.uploads['current_count'] is int)
@@ -2521,12 +2541,12 @@ class _EventDetailsState extends State<EventDetails> {
                     child: ElevatedButton(
                       onPressed:
                           _canUseVisitActions &&
-                                  _visitActionAllowed(
-                                    'check_in',
-                                    !checkedIn && !checkedOut,
-                                  ) &&
+                                  !checkedIn && !checkedOut &&
                                   !_isActionInProgress
-                              ? () => _handleVisitCheckInOut(action: 'check_in')
+                              ? () => _onVisitActionTap(
+                                'check_in',
+                                !checkedIn && !checkedOut,
+                              )
                               : null,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: BrandColors.ink,
@@ -2557,13 +2577,12 @@ class _EventDetailsState extends State<EventDetails> {
                             : '',
                     child: ElevatedButton(
                       onPressed:
-                          _canUseVisitActions &&
-                                  _visitActionAllowed(
-                                    'check_out',
-                                    checkedIn && !checkedOut,
-                                  ) &&
+                          _canUseVisitActions && !checkedOut &&
                                   !_isActionInProgress
-                              ? () => _handleVisitCheckInOut(action: 'check_out')
+                              ? () => _onVisitActionTap(
+                                'check_out',
+                                checkedIn && !checkedOut,
+                              )
                               : null,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: BrandColors.ink,

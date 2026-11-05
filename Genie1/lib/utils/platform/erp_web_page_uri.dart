@@ -2,8 +2,6 @@ import 'package:flutter/foundation.dart';
 
 const _pages = {
   '/create_lead_from_mobile': 'lead-creation.html',
-  '/genie-expense-claim': 'expense-claim.html',
-  '/genie-leave-application': 'leave-application.html',
   '/genie-opportunities': 'opportunities.html',
   '/genie-pending-work': 'pending-work.html',
   '/genie-sales-summary': 'sales-summary.html',

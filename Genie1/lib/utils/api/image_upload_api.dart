@@ -1,6 +1,8 @@
 import 'package:homegenie/utils/platform/multipart_file.dart';
 import 'package:homegenie/utils/platform/platform_file.dart';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'mobile_login_device.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
@@ -42,35 +44,52 @@ class ImageUploadApi {
       }
 
       final fileName = p.basename(filePath);
-      final uploadUrl = '$baseUrl/api/method/upload_file';
-
-      var request = http.MultipartRequest('POST', Uri.parse(uploadUrl));
-
-      // Frappe upload_file fields
-      request.fields['doctype'] = 'Event';
-      request.fields['docname'] = docname;
-      request.fields['fieldname'] = 'custom_event_images';
-      // Visit photos are customer-site images; keep them private. Every
-      // in-app viewer (site_visit_report_page, completed_visit_attachments)
-      // already sends the Authorization token that private files require.
-      request.fields['is_private'] = '1';
-
-      request.headers['Authorization'] = token;
-
-      request.files.add(
-        await platformMultipartFile('file', filePath, filename: fileName),
-      );
-
-      debugPrint('📤 Uploading image "$fileName" to Event: $docname ...');
-
-      final streamedResponse = await request.send().timeout(
-        const Duration(seconds: 60),
-      );
-      final responseBody = await streamedResponse.stream
-          .bytesToString()
-          .timeout(const Duration(seconds: 60));
-
-      if (streamedResponse.statusCode == 200) {
+      final uploadUri = kIsWeb
+          ? Uri.parse(baseUrl).resolve('/api/method/upload_file')
+          : Uri.parse('$baseUrl/api/method/upload_file');
+      final sid = prefs.getString('session_sid');
+      void assertUploadSession() {
+        if (kIsWeb && (sid == null || sid.isEmpty ||
+            prefs.getString('session_sid') != sid ||
+            prefs.getString('token') != token)) {
+          throw StateError('Your session changed. Reopen the event after signing in.');
+        }
+      }
+      Future<String> csrfToken() async {
+        assertUploadSession();
+        final csrf = await MobileLoginDevice.browserCsrfToken(uploadUri);
+        assertUploadSession();
+        return csrf;
+      }
+      Future<http.Response> upload(String? csrf) async {
+        assertUploadSession();
+        // Multipart streams are single-use. Rebuild only after a confirmed
+        // CSRF rejection, which occurs before Frappe saves the attachment.
+        final request = http.MultipartRequest('POST', uploadUri);
+        request.fields.addAll({
+          'doctype': 'Event',
+          'docname': docname,
+          'fieldname': 'custom_event_images',
+          'is_private': '1',
+          if (csrf != null) 'csrf_token': csrf,
+        });
+        request.headers['Authorization'] = token;
+        if (csrf != null) request.headers['X-Frappe-CSRF-Token'] = csrf;
+        request.files.add(
+          await platformMultipartFile('file', filePath, filename: fileName),
+        );
+        final streamed = await request.send().timeout(const Duration(seconds: 60));
+        final body = await streamed.stream.bytesToString()
+            .timeout(const Duration(seconds: 60));
+        assertUploadSession();
+        return http.Response(body, streamed.statusCode, headers: streamed.headers);
+      }
+      var response = await upload(kIsWeb ? await csrfToken() : null);
+      if (kIsWeb && MobileLoginDevice.isCsrfFailure(response)) {
+        response = await upload(await csrfToken());
+      }
+      final responseBody = response.body;
+      if (response.statusCode == 200) {
         final jsonResponse = jsonDecode(responseBody);
         final message = jsonResponse is Map ? jsonResponse['message'] : null;
         final fileUrl = message is Map ? message['file_url'] : null;
@@ -82,7 +101,7 @@ class ImageUploadApi {
         return fileUrl;
       } else {
         debugPrint(
-          '❌ Upload failed [${streamedResponse.statusCode}]: $responseBody',
+          '❌ Upload failed [${response.statusCode}]: $responseBody',
         );
         return null;
       }

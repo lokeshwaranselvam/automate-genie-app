@@ -10,24 +10,33 @@ import 'package:http/http.dart' as http;
 class MobileLoginDevice {
   static const _storage = FlutterSecureStorage();
   static const _keyName = 'genie_mobile_installation_key';
+  static const _webKeyName = 'genie_web_installation_key_v1';
+  static const _webAndroidIdName = 'genie_web_android_id_v1';
   static const _pendingName = 'genie_pending_mobile_logout';
   static const _activeName = 'genie_active_mobile_binding';
   static Future<String>? _keyRequest;
+  static Future<String>? _webAndroidIdRequest;
   static Future<void>? _logoutRequest;
-  // Shared synthetic identifiers for temporary PWA testing only.
-  // Every browser using this build represents the same test installation.
-  static const _webTestAndroidId = '7ac19e04b582d63f';
-  static const _webTestDeviceKey = 'DbM8AIkO9kFeY3RGTZPK4BIb5ZM9kJ-Sc9ilxAJZj_8';
 
   static const _deviceChannel = MethodChannel(
     'ai.automategenie.app/mobile_device',
   );
 
   /// A recognition signal, never a replacement for the private logout key.
-  /// Web uses a shared synthetic ID for testing the existing Android API.
+  /// Web persists a random browser ID compatible with the existing Android API.
+  /// This synthetic browser identifier is not an Android hardware ID.
   /// Null means native iOS or Android below 8.
   static Future<String?> androidId() async {
-    if (kIsWeb) return _webTestAndroidId;
+    if (kIsWeb) {
+      final request = _webAndroidIdRequest ??= _loadWebAndroidId();
+      try {
+        return await request;
+      } finally {
+        if (identical(_webAndroidIdRequest, request)) {
+          _webAndroidIdRequest = null;
+        }
+      }
+    }
     if (defaultTargetPlatform != TargetPlatform.android) return null;
     final value = await _deviceChannel.invokeMethod<String>('androidId');
     if (value == null) return null;
@@ -42,8 +51,31 @@ class MobileLoginDevice {
     return id;
   }
 
+  static Future<String> _loadWebAndroidId() async {
+    final saved = await _storage.read(key: _webAndroidIdName);
+    if (saved != null &&
+        RegExp(r'^[0-9a-f]{16}$').hasMatch(saved) &&
+        !RegExp(r'^0+$').hasMatch(saved) &&
+        saved != '9774d56d682e549c') {
+      return saved;
+    }
+
+    final random = Random.secure();
+    String value;
+    do {
+      value =
+          List<int>.generate(
+            8,
+            (_) => random.nextInt(256),
+          ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+    } while (RegExp(r'^0+$').hasMatch(value) || value == '9774d56d682e549c');
+
+    // A failed write must stop login rather than use a temporary identity.
+    await _storage.write(key: _webAndroidIdName, value: value);
+    return value;
+  }
+
   static Future<String> key() async {
-    if (kIsWeb) return _webTestDeviceKey;
     final request = _keyRequest ??= _loadKey();
     try {
       return await request;
@@ -53,7 +85,8 @@ class MobileLoginDevice {
   }
 
   static Future<String> _loadKey() async {
-    final saved = await _storage.read(key: _keyName);
+    final storageKey = kIsWeb ? _webKeyName : _keyName;
+    final saved = await _storage.read(key: storageKey);
     if (saved != null && RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(saved)) {
       return saved;
     }
@@ -61,7 +94,7 @@ class MobileLoginDevice {
     final value = base64UrlEncode(
       List<int>.generate(32, (_) => random.nextInt(256)),
     ).replaceAll('=', '');
-    await _storage.write(key: _keyName, value: value);
+    await _storage.write(key: storageKey, value: value);
     return value;
   }
 

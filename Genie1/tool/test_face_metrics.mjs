@@ -1,0 +1,15 @@
+﻿import assert from 'node:assert/strict';
+import {faceMetrics,FaceContinuity} from '../web/face/face_metrics.mjs';
+assert.deepEqual(faceMetrics({faceLandmarks:[]},640,480),{faceCount:0});
+assert.deepEqual(faceMetrics({faceLandmarks:[[],[]]},640,480),{faceCount:2});
+assert.throws(()=>faceMetrics({faceLandmarks:[[]]},640,480),/Incomplete/);
+const points=Array.from({length:478},(_,i)=>({x:i%2?.7:.3,y:i%3?.3:.7}));
+const result={faceLandmarks:[points],faceBlendshapes:[{categories:[{categoryName:'eyeBlinkLeft',score:.1},{categoryName:'eyeBlinkRight',score:.9}]}],facialTransformationMatrixes:[{data:[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}]};
+const face=faceMetrics(result,640,480);
+assert.equal(face.leftEyeOpen,.9);assert(Math.abs(face.rightEyeOpen-.1)<1e-12);
+assert.equal(Math.abs(face.yaw),0);assert.equal(Math.abs(face.pitch),0);assert.equal(face.landmarks.length,5);
+assert(face.landmarks[0][0]<=face.landmarks[1][0]);assert(face.landmarks[3][0]<=face.landmarks[4][0]);
+const tracker=new FaceContinuity();const first=tracker.observe(face);
+assert.equal(tracker.observe(face),first);tracker.observe({faceCount:0});assert.notEqual(tracker.observe(face),first);
+const before=tracker.observe(face);assert.notEqual(tracker.observe({...face,left:face.left+200,right:face.right+200}),before);
+console.log('Face metrics tests passed: zero/multiple faces, finite pose, eye coefficients, landmark order, continuity reset.');

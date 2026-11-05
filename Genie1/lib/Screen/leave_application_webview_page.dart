@@ -2,6 +2,7 @@ import '../utils/widget/webview_pull_to_refresh.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:homegenie/utils/platform/erp_webview.dart';
@@ -141,6 +142,19 @@ class LeaveApplicationWebViewPageState
           onPageFinished: (url) async {
             if (!_isPage(url)) return;
             try {
+              if (kIsWeb) {
+                // The live ERP page has no bundled PWA bridge script. Keep
+                // iframe pull-to-refresh available without editing ERP HTML.
+                final bridge = Uri.base.resolve('erp_page_bridge.js');
+                await controller.runJavaScript('''
+                  if (!document.querySelector('script[data-genie-leave-bridge]')) {
+                    const script = document.createElement('script');
+                    script.dataset.genieLeaveBridge = 'true';
+                    script.src = ${jsonEncode(bridge.toString())};
+                    document.head.appendChild(script);
+                  }
+                ''');
+              }
               await _assertSession();
               final ready = await controller.runJavaScriptReturningResult(
                 "document.getElementById('la-app')?.dataset.started === 'true'",

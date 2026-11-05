@@ -29,6 +29,16 @@
       worker.postMessage({id,operation,...data},transfers);
     });
   }
+  function warmup() {
+    const operation = request('warmup');
+    const requestedWorker = worker;
+    return operation.catch(error => {
+      // Failed WASM imports can remain rejected inside the runtime module.
+      // Retry must start a fresh worker, not reuse that failed initialization.
+      if (worker === requestedWorker) release();
+      throw error;
+    });
+  }
   function stop(video) {
     cameraGenerations.set(video, (cameraGenerations.get(video) || 0) + 1);
     const stream = video.srcObject;
@@ -45,7 +55,7 @@
     c.getContext('2d').drawImage(video,0,0); return c;
   }
   self.genieFace = {
-    warmup: () => request('warmup'), release, stop,
+    warmup, release, stop,
     async start(video) {
       if (!isSecureContext || !navigator.mediaDevices?.getUserMedia) {
         throw Error('Camera access requires HTTPS or localhost and a supported browser.');

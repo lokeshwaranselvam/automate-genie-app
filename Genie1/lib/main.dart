@@ -2,6 +2,7 @@ import 'utils/platform/app_navigation.dart';
 import 'package:flutter/foundation.dart';
 import 'utils/platform/browser_runtime.dart';
 import 'utils/platform/web_firebase_config.dart';
+import 'utils/platform/pwa_text_font.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'dart:async';
 
@@ -30,6 +31,7 @@ Future<void> _startApp() async {
   );
 
   await dotenv.load(fileName: ".env");
+  await loadPwaTextFont();
 
   if (!kIsWeb || WebFirebaseConfig.isConfigured) {
     try {

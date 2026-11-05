@@ -15,6 +15,14 @@ void main() {
     expect(page.origin, Uri.base.origin);
     expect(page.path, endsWith('/pages/opportunities.html'));
     expect(page.queryParameters['view'], 'open');
+    final leave = erpWebPageUri(site, '/genie-leave-application?view=form');
+    expect(leave.origin, site.origin);
+    expect(leave.path, '/genie-leave-application');
+    expect(leave.queryParameters['view'], 'form');
+    final expense = erpWebPageUri(site, '/genie-expense-claim?view=form');
+    expect(expense.origin, site.origin);
+    expect(expense.path, '/genie-expense-claim');
+    expect(expense.queryParameters['view'], 'form');
     expect(isTrustedErpPageUri(site), isTrue);
     expect(isTrustedErpPageUri(Uri.parse('https://outside.example/')), isFalse);
     expect(isTrustedErpPageUri(Uri.parse('http://user@localhost/')), isFalse);

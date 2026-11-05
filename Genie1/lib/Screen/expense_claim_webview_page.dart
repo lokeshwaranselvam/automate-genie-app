@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:homegenie/utils/platform/platform_file.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:image_picker/image_picker.dart';
@@ -302,6 +303,20 @@ class _ExpenseClaimWebViewPageState extends State<ExpenseClaimWebViewPage> {
       }
       await _assertSession(generation);
       if (!_isCurrentDocument(generation, controller, document)) return;
+      if (kIsWeb) {
+        // Preserve iframe refresh when loading the live ERP page instead of
+        // the bundled HTML, without requiring changes to the ERP page itself.
+        final bridge = Uri.base.resolve('erp_page_bridge.js');
+        await controller.runJavaScript('''
+          if (!document.querySelector('script[data-genie-expense-bridge]')) {
+            const script = document.createElement('script');
+            script.dataset.genieExpenseBridge = 'true';
+            script.src = ${jsonEncode(bridge.toString())};
+            document.head.appendChild(script);
+          }
+        ''');
+        if (!_isCurrentDocument(generation, controller, document)) return;
+      }
       final ready = await controller.runJavaScriptReturningResult(
         "document.getElementById('ec-app')?.dataset.started === 'true'",
       );

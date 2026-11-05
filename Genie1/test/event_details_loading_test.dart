@@ -69,6 +69,8 @@ void main() {
     'checkin-radius-disabled',
     'checkout-photo-required',
     'checkout-photo-optional',
+    'blocked-checkin',
+    'blocked-checkout',
   ]) {
     testWidgets(
       'task details handles $scenario without enabling premature actions',
@@ -78,11 +80,38 @@ void main() {
         var checkInRequests = 0;
         var checkOutRequests = 0;
         final client = MockClient((request) async {
+          if (request.url.path.endsWith('mobile_business_policy')) {
+          return http.Response(
+            jsonEncode({
+              'message': {
+                'policy': {
+                  'current_user': 'user@example.test',
+                  'fields': {},
+                  'rules': {},
+                  'actions': {
+                    'check_in': {
+                      'allowed': false,
+                      'reason':
+                          'Please complete your Employee Check-in for today before checking in to this visit.',
+                    },
+                    'check_out': {
+                      'allowed': false,
+                      'reason': 'Cannot check out before check-in',
+                      'can_prepare': false,
+                    },
+                  },
+                },
+              },
+            }),
+            200,
+          );
+        }
           if (request.url.path.endsWith('event_visit_report')) {
             return http.Response(
               jsonEncode({
                 'message': {
                   'status': 'success',
+                  if (scenario.startsWith('blocked-')) 'visit_policy': {},
                   if (scenario == 'completed-image' ||
                       scenario == 'completed-document') ...{
                     'event_id': 'EVENT-1',
@@ -232,6 +261,8 @@ void main() {
             'checkin-radius-disabled',
             'checkout-photo-required',
             'checkout-photo-optional',
+    'blocked-checkin',
+    'blocked-checkout',
           ].contains(scenario)) {
             expect(find.text('Bank task loaded'), findsWidgets);
             if (scenario.startsWith('completed-')) {
@@ -291,7 +322,37 @@ void main() {
               Navigator.of(tester.element(photoTile)).pop();
               await tester.pumpAndSettle();
             }
+            if (scenario.startsWith('blocked-')) {
+            final label =
+                scenario == 'blocked-checkin' ? 'Check In' : 'Check Out';
+            final message =
+                scenario == 'blocked-checkin'
+                    ? 'Please complete your Employee Check-in for today before checking in to this visit.'
+                    : 'Cannot check out before check-in';
+            await tester.tap(find.widgetWithText(ElevatedButton, label));
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 400));
+            expect(find.text(message), findsOneWidget);
+            expect(checkInRequests, 0);
+            expect(checkOutRequests, 0);
+            await tester.tap(find.byTooltip('Close').last);
+            await tester.pumpAndSettle();
+          }
             pending.complete(http.Response('{"message":null}', 200));
+            if (scenario.startsWith('checkout-photo-')) {
+              expect(
+                tester.widget<ElevatedButton>(
+                  find.widgetWithText(ElevatedButton, 'Check In'),
+                ).onPressed,
+                isNull,
+              );
+              expect(
+                tester.widget<ElevatedButton>(
+                  find.widgetWithText(ElevatedButton, 'Check Out'),
+                ).onPressed,
+                isNotNull,
+              );
+            }
             if (scenario.startsWith('saved-location-') ||
                 scenario.startsWith('checkin-radius-') ||
                 scenario.startsWith('checkout-photo-')) {
