@@ -78,6 +78,29 @@ class ProxyTests(unittest.TestCase):
             })[0], 403)
             upstream.assert_not_called()
 
+    def test_cross_site_diagnostic_navigation_keeps_api_and_resource_guards(self):
+        (self.root / "face").mkdir()
+        (self.root / "face/diagnostics.html").write_text("diagnostic page")
+        path = "/genie/face/diagnostics.html"
+        headers = {
+            "Sec-Fetch-Site": "cross-site",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Dest": "document",
+        }
+        with patch("serve_pwa_local.http.client.HTTPSConnection") as upstream:
+            self.assertEqual(self.request(path, headers=headers)[::2], (200, b"diagnostic page"))
+            self.assertEqual(self.request(path, "POST", headers=headers)[0], 403)
+            for extra in (
+                {"Sec-Fetch-Dest": "iframe"},
+                {"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"},
+                {"Origin": "https://attacker.test"},
+                {"Host": "attacker.test"},
+            ):
+                self.assertEqual(self.request(path, headers={**headers, **extra})[0], 403)
+            for blocked in ("/api/method/logout", "/genie/assets/.env", "/genie/face/face_worker.js"):
+                self.assertEqual(self.request(blocked, headers=headers)[0], 403)
+            upstream.assert_not_called()
+
     def test_login_cookie_and_csrf_are_forwarded_without_a_shared_cookie_jar(self):
         with patch("serve_pwa_local.http.client.HTTPSConnection") as upstream:
             response = upstream.return_value.getresponse.return_value

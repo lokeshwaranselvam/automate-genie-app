@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Face runtime diagnostics</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; max-width: 760px; margin: auto; padding: 20px; color: #17213a; }
+    label { display: block; margin: 16px 0; }
+    select, button { font: inherit; padding: 10px; max-width: 100%; }
+    button { margin: 6px 8px 6px 0; }
+    pre { background: #eef1f7; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+  <script src="diagnostics.js" defer></script>
+</head>
+<body>
+  <h1>Face runtime diagnostics</h1>
+  <p>Close the attendance app and other browser tabs first. Run each test separately. No camera, employee data, or ERP API is used. Models and runtimes load from this site.</p>
+  <label>Test
+    <select id="mode">
+      <option value="onnx">1. ONNX WASM only (tiny test model)</option>
+      <option value="sface">2. SFace only (synthetic image tensor)</option>
+      <option value="mediapipe">3. MediaPipe only (initialization)</option>
+      <option value="combined">4. MediaPipe + SFace (synthetic inference)</option>
+    </select>
+  </label>
+  <label>Graph optimization
+    <select id="optimization">
+      <option value="all">All (current app setting)</option>
+      <option value="basic">Basic</option>
+      <option value="disabled">Disabled</option>
+    </select>
+  </label>
+  <label><input id="noArena" type="checkbox"> Disable CPU memory arena for this test</label>
+  <label><input id="noPattern" type="checkbox"> Disable memory pattern for this test</label>
+  <p>Start with the default settings. Change one setting at a time. These options affect this diagnostic test only.</p>
+  <button id="run">Run test</button>
+  <button id="cancel" disabled>Stop test</button>
+  <button id="download">Download report</button>
+  <pre id="log" role="status" aria-live="polite">Ready.</pre>
+  <p>Timings are not memory measurements. Browser JavaScript heap figures do not reliably represent WASM or total process memory. A passing test does not verify camera operation, blink checks, matching accuracy, or attendance submission.</p>
+</body>
+</html>

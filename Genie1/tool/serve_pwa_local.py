@@ -70,11 +70,14 @@ class LocalPwaHandler(SimpleHTTPRequestHandler):
         if parsed.scheme or parsed.netloc or not self.path.startswith("/") or self.path.startswith("//"):
             return self._reply(400, b"An origin-relative path is required.")
         # Chrome may retain a cross-site initiator when navigating from a link
-        # or redirect. Allow only top-level GET navigation to the public shell;
+        # or redirect. Allow only top-level GET navigation to public entry pages;
         # cross-site API calls, subresources and form submissions stay blocked.
         shell_navigation = (
             self.command == "GET"
-            and parsed.path in ("/", APP_PATH, APP_PATH + "index.html")
+            and parsed.path in (
+                "/", APP_PATH, APP_PATH + "index.html",
+                APP_PATH + "face/diagnostics.html",
+            )
             and self.headers.get("Sec-Fetch-Mode") == "navigate"
             and self.headers.get("Sec-Fetch-Dest") == "document"
         )

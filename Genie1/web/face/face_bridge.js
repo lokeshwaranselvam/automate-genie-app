@@ -15,6 +15,10 @@
     if (!worker) {
       worker = new Worker(new URL('face_worker.js',base));
       worker.onmessage = ({data}) => {
+        if (data.diagnostic) {
+          console.debug('[Genie face runtime]', data.diagnostic);
+          return;
+        }
         const entry = pending.get(data.id);
         if (!entry) return;
         pending.delete(data.id); clearTimeout(entry.timer);
