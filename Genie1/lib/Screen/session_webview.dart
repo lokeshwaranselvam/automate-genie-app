@@ -3,6 +3,7 @@ import '../utils/widget/ag_path_loading_indicator.dart';
 import 'package:homegenie/utils/theme/brand_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -57,13 +58,65 @@ class _SessionWebViewState extends State<SessionWebView> {
       }
 
       final siteUrl = dotenv.env['SITE_URL']?.trim() ?? '';
-      final siteHost = Uri.tryParse(siteUrl)?.host;
+      final siteUri = Uri.tryParse(siteUrl);
+      final siteHost = siteUri?.host;
       final isSameSite = siteHost != null && uri.host == siteHost;
 
+      bool isQrPage(Uri? page) =>
+          siteUri != null &&
+          siteUri.scheme == 'https' &&
+          siteUri.host.isNotEmpty &&
+          page != null &&
+          page.scheme == 'https' &&
+          page.userInfo.isEmpty &&
+          page.origin == siteUri.origin &&
+          (page.path == '/cvqr' || page.path == '/cvqr/');
+
       final canteenPayments = isCanteenPaymentPage(uri);
+      var pageGeneration = 0;
       late final WebViewController controller;
       controller =
-          WebViewController()
+          WebViewController(
+              onPermissionRequest:
+                  isQrPage(uri)
+                      ? (request) async {
+                        try {
+                          final generation = pageGeneration;
+                          if (!mounted ||
+                              request.types.length != 1 ||
+                              !request.types.contains(
+                                WebViewPermissionResourceType.camera,
+                              ) ||
+                              !isQrPage(
+                                Uri.tryParse(
+                                  await controller.currentUrl() ?? '',
+                                ),
+                              )) {
+                            await request.deny();
+                            return;
+                          }
+                          final permission = await Permission.camera.request();
+                          if (mounted &&
+                              permission.isGranted &&
+                              generation == pageGeneration &&
+                              isQrPage(
+                                Uri.tryParse(
+                                  await controller.currentUrl() ?? '',
+                                ),
+                              )) {
+                            await request.grant();
+                          } else {
+                            await request.deny();
+                          }
+                        } catch (_) {
+                          // A navigation or closed WebView can cancel the request.
+                          try {
+                            await request.deny();
+                          } catch (_) {}
+                        }
+                      }
+                      : null,
+            )
             ..setJavaScriptMode(JavaScriptMode.unrestricted)
             ..setNavigationDelegate(
               NavigationDelegate(
@@ -82,6 +135,7 @@ class _SessionWebViewState extends State<SessionWebView> {
                   return NavigationDecision.navigate;
                 },
                 onPageStarted: (_) {
+                  pageGeneration++;
                   if (mounted) {
                     setState(() {
                       _isLoading = true;
