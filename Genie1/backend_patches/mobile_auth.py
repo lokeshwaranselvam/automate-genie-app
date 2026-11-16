@@ -204,27 +204,27 @@ def login(usr, pwd, device_key=None, platform=None, android_id=None):
             if binding["android_hash"]:
                 if android_hash:
                     if not hmac.compare_digest(binding["android_hash"], android_hash):
-                        return _error("Wrong User", 409)
+                        return _error("Login is restricted to your registered device. Please contact your administrator for help.", 409)
                 elif not same_key:
                     # Omitting/changing the platform cannot bypass ownership.
-                    return _error("Wrong User", 409)
+                    return _error("Login is restricted to your registered device. Please contact your administrator for help.", 409)
             elif binding["device_hash"] and not same_key:
                 # Legacy migration requires the original private installation
                 # key. Password alone must never enroll a replacement phone.
-                return _error("Wrong User", 409)
+                return _error("Login is restricted to your registered device. Please contact your administrator for help.", 409)
         other_device = frappe.get_all(
             DOCTYPE,
             filters={HASH_FIELD: device_hash, "user": ["!=", user]},
             fields=["name"], limit_page_length=1,
         )
         if other_device:
-            return _error("Wrong User", 409)
+            return _error("Login is restricted to your registered device. Please contact your administrator for help.", 409)
         if android_hash and frappe.get_all(
             DOCTYPE,
             filters={ANDROID_HASH_FIELD: android_hash, "user": ["!=", user]},
             fields=["name"], limit_page_length=1,
         ):
-            return _error("Wrong User", 409)
+            return _error("Login is restricted to your registered device. Please contact your administrator for help.", 409)
         employees = frappe.get_all(
             "Employee", filters={"user_id": user, "status": "Active"},
             fields=["name"], limit_page_length=2,
