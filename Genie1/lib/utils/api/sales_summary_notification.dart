@@ -7,12 +7,13 @@ String salesSummaryPageRoute(Object? value) =>
 
 bool isSalesSummaryPush(Map<String, dynamic> data) =>
     data['type'] == 'DOCUMENT_NOTIFICATION' &&
-    data['notification_kind'] == 'SALES_SUMMARY' &&
-    data['doctype'] == 'Notification Log' &&
-    data['docname'] is String &&
-    (data['docname'] as String).startsWith('sales-summary-') &&
-    data['notification_log'] == data['docname'] &&
-    data['page_route'] == salesSummaryRoute;
+    (data['notification_name'] == 'TOMORROW-COLLECTION' ||
+        (data['notification_kind'] == 'SALES_SUMMARY' &&
+            data['doctype'] == 'Notification Log' &&
+            data['docname'] is String &&
+            (data['docname'] as String).startsWith('sales-summary-') &&
+            data['notification_log'] == data['docname'] &&
+            data['page_route'] == salesSummaryRoute));
 
 Uri? salesSummaryPageUri() {
   final site = Uri.tryParse(dotenv.env['SITE_URL']?.trim() ?? '');

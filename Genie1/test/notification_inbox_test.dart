@@ -599,43 +599,55 @@ void main() {
     }, () => client(status: 401));
   });
 
-  testWidgets('sales-summary push opens only through the inbox action', (
-    tester,
-  ) async {
-    await tester.runAsync(
-      () => NotificationInbox.capture(
-        const RemoteMessage(
-          messageId: 'summary',
-          data: {
-            'type': 'DOCUMENT_NOTIFICATION',
-            'notification_kind': 'SALES_SUMMARY',
-            'doctype': 'Notification Log',
-            'docname': 'sales-summary-123',
-            'notification_log': 'sales-summary-123',
-            'for_user': user,
-            'title': 'Your sales summary is ready',
-            'body': 'View your counts.',
-            'page_route': '/genie-sales-summary',
-          },
-        ),
-      ),
+  for (final collectionRule in [false, true]) {
+    testWidgets(
+      'sales-summary push opens only through the inbox action (collection rule: $collectionRule)',
+      (tester) async {
+        await tester.runAsync(
+          () => NotificationInbox.capture(
+            RemoteMessage(
+              messageId: 'summary',
+              data: {
+                'type': 'DOCUMENT_NOTIFICATION',
+                if (collectionRule) ...{
+                  'notification_name': 'TOMORROW-COLLECTION',
+                  'doctype': 'User',
+                  'docname': user,
+                } else ...{
+                  'notification_kind': 'SALES_SUMMARY',
+                  'doctype': 'Notification Log',
+                  'docname': 'sales-summary-123',
+                  'notification_log': 'sales-summary-123',
+                  'page_route': '/genie-sales-summary',
+                },
+                'for_user': user,
+                'title': 'Your sales summary is ready',
+                'body': 'View your counts.',
+              },
+            ),
+          ),
+        );
+        await http.runWithClient(() async {
+          await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
+          await settleInbox(tester);
+          expect(
+            (await NotificationInbox.cached()).single.isSalesSummary,
+            isTrue,
+          );
+          expect(find.byType(SalesSummaryWebViewPage), findsNothing);
+          await tester.tap(find.text('Your sales summary is ready'));
+          await settleInbox(tester);
+          expect(find.text('View sales summary'), findsOneWidget);
+          expect(find.text('Open in ERP'), findsNothing);
+          await tester.tap(find.text('View sales summary'));
+          await settleInbox(tester);
+          expect(find.byType(SalesSummaryWebViewPage), findsOneWidget);
+          await tester.pumpWidget(const SizedBox.shrink());
+          await settleInbox(tester);
+        }, () => client());
+      },
     );
-    await http.runWithClient(() async {
-      await tester.pumpWidget(const MaterialApp(home: NotificationsPage()));
-      await settleInbox(tester);
-      expect((await NotificationInbox.cached()).single.isSalesSummary, isTrue);
-      expect(find.byType(SalesSummaryWebViewPage), findsNothing);
-      await tester.tap(find.text('Your sales summary is ready'));
-      await settleInbox(tester);
-      expect(find.text('View sales summary'), findsOneWidget);
-      expect(find.text('Open in ERP'), findsNothing);
-      await tester.tap(find.text('View sales summary'));
-      await settleInbox(tester);
-      expect(find.byType(SalesSummaryWebViewPage), findsOneWidget);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await settleInbox(tester);
-    }, () => client());
-  });
+  }
 
   test(
     'cleared log-linked and ordinary pushes stay cleared after logout and login',

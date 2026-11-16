@@ -2088,27 +2088,30 @@ class _HomescreenState extends State<Homescreen> with WidgetsBindingObserver {
           backgroundColor: Colors.white,
           child: Column(
             children: [
-              SizedBox(
-                height: 120,
-                child: DrawerHeader(
-                  decoration: BoxDecoration(gradient: BrandColors.gradient),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 50,
-                        height: 50,
-                        child: _buildUserAvatar(50),
-                      ),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _displayCurrentUserName,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: Colors.white, fontSize: 20),
+              Container(
+                width: double.infinity,
+                decoration: BoxDecoration(gradient: BrandColors.gradient),
+                child: SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 50,
+                          height: 50,
+                          child: _buildUserAvatar(50),
                         ),
-                      ),
-                    ],
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            _displayCurrentUserName,
+                            softWrap: true,
+                            style: TextStyle(color: Colors.white, fontSize: 20),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

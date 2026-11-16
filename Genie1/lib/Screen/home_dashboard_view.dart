@@ -566,7 +566,9 @@ class HomeDashboardView extends StatelessWidget {
                   border: Border.all(color: Colors.white, width: 3),
                 ),
                 padding: const EdgeInsets.all(3),
-                child: ClipOval(child: avatar),
+                child: ClipOval(
+                  child: FittedBox(fit: BoxFit.contain, child: avatar),
+                ),
               ),
               Positioned(
                 right: 2,

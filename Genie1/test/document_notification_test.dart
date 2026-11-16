@@ -142,6 +142,35 @@ void main() {
   );
 
   test(
+    'collection pushes without log IDs retain distinct deliveries and tap identity',
+    () async {
+      final collection = <String, dynamic>{
+        'notification_name': 'TOMORROW-COLLECTION',
+        'doctype': 'User',
+        'docname': 'staff@example.test',
+        'sound_mode': 'default',
+        'alarm_enabled': '0',
+      };
+      expect(await send(id: 'collection-one', changes: collection), isTrue);
+      expect(await send(id: 'collection-one', changes: collection), isFalse);
+      expect(await send(id: 'collection-two', changes: collection), isTrue);
+      expect(shows, hasLength(2));
+      expect(
+        jsonDecode(shows.first['payload'])['notification_name'],
+        'TOMORROW-COLLECTION',
+      );
+      final items = await NotificationInbox.cached();
+      expect(items, hasLength(2));
+      expect(items.every((item) => item.isSalesSummary), isTrue);
+      expect(
+        items.every((item) => item.pageRoute == '/genie-sales-summary'),
+        isTrue,
+      );
+      expect(alarms, 0);
+    },
+  );
+
+  test(
     'Client Script pushes from the unchanged server remain compatible',
     () async {
       for (final foreground in [false, true]) {

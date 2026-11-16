@@ -82,6 +82,29 @@ void main() {
     },
   );
 
+  test(
+    'cold-start collection tap waits for Home and retains its summary action',
+    () async {
+      await NotificationInboxTaps.open(
+        message(
+          changes: {
+            'notification_name': 'TOMORROW-COLLECTION',
+            'doctype': '',
+            'docname': '',
+          },
+        ),
+      );
+      final ready = Completer<void>();
+      NotificationInboxTaps.register(owner, () => ready.complete());
+      await ready.future.timeout(const Duration(seconds: 2));
+      final row = (await NotificationInbox.cached()).single;
+      expect(row.isSalesSummary, isTrue);
+      expect(row.pageRoute, '/genie-sales-summary');
+      expect(row.notificationName, 'TOMORROW-COLLECTION');
+      expect(row.hasErpDocumentLink, isFalse);
+    },
+  );
+
   for (final field in ['session_sid', 'session_username', 'site']) {
     test('queued tap cannot cross a changed $field', () async {
       await NotificationInboxTaps.open(message());
