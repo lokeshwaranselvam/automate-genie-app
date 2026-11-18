@@ -934,6 +934,43 @@ class SiteVisitApiTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no configured categories allowed"):
             self.run_api(action="get")
 
+    def test_dd_production_can_select_and_create_measurement_across_companies(self):
+        for company in ["Timbe Windows Private Limited", "Homegenie Building Products Private Limited", "Other Company", None]:
+            with self.subTest(company=company):
+                self.configure_category_policy(["DD Production"], company)
+                self.assertTrue(self.run_api(action="can_create")["can_create"])
+                result = self.run_api(action="get")
+                self.assertEqual(result["event_categories"], ["Measurement"])
+                self.assertEqual(result["opportunities"], [])
+                self.assertEqual(len(self.run_api(action="get_references", category="Measurement")["references"]), 1)
+                result = self.run_api(category="Measurement", opportunity="", location_row="",
+                    reference_doctype="Measurement", reference_name="MEAS-1", product_enquired="",
+                    map_link="https://maps.example.test", latitude="13", longitude="80")
+                self.assertEqual(result["event"], "EVENT-TEST")
+                self.assertEqual(self.event.event_category, "Measurement")
+                self.reference_rows["Measurement"][0].check_permission.assert_called_with("read")
+
+    def test_dd_production_cannot_create_other_categories_or_access_opportunity_actions(self):
+        self.configure_category_policy(["DD Production"], "Other Company")
+        for category in ["Installation", "Head Office CH", "Site Visit", "Bank", "Collection", "Other"]:
+            with self.subTest(category=category), self.assertRaisesRegex(ValueError, "valid event category"):
+                self.run_api(category=category)
+        with self.assertRaisesRegex(ValueError, "valid event category"):
+            self.run_api(action="get_references", category="Installation")
+        for action in ["search_by_mobile", "search_opportunities", "save_location"]:
+            with self.subTest(action=action), self.assertRaisesRegex(ValueError, "do not allow"):
+                self.run_api(action=action)
+        self.frappe.new_doc.assert_not_called()
+
+    def test_dd_production_preserves_other_role_category_grants(self):
+        for role in ["Sales Manager", "Sales User", "Designer", "Accounts User", "SCM Manager", "Delivery Manager"]:
+            for company in ["Timbe Windows Private Limited", "Other Company", None]:
+                with self.subTest(role=role, company=company):
+                    self.configure_category_policy([role], company)
+                    existing = set(self.run_api(action="get")["event_categories"])
+                    self.configure_category_policy([role, "DD Production"], company)
+                    self.assertEqual(set(self.run_api(action="get")["event_categories"]), existing | {"Measurement"})
+
     def test_sales_and_designer_only_get_head_office_and_create_direct_events(self):
         for roles in [["Sales User"], ["Designer"], ["Sales User", "Designer"],
                       ["Sales User", "Employee"], ["Designer", "Production User"]]:

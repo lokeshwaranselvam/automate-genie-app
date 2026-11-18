@@ -60,12 +60,19 @@ has_visit_operations_role = bool(frappe.db.exists(
     {"parent": current_user, "parenttype": "User", "parentfield": "roles",
      "role": ["in", ["SCM Manager", "Delivery Manager"]]},
 ))
+has_dd_production_role = bool(frappe.db.exists(
+    "Has Role",
+    {"parent": current_user, "parenttype": "User", "parentfield": "roles",
+     "role": "DD Production"},
+))
 has_existing_visit_creation_role = has_sales_manager_role or has_accounts_user_role or has_visit_operations_role
 has_head_office_creation_role = has_sales_user_role or has_designer_role
-can_create_visit = has_existing_visit_creation_role or has_head_office_creation_role
+can_create_visit = has_existing_visit_creation_role or has_head_office_creation_role or has_dd_production_role
 if action != "can_create" and not can_create_visit:
-    frappe.throw("Only users with the Sales Manager role, Accounts User role, SCM Manager role, Delivery Manager role, Sales User role, or Designer role can create site visits.")
-if not has_existing_visit_creation_role and action not in ["can_create", "get", "create_event"]:
+    frappe.throw("Only users with the Sales Manager role, Accounts User role, SCM Manager role, Delivery Manager role, Sales User role, Designer role, or DD Production role can create site visits.")
+if not has_existing_visit_creation_role and has_dd_production_role and action not in ["can_create", "get", "get_references", "create_event"]:
+    frappe.throw("Your roles do not allow this site visit action.")
+if not has_existing_visit_creation_role and not has_dd_production_role and action not in ["can_create", "get", "create_event"]:
     frappe.throw("Your roles only allow direct Head Office CH event creation.")
 
 business_policy = None
@@ -105,6 +112,8 @@ if action in ["get", "get_references", "create_event"]:
             # Existing Sales Manager behavior: all configured categories.
             allowed_category_names = None
     if allowed_category_names is not None:
+        if has_dd_production_role and "measurement" not in allowed_category_names:
+            allowed_category_names.append("measurement")
         if has_head_office_creation_role:
             allowed_category_names.append("headofficech")
         if has_accounts_user_role:
