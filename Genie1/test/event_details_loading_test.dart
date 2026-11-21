@@ -58,6 +58,7 @@ void main() {
     'error',
     'invalid',
     'names',
+    'embedded-policy',
     'Other',
     'Head Office CH',
     'Timbe / Bioman Office CH',
@@ -77,12 +78,27 @@ void main() {
         var attempts = 0;
         var checkInRequests = 0;
         var checkOutRequests = 0;
+        var businessPolicyReads = 0;
         final client = MockClient((request) async {
+          if (request.url.path.endsWith('mobile_business_policy')) {
+            businessPolicyReads++;
+            return http.Response('{}', 500);
+          }
           if (request.url.path.endsWith('event_visit_report')) {
             return http.Response(
               jsonEncode({
                 'message': {
                   'status': 'success',
+                  if (scenario == 'embedded-policy')
+                    'visit_policy': {
+                      'current_user': 'user@example.test',
+                      'fields': <String, dynamic>{},
+                      'rules': <String, dynamic>{},
+                      'actions': {
+                        'check_in': {'allowed': true},
+                        'check_out': {'allowed': true},
+                      },
+                    },
                   if (scenario == 'completed-image' ||
                       scenario == 'completed-document') ...{
                     'event_id': 'EVENT-1',
@@ -221,6 +237,7 @@ void main() {
             'completed-document',
             'completed-details',
             'names',
+            'embedded-policy',
             'Other',
             'Head Office CH',
             'Timbe / Bioman Office CH',
@@ -361,6 +378,9 @@ void main() {
             if (!pending.isCompleted) {
               pending.complete(http.Response('{}', 500));
             }
+          }
+          if (scenario == 'embedded-policy') {
+            expect(businessPolicyReads, 0);
           }
           await tester.pumpWidget(const SizedBox.shrink());
           await tester.pump(const Duration(seconds: 30));

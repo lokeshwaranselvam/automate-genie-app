@@ -934,30 +934,88 @@ class SiteVisitApiTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no configured categories allowed"):
             self.run_api(action="get")
 
-    def test_dd_production_can_select_and_create_measurement_across_companies(self):
+    def test_timbe_production_visit_grants_and_creation(self):
+        for company in ["Timbe Windows Private Limited", "Other Company", None]:
+            with self.subTest(company=company):
+                self.configure_category_policy(["Timbe Production"], company)
+                access = self.run_api(action="can_create")
+                self.assertTrue(access["can_create"])
+                self.assertFalse(access["can_create_lead"])
+                self.assertFalse(access["can_view_opportunities"])
+                self.assertEqual(set(self.run_api(action="get")["event_categories"]),
+                                 {"Installation", "Measurement", "Complaint Visit", "Other"})
+                for category, doctype, reference in [("Measurement", "Measurement", "MEAS-1"),
+                                                      ("Installation", "Installation Note", "INST-1")]:
+                    self.assertTrue(self.run_api(action="get_references", category=category)["references"])
+                    self.run_api(category=category, opportunity="", location_row="",
+                        reference_doctype=doctype, reference_name=reference, product_enquired="",
+                        map_link="https://maps.example.test", latitude="13", longitude="80")
+                    self.assertEqual(self.event.event_category, category)
+                    self.reference_rows[doctype][0].check_permission.assert_called_with("read")
+                self.assertTrue(self.run_api(action="search_opportunities", query="OPP-1")["opportunities"])
+                self.run_api(category="Complaint Visit")
+                self.assertEqual(self.event.event_category, "Complaint Visit")
+                self.run_api(category="Other", opportunity="", location_row="", product_enquired="")
+                self.assertEqual(self.event.event_category, "Other")
+
+    def test_timbe_production_rejects_ungranted_categories_and_unknown_actions(self):
+        self.configure_category_policy(["Timbe Production"], "Timbe Windows Private Limited")
+        for category in ["Bank", "Collection", "Site Visit", "Maintenance", "Head Office CH", "Training"]:
+            with self.subTest(category=category), self.assertRaisesRegex(ValueError, "valid event category"):
+                self.run_api(category=category, roles=["Sales Manager"])
+        with self.assertRaisesRegex(ValueError, "do not allow"):
+            self.run_api(action="delete_event")
+        self.frappe.new_doc.assert_not_called()
+
+    def test_timbe_production_preserves_other_role_grants(self):
+        for role in ["Sales Manager", "Sales User", "Designer", "Accounts User", "SCM Manager", "Delivery Manager", "DD Production"]:
+            with self.subTest(role=role):
+                self.configure_category_policy([role], "Timbe Windows Private Limited")
+                existing = set(self.run_api(action="get")["event_categories"])
+                self.configure_category_policy([role, "Timbe Production"], "Timbe Windows Private Limited")
+                self.assertEqual(set(self.run_api(action="get")["event_categories"]),
+                                 existing | {"Installation", "Measurement", "Complaint Visit", "Other"})
+
+    def test_dd_production_can_select_and_create_document_visits_across_companies(self):
         for company in ["Timbe Windows Private Limited", "Homegenie Building Products Private Limited", "Other Company", None]:
             with self.subTest(company=company):
                 self.configure_category_policy(["DD Production"], company)
                 self.assertTrue(self.run_api(action="can_create")["can_create"])
                 result = self.run_api(action="get")
-                self.assertEqual(result["event_categories"], ["Measurement"])
-                self.assertEqual(result["opportunities"], [])
-                self.assertEqual(len(self.run_api(action="get_references", category="Measurement")["references"]), 1)
-                result = self.run_api(category="Measurement", opportunity="", location_row="",
-                    reference_doctype="Measurement", reference_name="MEAS-1", product_enquired="",
-                    map_link="https://maps.example.test", latitude="13", longitude="80")
-                self.assertEqual(result["event"], "EVENT-TEST")
-                self.assertEqual(self.event.event_category, "Measurement")
-                self.reference_rows["Measurement"][0].check_permission.assert_called_with("read")
+                self.assertEqual(set(result["event_categories"]), {"Measurement", "Installation"})
+                for category, doctype, reference in [("Measurement", "Measurement", "MEAS-1"),
+                                                      ("Installation", "Installation Note", "INST-1")]:
+                    self.assertEqual(len(self.run_api(action="get_references", category=category)["references"]), 1)
+                    result = self.run_api(category=category, opportunity="", location_row="",
+                        reference_doctype=doctype, reference_name=reference, product_enquired="",
+                        map_link="https://maps.example.test", latitude="13", longitude="80")
+                    self.assertEqual(result["event"], "EVENT-TEST")
+                    self.assertEqual(self.event.event_category, category)
+                    self.reference_rows[doctype][0].check_permission.assert_called_with("read")
 
-    def test_dd_production_cannot_create_other_categories_or_access_opportunity_actions(self):
+    def test_dd_production_can_create_rework_with_existing_opportunity_workflow(self):
         self.configure_category_policy(["DD Production"], "Other Company")
-        for category in ["Installation", "Head Office CH", "Site Visit", "Bank", "Collection", "Other"]:
+        self.metas["Event"].get_field("event_category").options += "\nRework"
+        result = self.run_api(action="get")
+        self.assertEqual(set(result["event_categories"]), {"Measurement", "Installation", "Rework"})
+        self.assertTrue(result["opportunities"])
+        self.assertEqual(result["event_category_rules"]["Rework"]["reference_doctype"], "Opportunity")
+        self.assertTrue(self.run_api(action="search_by_mobile", mobile="98765")["opportunities"])
+        self.assertTrue(self.run_api(action="search_opportunities", query="OPP-1")["opportunities"])
+        result = self.run_api(category="Rework")
+        self.assertEqual(result["event"], "EVENT-TEST")
+        self.assertEqual(self.event.event_category, "Rework")
+        with self.assertRaisesRegex(ValueError, "Opportunity and location are required"):
+            self.run_api(category="Rework", opportunity="", location_row="")
+
+    def test_dd_production_cannot_create_other_categories_or_access_unknown_actions(self):
+        self.configure_category_policy(["DD Production"], "Other Company")
+        for category in ["Head Office CH", "Site Visit", "Bank", "Collection", "Other"]:
             with self.subTest(category=category), self.assertRaisesRegex(ValueError, "valid event category"):
                 self.run_api(category=category)
         with self.assertRaisesRegex(ValueError, "valid event category"):
-            self.run_api(action="get_references", category="Installation")
-        for action in ["search_by_mobile", "search_opportunities", "save_location"]:
+            self.run_api(action="get_references", category="Bank")
+        for action in ["delete_event", "unknown"]:
             with self.subTest(action=action), self.assertRaisesRegex(ValueError, "do not allow"):
                 self.run_api(action=action)
         self.frappe.new_doc.assert_not_called()
@@ -967,9 +1025,11 @@ class SiteVisitApiTest(unittest.TestCase):
             for company in ["Timbe Windows Private Limited", "Other Company", None]:
                 with self.subTest(role=role, company=company):
                     self.configure_category_policy([role], company)
+                    self.metas["Event"].get_field("event_category").options += "\nRework"
                     existing = set(self.run_api(action="get")["event_categories"])
                     self.configure_category_policy([role, "DD Production"], company)
-                    self.assertEqual(set(self.run_api(action="get")["event_categories"]), existing | {"Measurement"})
+                    self.metas["Event"].get_field("event_category").options += "\nRework"
+                    self.assertEqual(set(self.run_api(action="get")["event_categories"]), existing | {"Measurement", "Installation", "Rework"})
 
     def test_sales_and_designer_only_get_head_office_and_create_direct_events(self):
         for roles in [["Sales User"], ["Designer"], ["Sales User", "Designer"],

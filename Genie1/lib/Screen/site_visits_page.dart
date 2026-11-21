@@ -13,13 +13,15 @@ import 'dart:async';
 import 'event_details.dart';
 import 'new_site_visit_page.dart';
 import 'site_visit_report_page.dart';
+import 'visit_verification_page.dart';
+import '../utils/api/visit_verification_api.dart';
 import '../utils/widget/home_back_button.dart';
 
 const _visitBlue = BrandColors.ink;
 const _visitInk = Color(0xFF202B3C);
 const _visitMuted = Color(0xFF7B8492);
 
-enum _VisitTab { scheduled, completed, overdue }
+enum _VisitTab { scheduled, verification, completed, overdue }
 
 class SiteVisitsPage extends StatefulWidget {
   const SiteVisitsPage({super.key, this.onVisitsUpdated, this.initialEventId});
@@ -43,6 +45,12 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
   bool _canCreateVisit = false;
   int _permissionRequestId = 0;
   bool _initialVisitOpened = false;
+  bool _verificationVisible = false;
+  bool _verificationLoading = false;
+  bool _showVerified = false;
+  int _otpLength = 6;
+  Map<String, Map<String, dynamic>> _verificationStates = {};
+  int _refreshId = 0;
 
   @override
   void initState() {
@@ -52,17 +60,39 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
 
   Future<void> _refresh() async {
     if (!mounted) return;
+    final refreshId = ++_refreshId;
     unawaited(_loadCreationPermission());
     setState(() {
       _loading = true;
       _error = null;
+      _verificationVisible = false;
+      _verificationLoading = true;
+      _verificationStates = {};
     });
 
     try {
       final prefs = await SharedPreferences.getInstance();
       final email = prefs.getString('email')?.trim() ?? '';
       if (email.isEmpty) throw StateError('Sign in to view your site visits.');
+      if (!mounted || refreshId != _refreshId) return;
 
+      final historyFuture = Event.HistoryList(
+        email,
+        '2000-01-01',
+        DateFormat('yyyy-MM-dd').format(DateTime.now()),
+        context,
+      ).catchError((Object error) {
+        debugPrint('Could not load completed visit history: $error');
+        return <dynamic>[];
+      });
+      final policyFuture = VisitVerificationApi.policy()
+          .then<Map<String, dynamic>?>(
+            (value) => value,
+            onError: (Object error) {
+              debugPrint('Could not load visit verification: $error');
+              return null;
+            },
+          );
       final scheduled = await Event.eventList(email);
       if (scheduled.isNotEmpty &&
           scheduled.first is Map &&
@@ -72,18 +102,17 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
         );
       }
 
-      final now = DateTime.now();
-      List<dynamic> history = [];
-      try {
-        history = await Event.HistoryList(
-          email,
-          '2000-01-01',
-          DateFormat('yyyy-MM-dd').format(now),
-          context,
-        );
-      } catch (error) {
-        debugPrint('Could not load completed visit history: $error');
-      }
+      if (!mounted || refreshId != _refreshId) return;
+      setState(() {
+        _visits =
+            scheduled
+                .whereType<Map>()
+                .map((row) => Map<String, dynamic>.from(row))
+                .toList();
+        _loading = false;
+      });
+      final history = await historyFuture;
+      if (!mounted || refreshId != _refreshId) return;
 
       final byId = <String, Map<String, dynamic>>{};
       for (final item in scheduled) {
@@ -104,17 +133,43 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
         byId[id] = {...?byId[id], ...visit};
       }
 
-      if (!mounted) return;
+      setState(() => _visits = byId.values.toList());
+      var verificationVisible = false;
+      var otpLength = 6;
+      var verificationStates = <String, Map<String, dynamic>>{};
+      try {
+        final policy = await policyFuture;
+        verificationVisible = policy?['visible'] == true;
+        otpLength = (policy?['otp_length'] as num?)?.toInt() ?? 6;
+        if (verificationVisible) {
+          verificationStates = await VisitVerificationApi.states(
+            byId.keys.toList(),
+          );
+        }
+      } catch (error) {
+        // Old/unavailable API must not grant access or break ordinary visit lists.
+        verificationVisible = false;
+        debugPrint('Could not load visit verification: $error');
+      }
+      if (!mounted || refreshId != _refreshId) return;
       final visits = byId.values.toList();
       setState(() {
         _visits = visits;
         _loading = false;
+        _verificationLoading = false;
+        _verificationVisible = verificationVisible;
+        _verificationStates = verificationStates;
+        _otpLength = otpLength;
+        if (!verificationVisible && _tab == _VisitTab.verification) {
+          _tab = _VisitTab.scheduled;
+        }
       });
       widget.onVisitsUpdated?.call(visits);
       _openInitialVisit();
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || refreshId != _refreshId) return;
       setState(() {
+        _verificationLoading = false;
         _error = error.toString().replaceFirst('Bad state: ', '');
         _loading = false;
       });
@@ -165,7 +220,9 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     var allowed = false;
     try {
       final access = await SiteVisitCreationApi.homeQuickActionAccess();
-      allowed = access.canCreateVisit && access.featureVisibility['new_visit'] != false;
+      allowed =
+          access.canCreateVisit &&
+          access.featureVisibility['new_visit'] != false;
     } catch (error) {
       debugPrint('Could not check site visit creation permission: $error');
     }
@@ -203,7 +260,15 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
         _visits.where((visit) {
           final tabMatches = switch (_tab) {
             _VisitTab.scheduled => !_isCompleted(visit) && !_isOverdue(visit),
-            _VisitTab.completed => _isCompleted(visit),
+            _VisitTab.completed =>
+              _isCompleted(visit) &&
+                  _verificationStates[_id(visit)]?['verification_required'] !=
+                      true,
+            _VisitTab.verification =>
+              _verificationStates[_id(visit)]?['verification_required'] ==
+                      true &&
+                  (_verificationStates[_id(visit)]?['is_verified'] == true) ==
+                      _showVerified,
             _VisitTab.overdue => _isOverdue(visit),
           };
           if (!tabMatches) return false;
@@ -229,7 +294,7 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     rows.sort((a, b) {
       final first = _startsAt(a) ?? DateTime(9999);
       final second = _startsAt(b) ?? DateTime(9999);
-      return _tab == _VisitTab.completed
+      return (_tab == _VisitTab.completed || _tab == _VisitTab.verification)
           ? second.compareTo(first)
           : first.compareTo(second);
     });
@@ -240,7 +305,12 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
       _visits.where((visit) {
         return switch (tab) {
           _VisitTab.scheduled => !_isCompleted(visit) && !_isOverdue(visit),
-          _VisitTab.completed => _isCompleted(visit),
+          _VisitTab.completed =>
+            _isCompleted(visit) &&
+                _verificationStates[_id(visit)]?['verification_required'] !=
+                    true,
+          _VisitTab.verification =>
+            _verificationStates[_id(visit)]?['verification_required'] == true,
           _VisitTab.overdue => _isOverdue(visit),
         };
       }).length;
@@ -300,10 +370,11 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
     if (id.isEmpty) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => EventDetails(
-          eventid: id,
-          hideVisitActions: _isCompleted(visit),
-        ),
+        builder:
+            (_) => EventDetails(
+              eventid: id,
+              hideVisitActions: _isCompleted(visit),
+            ),
       ),
     );
     if (mounted) await _refresh();
@@ -347,7 +418,9 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
   }
 
   DateTime? _filterDate(Map<String, dynamic> visit, _VisitTab tab) =>
-      tab == _VisitTab.completed ? _completedAt(visit) : _startsAt(visit);
+      (tab == _VisitTab.completed || tab == _VisitTab.verification)
+          ? _completedAt(visit)
+          : _startsAt(visit);
 
   Future<void> _showDateFilter() async {
     final tab = _tab;
@@ -364,7 +437,8 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
                     style: TextStyle(fontWeight: FontWeight.w800),
                   ),
                   subtitle: Text(
-                    tab == _VisitTab.completed
+                    (tab == _VisitTab.completed ||
+                            tab == _VisitTab.verification)
                         ? 'Completion date'
                         : 'Scheduled visit date',
                   ),
@@ -423,7 +497,7 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
       lastDate: lastDate,
       initialDateRange: currentRange,
       helpText:
-          tab == _VisitTab.completed
+          (tab == _VisitTab.completed || tab == _VisitTab.verification)
               ? 'Filter by completion date'
               : 'Filter by scheduled visit date',
     );
@@ -515,6 +589,8 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
           child: Row(
             children: [
               _tabButton('Scheduled', _VisitTab.scheduled),
+              if (_verificationVisible)
+                _tabButton('Verification', _VisitTab.verification),
               _tabButton('Completed', _VisitTab.completed),
               _tabButton('Overdue', _VisitTab.overdue),
             ],
@@ -526,6 +602,25 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
         onRefresh: _refresh,
         child: Column(
           children: [
+            if (_tab == _VisitTab.verification && _verificationVisible)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Wrap(
+                  spacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Not Verified'),
+                      selected: !_showVerified,
+                      onSelected: (_) => setState(() => _showVerified = false),
+                    ),
+                    ChoiceChip(
+                      label: const Text('Verified'),
+                      selected: _showVerified,
+                      onSelected: (_) => setState(() => _showVerified = true),
+                    ),
+                  ],
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
               child: Row(
@@ -577,7 +672,10 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
               ),
             Expanded(
               child:
-                  _loading && _visits.isEmpty
+                  (_loading && _visits.isEmpty) ||
+                          (_verificationLoading &&
+                              (_tab == _VisitTab.completed ||
+                                  _tab == _VisitTab.verification))
                       ? const Center(child: AgPathLoadingIndicator())
                       : _error != null && _visits.isEmpty
                       ? _errorView()
@@ -604,14 +702,17 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
                         itemCount: visits.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 9),
                         itemBuilder:
-                            (context, index) => _visitCard(visits[index]),
+                            (context, index) =>
+                                _tab == _VisitTab.verification
+                                    ? _verificationCard(visits[index])
+                                    : _visitCard(visits[index]),
                       ),
             ),
           ],
         ),
       ),
       floatingActionButton:
-          !_canCreateVisit
+          !_canCreateVisit || _tab == _VisitTab.verification
               ? null
               : brandFloatingActionButton(
                 onPressed: _newVisit,
@@ -633,6 +734,10 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
       _dateRange != null
           ? 'No completed visits in the selected date range.'
           : 'No completed visit history.',
+    _VisitTab.verification =>
+      _showVerified
+          ? 'No verified visits.'
+          : 'No visits awaiting verification.',
     _VisitTab.overdue =>
       _dateRange != null
           ? 'No overdue visits in the selected date range.'
@@ -661,13 +766,20 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
           children: [
             SizedBox(
               height: 49,
-              child: Center(
-                child: Text(
-                  '$label (${_count(tab)})',
-                  style: TextStyle(
-                    color: selected ? _visitBlue : _visitInk,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    fontSize: 13,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Center(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      '$label (${_count(tab)})',
+                      style: TextStyle(
+                        color: selected ? _visitBlue : _visitInk,
+                        fontWeight:
+                            selected ? FontWeight.w700 : FontWeight.w500,
+                        fontSize: 13,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -680,6 +792,38 @@ class _SiteVisitsPageState extends State<SiteVisitsPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _verificationCard(Map<String, dynamic> visit) {
+    final id = _id(visit);
+    return Card(
+      color: Colors.white,
+      child: ListTile(
+        title: Text((visit['subject'] ?? _customer(visit)).toString()),
+        subtitle: Text(id),
+        trailing:
+            _showVerified
+                ? null
+                : TextButton(
+                  onPressed: () async {
+                    final verified = await showVisitVerificationOtpDialog(
+                      context,
+                      eventId: id,
+                      otpLength: _otpLength,
+                    );
+                    if (!mounted || !verified || !_verificationVisible) return;
+                    setState(
+                      () =>
+                          _verificationStates[id] = {
+                            ...?_verificationStates[id],
+                            'is_verified': true,
+                          },
+                    );
+                  },
+                  child: const Text('Enter OTP'),
+                ),
       ),
     );
   }

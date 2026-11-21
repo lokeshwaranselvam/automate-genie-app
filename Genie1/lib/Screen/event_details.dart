@@ -610,6 +610,10 @@ class _EventDetailsState extends State<EventDetails> {
 
   Future<void> _loadVisitLocationPolicy() async {
     try {
+      final sessionPrefs = await SharedPreferences.getInstance();
+      final policyUser = sessionPrefs.getString('session_username') ?? sessionPrefs.getString('email');
+      final policySid = sessionPrefs.getString('session_sid');
+      final policyToken = sessionPrefs.getString('token');
       final report = await Event.getVisitReport(
         widget.eventid,
       ).timeout(const Duration(seconds: 15));
@@ -631,10 +635,14 @@ class _EventDetailsState extends State<EventDetails> {
               },
         );
         if (report['visit_policy'] != null) {
-          final policy = await Event.getBusinessPolicy(
-            'visit',
-            eventId: widget.eventid,
-          );
+          final rawPolicy = report['visit_policy'];
+          final sameSession = (sessionPrefs.getString('session_username') ?? sessionPrefs.getString('email')) == policyUser
+              && sessionPrefs.getString('session_sid') == policySid
+              && sessionPrefs.getString('token') == policyToken;
+          if (!sameSession) return;
+          final policy = rawPolicy is Map && rawPolicy['current_user'] == policyUser
+              ? ApiBusinessPolicy.fromApi(rawPolicy)
+              : await Event.getBusinessPolicy('visit', eventId: widget.eventid);
           if (!mounted) return;
           setState(() => _applyVisitBusinessPolicy(policy));
         }

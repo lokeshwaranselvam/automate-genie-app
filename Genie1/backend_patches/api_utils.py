@@ -95,6 +95,9 @@ def history_list(user, from_date=None, to_date=None):
         event_filters["starts_on"] = ["between", [from_date, to_date]]
 
     assigned_events = frappe.get_all("Event", filters=event_filters, fields=["*"])
+    for event in assigned_events:
+        for private_field in ("custom_otp", "custom_validate", "custom_whats_app"):
+            event.pop(private_field, None)
     return assigned_events
 
 
@@ -111,6 +114,10 @@ def event_details(id):
     ),
     "reference_details": []
     }
+
+    # Never disclose the expected customer OTP through the mobile detail API.
+    for private_field in ("custom_otp", "custom_validate", "custom_whats_app"):
+        response["event"].pop(private_field, None)
 
     for participant in doc.get("event_participants", []):
         reference_doctype = participant.reference_doctype
@@ -591,7 +598,10 @@ def event_list_date(user,date):
     for doc in doc_list:
         doc = frappe.get_doc("Event",doc)
         if date == str(getdate(doc.starts_on)) and doc.status == "Open":
-            event_list.append(doc.as_dict())
+            event_data = doc.as_dict()
+            for private_field in ("custom_otp", "custom_validate", "custom_whats_app"):
+                event_data.pop(private_field, None)
+            event_list.append(event_data)
 
     return event_list
 
